@@ -1,0 +1,14 @@
+{
+  "name": "@dbstudio/core-export",
+  "version": "0.1.0",
+  "description": "",
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "types": "./src/index.ts"
+}

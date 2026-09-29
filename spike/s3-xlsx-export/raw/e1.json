@@ -1,0 +1,25 @@
+{
+  "rows": 100000,
+  "mode": "default",
+  "runs": [
+    {
+      "timeMs": 707.260583,
+      "peakRss": 179732480,
+      "fileBytes": 11502088
+    },
+    {
+      "timeMs": 718.998792,
+      "peakRss": 178896896,
+      "fileBytes": 11502088
+    },
+    {
+      "timeMs": 705.558417,
+      "peakRss": 180944896,
+      "fileBytes": 11502088
+    }
+  ],
+  "p50timeMs": 707.260583,
+  "p50PeakRss": 179732480,
+  "fileBytes": 11502088,
+  "fileMB": 10.97
+}

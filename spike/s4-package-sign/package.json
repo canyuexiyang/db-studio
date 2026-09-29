@@ -1,0 +1,48 @@
+{
+  "name": "db-studio",
+  "version": "0.1.0",
+  "description": "DB Studio - S4 packaging & signing spike",
+  "main": "main.mjs",
+  "scripts": {
+    "pack": "electron-builder --mac --arm64 --dir"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "electron-window-glass": "^1.0.0"
+  },
+  "type": "module",
+  "devDependencies": {
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.dbstudio.app",
+    "productName": "DB Studio",
+    "asar": true,
+    "compression": "normal",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "files": [
+      "main.mjs",
+      "index.html",
+      "preload.cjs",
+      "package.json",
+      "node_modules/**/*"
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "group": "C2",
+  "run": "4",
+  "label": "DB Studio cold-start probe",
+  "sysinfo": {
+    "electron": "44.4.3",
+    "node": "24.21.0",
+    "chromium": "152.0.7977.130",
+    "platform": "darwin",
+    "arch": "arm64",
+    "darwin": "27.0.0"
+  },
+  "creationEpoch": 1789965214883.234,
+  "spawnTs": 1789965214882,
+  "spawnToCreationMs": 1.2,
+  "totalFromPerf": 245.8,
+  "totalFromSpawn": 297,
+  "phases": {
+    "execToModuleTop": 64,
+    "moduleTopToWhenReady": 38.4,
+    "whenReadyToWindow": 46.8,
+    "windowToDidFinishLoad": 72.2,
+    "didFinishLoadToPaint": 24.4,
+    "totalExecToInteractive": 245.8
+  },
+  "marks": {
+    "moduleTop": 64,
+    "whenReady": 102.4,
+    "windowCreated": 149.2,
+    "didFinishLoad": 221.4,
+    "firstPaint": 245.8
+  }
+}

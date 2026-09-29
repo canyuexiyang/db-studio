@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-style="industrial">
+<head>
+<meta charset="UTF-8">
+<title>DB Studio 风格示意图</title>
+<style>
+/* ============ 共用骨架:四种风格只换 token ============ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ---------- 风格 A:工业控制台(深色 · 信号橙) ---------- */
+body[data-style="industrial"] {
+  --font-ui: "Avenir Next", "PingFang SC", sans-serif;
+  --font-display: "Avenir Next", "PingFang SC", sans-serif;
+  --font-mono: "SF Mono", Menlo, monospace;
+  --bg: #16191f; --bg-alt: #1c2027; --bg-panel: #1f242c; --bg-raise: #262c36;
+  --border: #2c333e; --border-strong: #3a4350;
+  --text: #e6e9ee; --text-dim: #8b94a3; --null: #5c6572;
+  --accent: #ff8a3d; --accent-ink: #16191f; --accent-dim: rgba(255,138,61,.13);
+  --sel: rgba(255,138,61,.12); --sel-bar: #ff8a3d;
+  --dirty-bg: rgba(255,138,61,.10); --dirty-bar: #ff8a3d;
+  --error: #ff5c5c; --ok: #46c46e; --warn: #e8b93e;
+  --r-lg: 6px; --r: 4px; --r-sm: 3px;
+  --bw: 1px; --shadow-pop: 0 12px 40px rgba(0,0,0,.5);
+  --grid-line: #232932;
+  --head-caps: uppercase; --head-track: .08em;
+}
+
+/* ---------- 风格 B:墨金奢华(深色 · 黄铜) ---------- */
+body[data-style="luxury"] {
+  --font-ui: "Optima", "Avenir Next", "PingFang SC", sans-serif;
+  --font-display: "Didot", "Songti SC", "STSong", Georgia, serif;
+  --font-mono: "SF Mono", Menlo, monospace;
+  --bg: #17130e; --bg-alt: #1d1812; --bg-panel: #201a13; --bg-raise: #2a2218;
+  --border: #352c1e; --border-strong: #4a3e2a;
+  --text: #ece4d3; --text-dim: #9c8f78; --null: #6a5f4d;
+  --accent: #c9a227; --accent-ink: #17130e; --accent-dim: rgba(201,162,39,.12);
+  --sel: rgba(201,162,39,.12); --sel-bar: #c9a227;
+  --dirty-bg: rgba(201,162,39,.10); --dirty-bar: #c9a227;
+  --error: #d9634e; --ok: #7ea56b; --warn: #c9a227;
+  --r-lg: 10px; --r: 6px; --r-sm: 4px;
+  --bw: 1px; --shadow-pop: 0 16px 48px rgba(0,0,0,.55);
+  --grid-line: #292217;
+  --head-caps: uppercase; --head-track: .14em;
+}
+
+/* ---------- 风格 C:瑞士报表(浅色 · 墨线硬边) ---------- */
+body[data-style="brutalist"] {
+  --font-ui: "SF Mono", Menlo, "PingFang SC", monospace;
+  --font-display: "Futura", "SF Mono", "PingFang SC", sans-serif;
+  --font-mono: "SF Mono", Menlo, monospace;
+  --bg: #f5f4f0; --bg-alt: #ecebe5; --bg-panel: #ffffff; --bg-raise: #ffffff;
+  --border: #141414; --border-strong: #141414;
+  --text: #141414; --text-dim: #6b6b66; --null: #a5a49d;
+  --accent: #e5482e; --accent-ink: #ffffff; --accent-dim: rgba(229,72,46,.10);
+  --sel: rgba(229,72,46,.10); --sel-bar: #e5482e;
+  --dirty-bg: #ffe9a8; --dirty-bar: #141414;
+  --error: #e5482e; --ok: #1d8a44; --warn: #b57e10;
+  --r-lg: 0px; --r: 0px; --r-sm: 0px;
+  --bw: 1.5px; --shadow-pop: 6px 6px 0 #141414;
+  --grid-line: #d8d6cf;
+  --head-caps: none; --head-track: 0;
+}
+
+/* ---------- 风格 D:暖纸编辑(浅色 · 墨绿衬线) ---------- */
+body[data-style="editorial"] {
+  --font-ui: "Avenir Next", "PingFang SC", sans-serif;
+  --font-display: "Charter", "Songti SC", Georgia, serif;
+  --font-mono: "SF Mono", Menlo, monospace;
+  --bg: #f6f2e9; --bg-alt: #efe9dc; --bg-panel: #fdfbf5; --bg-raise: #ffffff;
+  --border: #ddd4c2; --border-strong: #c4b89f;
+  --text: #2b2721; --text-dim: #8d8471; --null: #b3a992;
+  --accent: #2f5d4e; --accent-ink: #fdfbf5; --accent-dim: rgba(47,93,78,.10);
+  --sel: rgba(47,93,78,.10); --sel-bar: #2f5d4e;
+  --dirty-bg: #f5e3bd; --dirty-bar: #b57e2a;
+  --error: #b5432a; --ok: #4e7d43; --warn: #b57e2a;
+  --r-lg: 12px; --r: 8px; --r-sm: 6px;
+  --bw: 1px; --shadow-pop: 0 18px 50px rgba(60,50,30,.22);
+  --grid-line: #eae3d3;
+  --head-caps: uppercase; --head-track: .1em;
+}
+
+/* ---------- 风格 E:Apple 原生精修(浅色 · 苹果蓝) ---------- */
+/* 注:应用户点名要求采用 Apple 品牌体系,-apple-system/SF 字体为真实平台约束,覆盖技能默认字体禁令 */
+body[data-style="apple"] {
+  --font-ui: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+  --font-display: -apple-system, "SF Pro Display", "PingFang SC", sans-serif;
+  --font-mono: "SF Mono", Menlo, monospace;
+  --bg: #ffffff; --bg-alt: #f5f5f7; --bg-panel: #f6f6f8; --bg-raise: #ffffff;
+  --border: #e5e5ea; --border-strong: #d2d2d7;
+  --text: #1d1d1f; --text-dim: #86868b; --null: #aeaeb2;
+  --accent: #007aff; --accent-ink: #ffffff; --accent-dim: rgba(0,122,255,.09);
+  --sel: rgba(0,122,255,.09); --sel-bar: #007aff;
+  --dirty-bg: rgba(255,149,0,.13); --dirty-bar: #ff9500;
+  --error: #ff3b30; --ok: #34c759; --warn: #ff9500;
+  --r-lg: 12px; --r: 8px; --r-sm: 6px;
+  --bw: 1px; --shadow-pop: 0 14px 44px rgba(0,0,0,.16);
+  --grid-line: #ececf0;
+  --head-caps: none; --head-track: 0;
+}
+
+/* ---------- 风格 F:微信风(浅色 · 微信绿 · 卡片列表) ---------- */
+/* 注:应用户点名要求采用微信品牌色 #07C160,系统字体为微信桌面端真实约束 */
+body[data-style="wechat"] {
+  --font-ui: "PingFang SC", -apple-system, sans-serif;
+  --font-display: "PingFang SC", -apple-system, sans-serif;
+  --font-mono: "SF Mono", Menlo, monospace;
+  --bg: #ffffff; --bg-alt: #f7f7f7; --bg-panel: #ededed; --bg-raise: #ffffff;
+  --border: #e3e3e3; --border-strong: #d5d5d5;
+  --text: #191919; --text-dim: #9c9c9c; --null: #c4c4c4;
+  --accent: #07c160; --accent-ink: #ffffff; --accent-dim: rgba(7,193,96,.10);
+  --sel: rgba(7,193,96,.09); --sel-bar: #07c160;
+  --dirty-bg: rgba(250,157,59,.14); --dirty-bar: #fa9d3b;
+  --error: #fa5151; --ok: #07c160; --warn: #fa9d3b;
+  --r-lg: 10px; --r: 8px; --r-sm: 6px;
+  --bw: 1px; --shadow-pop: 0 12px 40px rgba(0,0,0,.14);
+  --grid-line: #f0f0f0;
+  --head-caps: none; --head-track: 0;
+}
+/* 微信味:侧栏浅灰、数据行白卡片化 */
+body[data-style="wechat"] .grow,
+body[data-style="wechat"] .grow:nth-child(even) { background: var(--bg-raise); }
+body[data-style="wechat"] .grow { margin: 0 6px 2px; border-radius: 6px; border-bottom: none; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+body[data-style="wechat"] .ghead { margin: 0 6px; border-radius: 6px 6px 0 0; }
+body[data-style="wechat"] .brand .logo { border-radius: 8px; }
+
+/* ---------- 风格 G:晨雾清新(浅色 · 清爽蓝白) ---------- */
+body[data-style="mist"] {
+  --font-ui: "Avenir Next", "PingFang SC", sans-serif;
+  --font-display: "Avenir Next", "PingFang SC", sans-serif;
+  --font-mono: "SF Mono", Menlo, monospace;
+  --bg: #ffffff; --bg-alt: #f0f4fa; --bg-panel: #f5f8fc; --bg-raise: #ffffff;
+  --border: #e4e9f2; --border-strong: #d3dbe8;
+  --text: #253347; --text-dim: #8a97ab; --null: #b6c0cf;
+  --accent: #2f7de8; --accent-ink: #ffffff; --accent-dim: rgba(47,125,232,.09);
+  --sel: rgba(47,125,232,.08); --sel-bar: #2f7de8;
+  --dirty-bg: rgba(242,169,59,.13); --dirty-bar: #f2a93b;
+  --error: #e25c4a; --ok: #34b96f; --warn: #f2a93b;
+  --r-lg: 12px; --r: 8px; --r-sm: 6px;
+  --bw: 1px; --shadow-pop: 0 14px 44px rgba(47,90,150,.14);
+  --grid-line: #edf1f7;
+  --head-caps: none; --head-track: 0;
+}
+
+/* ---------- 风格 H:奶油柔光(浅色 · 蜜桃暖调) ---------- */
+body[data-style="cream"] {
+  --font-ui: "Avenir Next", "PingFang SC", sans-serif;
+  --font-display: "Avenir Next", "PingFang SC", sans-serif;
+  --font-mono: "SF Mono", Menlo, monospace;
+  --bg: #fdfaf4; --bg-alt: #f6efe2; --bg-panel: #f7f1e6; --bg-raise: #fffefb;
+  --border: #ece2d2; --border-strong: #ddd0ba;
+  --text: #3d3830; --text-dim: #97907f; --null: #c2b9a6;
+  --accent: #e8825f; --accent-ink: #ffffff; --accent-dim: rgba(232,130,95,.11);
+  --sel: rgba(232,130,95,.10); --sel-bar: #e8825f;
+  --dirty-bg: rgba(224,166,63,.15); --dirty-bar: #e0a63f;
+  --error: #d9584a; --ok: #6fae7c; --warn: #e0a63f;
+  --r-lg: 14px; --r: 10px; --r-sm: 8px;
+  --bw: 1px; --shadow-pop: 0 16px 46px rgba(120,90,50,.16);
+  --grid-line: #f2ead9;
+  --head-caps: none; --head-track: 0;
+}
+
+html, body { height: 100%; }
+body {
+  font: 13px/1.45 var(--font-ui);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+svg { display: block; flex: 0 0 auto; }
+.ic { width: 13px; height: 13px; stroke: currentColor; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- 三栏骨架 ---------- */
+.app { display: flex; height: 100vh; }
+
+.sidebar {
+  width: 218px; flex: 0 0 218px;
+  background: var(--bg-panel);
+  border-right: var(--bw) solid var(--border);
+  display: flex; flex-direction: column;
+}
+.brand {
+  display: flex; align-items: center; gap: 8px;
+  height: 44px; padding: 0 14px;
+  border-bottom: var(--bw) solid var(--border);
+}
+.brand .logo {
+  width: 18px; height: 18px; border-radius: var(--r-sm);
+  background: var(--accent); color: var(--accent-ink);
+  display: grid; place-items: center;
+  font-family: var(--font-display); font-size: 11px; font-weight: 700;
+}
+.brand .name {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 12.5px; letter-spacing: .12em;
+}
+.sidebar-search {
+  margin: 10px 10px 4px; position: relative;
+}
+.sidebar-search input {
+  width: 100%; padding: 5px 8px 5px 26px;
+  border: var(--bw) solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--bg); color: var(--text);
+  font: 11.5px var(--font-ui); outline: none;
+}
+.sidebar-search .ic { position: absolute; left: 8px; top: 7px; color: var(--text-dim); }
+.side-section {
+  padding: 10px 14px 4px; display: flex; align-items: center; gap: 6px;
+  color: var(--text-dim); font-size: 10px; font-weight: 700;
+  text-transform: var(--head-caps); letter-spacing: var(--head-track);
+}
+.side-section .add { margin-left: auto; color: var(--text-dim); cursor: pointer; }
+.side-section .add:hover { color: var(--accent); }
+.tree { flex: 1; overflow: hidden; padding: 0 6px 8px; }
+.tree-row {
+  display: flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 8px; border-radius: var(--r-sm);
+  font-size: 12px; white-space: nowrap;
+}
+.tree-row .caret { color: var(--text-dim); width: 10px; }
+.tree-row .lbl { overflow: hidden; text-overflow: ellipsis; }
+.tree-row .badge { margin-left: auto; font-size: 9.5px; color: var(--text-dim); font-family: var(--font-mono); }
+.tree-row.active { background: var(--sel); box-shadow: inset 2px 0 0 var(--sel-bar); }
+.tree-row .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.tree-row .dot.off { background: var(--text-dim); opacity: .5; }
+.tree-row.child { padding-left: 26px; }
+.tree-row.ghost { color: var(--text-dim); }
+
+/* ---------- 主区 ---------- */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.tabsbar {
+  height: 36px; flex: 0 0 36px;
+  display: flex; align-items: stretch;
+  background: var(--bg-alt);
+  border-bottom: var(--bw) solid var(--border);
+}
+.tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 12px; font-size: 12px;
+  color: var(--text-dim);
+  border-right: var(--bw) solid var(--border);
+  position: relative; white-space: nowrap;
+}
+.tab.active { background: var(--bg); color: var(--text); }
+.tab.active::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: calc(-1 * var(--bw));
+  height: 2px; background: var(--accent);
+}
+.tab .kind { font-size: 9px; padding: 1px 5px; border-radius: var(--r-sm); border: var(--bw) solid var(--border-strong); color: var(--text-dim); }
+.tab .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--dirty-bar); }
+.tab .x { opacity: 0; }
+.tab:hover .x { opacity: .7; }
+.tab-new { display: flex; align-items: center; padding: 0 12px; color: var(--text-dim); }
+
+.toolbar {
+  height: 42px; flex: 0 0 42px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 12px;
+  border-bottom: var(--bw) solid var(--border);
+  background: var(--bg);
+}
+.tb-title { display: flex; align-items: baseline; gap: 8px; margin-right: 8px; }
+.tb-title .t { font-family: var(--font-display); font-size: 15px; font-weight: 700; }
+.tb-title .s { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+.btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  border: var(--bw) solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--bg); color: var(--text);
+  font: 12px var(--font-ui); cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn .ic { width: 12px; height: 12px; }
+.spacer { flex: 1; }
+.search-pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; min-width: 170px;
+  border: var(--bw) solid var(--border-strong);
+  border-radius: var(--r);
+  color: var(--text-dim); font-size: 12px;
+}
+.filterchip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--accent-dim); color: var(--accent);
+  border: 1px solid var(--accent);
+  font-size: 11px; font-weight: 600;
+}
+
+.content { flex: 1; display: flex; min-height: 0; }
+
+/* ---------- 网格 ---------- */
+.gridwrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.grid { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.ghead {
+  display: flex; height: 32px;
+  background: var(--bg-alt);
+  border-bottom: var(--bw) solid var(--border-strong);
+}
+.ghcell {
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 10px;
+  border-right: var(--bw) solid var(--grid-line);
+  font-size: 10.5px; font-weight: 700;
+  text-transform: var(--head-caps); letter-spacing: var(--head-track);
+  color: var(--text-dim); white-space: nowrap;
+}
+.ghcell .ty { font-family: var(--font-mono); font-size: 9px; font-weight: 400; opacity: .75; }
+.ghcell .key { color: var(--accent); font-size: 8.5px; border: 1px solid var(--accent); padding: 0 3px; border-radius: 2px; font-family: var(--font-mono); }
+.grow { display: flex; height: 32px; border-bottom: 1px solid var(--grid-line); background: var(--bg); }
+.grow:nth-child(even) { background: var(--bg-alt); }
+.grow.selected { background: var(--sel); box-shadow: inset 2px 0 0 var(--sel-bar); }
+.gcell {
+  display: flex; align-items: center;
+  padding: 0 10px; font-size: 12px;
+  border-right: var(--bw) solid var(--grid-line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+.gcell.txt { font-family: var(--font-ui); }
+.gcell.num { justify-content: flex-end; font-variant-numeric: tabular-nums; }
+.gcell.nullv { color: var(--null); font-style: italic; }
+.gcell.dirty { background: var(--dirty-bg); box-shadow: inset 3px 0 0 var(--dirty-bar); font-weight: 600; }
+.gcell .st { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+.gcell .st::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+.gcell .st.paid::before { background: var(--ok); }
+.gcell .st.pending::before { background: var(--warn); }
+.gcell .st.failed::before { background: var(--error); }
+.gcell .st.refunded::before { background: var(--text-dim); }
+
+.statusbar {
+  height: 28px; flex: 0 0 28px;
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 12px;
+  border-top: var(--bw) solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim); font-size: 11px; font-family: var(--font-mono);
+}
+.statusbar .ok-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.statusbar .b { color: var(--text); font-weight: 600; }
+.statusbar .sep { opacity: .4; }
+
+/* ---------- 详情面板 ---------- */
+.detail {
+  width: 236px; flex: 0 0 236px;
+  background: var(--bg-panel);
+  border-left: var(--bw) solid var(--border);
+  display: flex; flex-direction: column;
+}
+.dt-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px;
+  font-size: 10px; font-weight: 700; color: var(--text-dim);
+  text-transform: var(--head-caps); letter-spacing: var(--head-track);
+  border-bottom: var(--bw) solid var(--border);
+}
+.kv { padding: 4px 12px 10px; display: grid; grid-template-columns: 72px 1fr; gap: 5px 8px; font-size: 11.5px; }
+.kv dt { color: var(--text-dim); }
+.kv dd { font-family: var(--font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-sec { border-top: var(--bw) solid var(--border); }
+.col-row {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 5px 12px; font-size: 11.5px;
+  border-bottom: 1px solid var(--grid-line);
+}
+.col-row .n { font-weight: 600; }
+.col-row .t { color: var(--text-dim); font-family: var(--font-mono); font-size: 10px; }
+.col-row .f { margin-left: auto; color: var(--accent); font-size: 9px; font-family: var(--font-mono); }
+.sqlbox {
+  margin: 10px 12px; padding: 8px 10px;
+  border: var(--bw) solid var(--border-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r);
+  background: var(--bg);
+  font: 10.5px/1.6 var(--font-mono);
+  color: var(--text-dim); white-space: pre-wrap;
+}
+.sqlbox b { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body data-style="industrial">
+<div class="app">
+
+  <!-- ======= 侧边栏 ======= -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">D</div>
+      <div class="name">DB STUDIO</div>
+    </div>
+    <div class="sidebar-search">
+      <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input placeholder="搜索表、连接…" readonly>
+    </div>
+    <div class="side-section">连接
+      <span class="add"><svg class="ic" viewBox="0 0 24 24" style="width:11px;height:11px"><path d="M12 5v14M5 12h14"/></svg></span>
+    </div>
+    <div class="tree">
+      <div class="tree-row"><span class="caret">▾</span><span class="dot"></span><span class="lbl"><b>生产环境</b> · MySQL</span></div>
+      <div class="tree-row child"><span class="caret">▾</span><svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span class="lbl">db_orders</span></div>
+      <div class="tree-row child active"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg><span class="lbl">orders</span><span class="badge">1,204,553</span></div>
+      <div class="tree-row child"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg><span class="lbl">order_items</span><span class="badge">4,881,022</span></div>
+      <div class="tree-row child"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg><span class="lbl">users</span><span class="badge">86,412</span></div>
+      <div class="tree-row child"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg><span class="lbl">payments</span><span class="badge">1,192,047</span></div>
+      <div class="tree-row child"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg><span class="lbl">shipments</span><span class="badge">998,340</span></div>
+      <div class="tree-row"><span class="caret">▸</span><span class="dot off"></span><span class="lbl"><b>测试库</b> · MySQL</span></div>
+      <div class="tree-row"><span class="caret">▸</span><span class="dot off"></span><span class="lbl"><b>数仓</b> · PostgreSQL</span></div>
+      <div class="tree-row ghost"><span class="caret" style="visibility:hidden">·</span><span class="lbl">+ 新建连接</span></div>
+    </div>
+  </aside>
+
+  <!-- ======= 主区 ======= -->
+  <div class="main">
+    <div class="tabsbar">
+      <div class="tab active"><span class="kind">表</span>orders<span class="dirty"></span>
+        <span class="x"><svg class="ic" viewBox="0 0 24 24" style="width:9px;height:9px"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+      </div>
+      <div class="tab"><span class="kind">表</span>users</div>
+      <div class="tab"><span class="kind">SQL</span>查询 #1 — 大额订单</div>
+      <div class="tab"><span class="kind">表</span>payments</div>
+      <div class="tab-new"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M12 5v14M5 12h14"/></svg></div>
+    </div>
+
+    <div class="toolbar">
+      <div class="tb-title"><span class="t">orders</span><span class="s">db_orders @ 生产环境</span></div>
+      <span class="filterchip"><svg class="ic" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M22 3H2l8 9.5V19l4 2v-8.5z"/></svg>status ≠ failed</span>
+      <button class="btn"><svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新增行</button>
+      <button class="btn"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>刷新</button>
+      <button class="btn"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>导出</button>
+      <span class="spacer"></span>
+      <div class="search-pill"><svg class="ic" viewBox="0 0 24 24" style="width:11px;height:11px"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>在表中搜索…</div>
+    </div>
+
+    <div class="content">
+      <div class="gridwrap">
+        <div class="grid">
+          <div class="ghead">
+            <div class="ghcell" style="width:70px"><span class="key">PK</span>id</div>
+            <div class="ghcell" style="width:170px">customer <span class="ty">varchar</span></div>
+            <div class="ghcell" style="width:120px;justify-content:flex-end">amount <span class="ty">decimal</span></div>
+            <div class="ghcell" style="width:110px">status <span class="ty">enum</span></div>
+            <div class="ghcell" style="width:100px">city <span class="ty">varchar</span></div>
+            <div class="ghcell" style="width:170px">created_at <span class="ty">datetime</span></div>
+            <div class="ghcell" style="flex:1;border-right:none">note <span class="ty">text</span></div>
+          </div>
+          <div class="grow">
+            <div class="gcell num">10241</div><div class="gcell txt">上海云帆科技有限公司</div>
+            <div class="gcell num dirty">15,860.00</div><div class="gcell txt"><span class="st paid">paid</span></div>
+            <div class="gcell txt">上海</div><div class="gcell">2026-09-25 14:22:08</div><div class="gcell txt">加急发货</div>
+          </div>
+          <div class="grow">
+            <div class="gcell num">10242</div><div class="gcell txt">李慕白</div>
+            <div class="gcell num">328.50</div><div class="gcell txt"><span class="st pending">pending</span></div>
+            <div class="gcell txt">杭州</div><div class="gcell">2026-09-25 15:01:33</div><div class="gcell txt"></div>
+          </div>
+          <div class="grow">
+            <div class="gcell num">10243</div><div class="gcell txt nullv">NULL</div>
+            <div class="gcell num">99.00</div><div class="gcell txt"><span class="st failed">failed</span></div>
+            <div class="gcell txt nullv">NULL</div><div class="gcell">2026-09-25 16:44:10</div><div class="gcell txt">风控拦截</div>
+          </div>
+          <div class="grow selected">
+            <div class="gcell num">10244</div><div class="gcell txt">深圳市极速物流有限公司</div>
+            <div class="gcell num">45,200.00</div><div class="gcell txt"><span class="st paid">paid</span></div>
+            <div class="gcell txt">深圳</div><div class="gcell">2026-09-26 09:12:45</div><div class="gcell txt">月度大客户</div>
+          </div>
+          <div class="grow">
+            <div class="gcell num">10245</div><div class="gcell txt">王小满</div>
+            <div class="gcell num dirty">1,299.00</div><div class="gcell txt"><span class="st refunded">refunded</span></div>
+            <div class="gcell txt">成都</div><div class="gcell">2026-09-26 10:03:21</div><div class="gcell txt">尺码不符</div>
+          </div>
+          <div class="grow">
+            <div class="gcell num">10246</div><div class="gcell txt">北京麓川文化传媒</div>
+            <div class="gcell num">8,740.00</div><div class="gcell txt"><span class="st paid">paid</span></div>
+            <div class="gcell txt nullv">NULL</div><div class="gcell">2026-09-26 10:31:02</div><div class="gcell txt"></div>
+          </div>
+          <div class="grow">
+            <div class="gcell num">10247</div><div class="gcell txt">陈拾光</div>
+            <div class="gcell num">59.90</div><div class="gcell txt"><span class="st pending">pending</span></div>
+            <div class="gcell txt">广州</div><div class="gcell">2026-09-26 11:18:47</div><div class="gcell txt"></div>
+          </div>
+          <div class="grow">
+            <div class="gcell num">10248</div><div class="gcell txt">杭州见山茶事</div>
+            <div class="gcell num">2,468.00</div><div class="gcell txt"><span class="st paid">paid</span></div>
+            <div class="gcell txt">杭州</div><div class="gcell">2026-09-26 11:52:19</div><div class="gcell txt">含赠品</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======= 详情面板 ======= -->
+      <aside class="detail">
+        <div class="dt-head">行详情 · #10244</div>
+        <dl class="kv">
+          <dt>customer</dt><dd>深圳市极速物流…</dd>
+          <dt>amount</dt><dd>45200.00</dd>
+          <dt>status</dt><dd>paid</dd>
+          <dt>city</dt><dd>深圳</dd>
+          <dt>created_at</dt><dd>2026-09-26 09:12:45</dd>
+        </dl>
+        <div class="dt-sec">
+          <div class="dt-head">列结构</div>
+          <div class="col-row"><span class="n">id</span><span class="t">bigint</span><span class="f">PK·AI</span></div>
+          <div class="col-row"><span class="n">customer</span><span class="t">varchar(128)</span></div>
+          <div class="col-row"><span class="n">amount</span><span class="t">decimal(12,2)</span></div>
+          <div class="col-row"><span class="n">status</span><span class="t">enum</span><span class="f">IDX</span></div>
+        </div>
+        <div class="dt-sec">
+          <div class="dt-head">最近 SQL</div>
+          <div class="sqlbox"><b>SELECT</b> * <b>FROM</b> orders
+<b>WHERE</b> status != <b>'failed'</b>
+<b>ORDER BY</b> created_at <b>DESC</b>
+<b>LIMIT</b> 200;</div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="statusbar">
+      <span class="ok-dot"></span><span>已连接 · localhost:3306</span>
+      <span class="sep">|</span><span>1,204,553 行</span>
+      <span class="sep">|</span><span class="b">2 处未保存修改</span>
+      <span class="sep">|</span><span>查询 0.042s</span>
+      <span style="margin-left:auto">UTF-8 · autocommit</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

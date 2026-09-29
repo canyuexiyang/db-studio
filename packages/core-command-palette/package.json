@@ -1,0 +1,15 @@
+{
+  "name": "@dbstudio/core-command-palette",
+  "version": "0.1.0",
+  "description": "命令面板：前缀模式（搜表 / :命令 / @历史）、模糊+拼音首字母匹配、最近使用加权排序（PRD §6.8 D5）",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.1"
+  }
+}

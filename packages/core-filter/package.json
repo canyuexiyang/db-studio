@@ -1,0 +1,19 @@
+{
+  "name": "@dbstudio/core-filter",
+  "version": "0.1.0",
+  "description": "筛选构建器：条件模型 → 参数化 WHERE（操作符按类型动态、AND/OR、一层括号分组、可读预览）（PRD §6.3.3）",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "@dbstudio/core-driver-mysql": "*",
+    "@dbstudio/core-schema-cache": "*"
+  }
+}

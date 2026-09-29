@@ -1,0 +1,97 @@
+{
+  "group": "C1",
+  "label": "C1 朴素（启动路径同步 require 全部依赖）",
+  "sysinfo": {
+    "electron": "44.4.3",
+    "node": "24.21.0",
+    "chromium": "152.0.7977.130",
+    "platform": "darwin",
+    "arch": "arm64",
+    "darwin": "27.0.0"
+  },
+  "n": 5,
+  "runs": [
+    {
+      "run": "1",
+      "totalFromPerf": 267.2,
+      "totalFromSpawn": 317,
+      "spawnToCreationMs": 1,
+      "phases": {
+        "execToModuleTop": 63.7,
+        "moduleTopToWhenReady": 59.3,
+        "whenReadyToWindow": 44,
+        "windowToDidFinishLoad": 90.8,
+        "didFinishLoadToPaint": 9.4,
+        "totalExecToInteractive": 267.2
+      }
+    },
+    {
+      "run": "2",
+      "totalFromPerf": 245.9,
+      "totalFromSpawn": 292,
+      "spawnToCreationMs": 0.6,
+      "phases": {
+        "execToModuleTop": 62.2,
+        "moduleTopToWhenReady": 59.1,
+        "whenReadyToWindow": 43.2,
+        "windowToDidFinishLoad": 65.4,
+        "didFinishLoadToPaint": 16,
+        "totalExecToInteractive": 245.9
+      }
+    },
+    {
+      "run": "3",
+      "totalFromPerf": 247.4,
+      "totalFromSpawn": 297,
+      "spawnToCreationMs": 1.4,
+      "phases": {
+        "execToModuleTop": 65.5,
+        "moduleTopToWhenReady": 62.6,
+        "whenReadyToWindow": 43.2,
+        "windowToDidFinishLoad": 73,
+        "didFinishLoadToPaint": 3.2,
+        "totalExecToInteractive": 247.4
+      }
+    },
+    {
+      "run": "4",
+      "totalFromPerf": 262.1,
+      "totalFromSpawn": 312,
+      "spawnToCreationMs": 0.3,
+      "phases": {
+        "execToModuleTop": 62.9,
+        "moduleTopToWhenReady": 59.2,
+        "whenReadyToWindow": 43.7,
+        "windowToDidFinishLoad": 80.2,
+        "didFinishLoadToPaint": 16,
+        "totalExecToInteractive": 262.1
+      }
+    },
+    {
+      "run": "5",
+      "totalFromPerf": 238.3,
+      "totalFromSpawn": 288,
+      "spawnToCreationMs": 1.3,
+      "phases": {
+        "execToModuleTop": 62.5,
+        "moduleTopToWhenReady": 58.1,
+        "whenReadyToWindow": 43,
+        "windowToDidFinishLoad": 67.8,
+        "didFinishLoadToPaint": 6.9,
+        "totalExecToInteractive": 238.3
+      }
+    }
+  ],
+  "p50": {
+    "total": 247.4,
+    "totalSpawn": 297,
+    "phases": {
+      "execToModuleTop": 62.9,
+      "moduleTopToWhenReady": 59.2,
+      "whenReadyToWindow": 43.2,
+      "windowToDidFinishLoad": 73,
+      "didFinishLoadToPaint": 9.4,
+      "totalExecToInteractive": 247.4
+    }
+  }
+}

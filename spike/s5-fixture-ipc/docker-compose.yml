@@ -1,0 +1,33 @@
+# DB Studio S5 fixture — MySQL 8 on arm64 (Apple M5 Pro)
+# 宿主端口 13306 -> 容器 3306（避免与已有 mysql-local:3308 冲突）
+# 数据用 named volume 持久化：dbstudio_mysql_data（后续所有性能测试复用同一份 fixture）
+services:
+  mysql:
+    image: mysql:8.0
+    platform: linux/arm64
+    container_name: dbstudio-mysql
+    command:
+      - --innodb-buffer-pool-size=2G
+      - --innodb-log-file-size=512M
+      - --innodb-flush-log-at-trx-commit=2
+      - --sync-binlog=0
+      - --max-connections=200
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: dbstudio_local_2026
+      MYSQL_DATABASE: bench
+    ports:
+      - "13306:3306"
+    volumes:
+      - dbstudio_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pdbstudio_local_2026"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  dbstudio_mysql_data:
+    name: dbstudio_mysql_data

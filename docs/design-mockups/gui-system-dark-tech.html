@@ -1,0 +1,1830 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DB Studio · 深色科技精密风 GUI 方案预览</title>
+<style>
+/* ============================================================
+   DB Studio —— 深色科技精密风 GUI 方案预览
+   基线来源：ui-style-selection.html「深色科技精密风 / Dark Tech Precision」
+   本文件同时是【规范文档】与【可交互预览】，两件事都要看得见。
+   ============================================================ */
+
+/* ---------- 文档外壳（浅色，让深色 mockup 跳出来）---------- */
+:root{
+  --paper:#F7F7F5;
+  --card:#FFFFFF;
+  --card2:#FBFBFA;
+  --ink:#17191D;
+  --ink2:#474D57;
+  --ink3:#848B96;
+  --line:#E4E2DC;
+  --line2:#CFCCC3;
+  --doc-accent:#1F7A93;
+  --doc-soft:rgba(31,122,147,.08);
+  --code-bg:#14161A;
+  --code-ink:#D9DBE0;
+  --sans:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB",sans-serif;
+  --mono:"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --r-s:4px; --r-m:8px; --r-l:14px;
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--sans);font-size:15px;line-height:1.68;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1220px;margin:0 auto;padding:0 30px;}
+a{color:var(--doc-accent);text-decoration:none;}
+
+/* ---------- topbar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:200;background:rgba(247,247,245,.88);
+  backdrop-filter:saturate(140%) blur(12px);border-bottom:1px solid var(--line);
+}
+.topbar .wrap{display:flex;align-items:center;gap:20px;height:56px;}
+.brandmark{display:flex;align-items:center;gap:9px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;font-size:14.5px;}
+.topnav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap;}
+.topnav a{font-size:13px;color:var(--ink2);padding:5px 10px;border-radius:6px;font-variant-numeric:tabular-nums;}
+.topnav a:hover{background:rgba(20,20,25,.055);color:var(--ink);}
+
+/* ---------- hero ---------- */
+.hero{
+  padding:58px 0 38px;border-bottom:1px solid var(--line);
+  background:radial-gradient(1000px 300px at 84% -12%,rgba(31,122,147,.09),transparent 62%),
+             radial-gradient(700px 240px at 2% 6%,rgba(30,60,90,.05),transparent 60%);
+}
+.kicker{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--doc-accent);display:flex;align-items:center;gap:9px;margin-bottom:16px;
+}
+.kicker::after{content:"";height:1px;width:70px;background:var(--line2);}
+h1{font-size:clamp(27px,3.6vw,40px);line-height:1.18;letter-spacing:-.022em;margin:0 0 16px;font-weight:600;max-width:24ch;}
+.lede{font-size:16px;color:var(--ink2);max-width:78ch;margin:0 0 24px;}
+.metagrid{display:flex;flex-wrap:wrap;gap:10px 32px;padding-top:20px;border-top:1px solid var(--line);margin-top:24px;}
+.metagrid div{font-size:12.5px;color:var(--ink3);}
+.metagrid b{display:block;color:var(--ink);font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;}
+
+/* ---------- section ---------- */
+section{padding:54px 0;border-bottom:1px solid var(--line);}
+.sechead{display:flex;align-items:baseline;gap:13px;margin-bottom:6px;}
+.secnum{font-family:var(--mono);font-size:12px;color:var(--doc-accent);font-weight:500;padding-top:6px;}
+h2{font-size:clamp(21px,2.4vw,27px);letter-spacing:-.018em;margin:0;font-weight:600;}
+.secdesc{color:var(--ink2);max-width:80ch;margin:10px 0 26px;font-size:14.5px;}
+h3.sub{font-size:16.5px;font-weight:600;letter-spacing:-.012em;margin:34px 0 12px;}
+h3.sub:first-of-type{margin-top:6px;}
+
+/* ---------- callout ---------- */
+.callout{
+  margin:26px 0 0;padding:15px 18px;background:var(--doc-soft);
+  border:1px solid rgba(31,122,147,.2);border-left:3px solid var(--doc-accent);
+  border-radius:var(--r-s);font-size:14px;color:#124452;
+}
+.callout.warn{background:rgba(180,64,15,.07);border-color:rgba(180,64,15,.22);border-left-color:#B4400F;color:#5A2410;}
+.callout b{font-weight:600;}
+
+/* ---------- generic card / table ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-l);box-shadow:0 1px 2px rgba(20,20,25,.05);overflow:hidden;margin-bottom:22px;}
+.cardhead{padding:17px 20px;border-bottom:1px solid var(--line);background:var(--card2);display:flex;align-items:center;gap:14px;}
+.cardhead h4{margin:0;font-size:16px;font-weight:600;letter-spacing:-.012em;}
+.cardhead .en{font-family:var(--mono);font-size:11.5px;color:var(--ink3);}
+.cardhead .sp{margin-left:auto;}
+.cardbody{padding:18px 20px;}
+
+table.tk{width:100%;border-collapse:collapse;font-size:13px;}
+table.tk th{text-align:left;font-weight:600;font-size:11.5px;color:var(--ink3);font-family:var(--mono);letter-spacing:.04em;padding:0 12px 8px 0;border-bottom:1px solid var(--line2);}
+table.tk td{padding:9px 12px 9px 0;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.55;color:var(--ink2);}
+table.tk tr:last-child td{border-bottom:0;}
+table.tk td:first-child{font-family:var(--mono);font-size:12px;color:var(--ink);white-space:nowrap;font-weight:500;}
+table.tk .sw{display:inline-block;width:13px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.18);vertical-align:-2px;margin-right:7px;}
+table.tk code{font-family:var(--mono);font-size:12px;background:var(--card2);border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--ink);}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:4px;white-space:nowrap;}
+.t-ok{background:#E8F2E6;color:#2F5D26;}
+.t-warn{background:#FBF0DD;color:#7A5108;}
+.t-bad{background:#FBE7E3;color:#8A2E18;}
+.t-info{background:#E6F0F4;color:#1B5A6B;}
+
+/* ---------- palette strip ---------- */
+.pal{display:flex;height:52px;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:14px;}
+.pal span{flex:1;position:relative;}
+.pal span i{
+  position:absolute;left:0;right:0;bottom:0;font-style:normal;font-family:var(--mono);font-size:9px;
+  text-align:center;padding:3px 0;opacity:0;transition:.16s;background:rgba(255,255,255,.94);color:#111;
+}
+.pal span:hover i{opacity:1;}
+.palrow{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 20px;}
+.palchip{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--card);border-radius:6px;padding:5px 10px;font-size:12px;font-family:var(--mono);color:var(--ink2);}
+.palchip b{display:block;width:14px;height:14px;border-radius:4px;border:1px solid rgba(0,0,0,.16);}
+
+/* ---------- code block ---------- */
+pre.wire{
+  background:var(--code-bg);color:var(--code-ink);border-radius:8px;padding:16px 18px;
+  overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.62;margin:0;border:1px solid #2A2E36;
+}
+pre.wire .cm{color:#7C8592;}
+pre.wire b{color:#7FD1E8;font-weight:500;}
+pre.wire i{color:#8FD3A8;font-style:normal;}
+pre.wire u{color:#E8C07D;text-decoration:none;}
+
+/* ============================================================
+   ★ 核心：.ds 作用域 —— DS 的全部视觉变量都在这里
+     同一页面可并排放多个不同主题的 mockup，互不干扰
+   ============================================================ */
+.ds{
+  font-family:var(--sans);
+  font-size:12px;line-height:1.45;
+  font-variant-numeric:tabular-nums;
+  background:var(--bg);
+  color:var(--text);
+  position:relative;
+  overflow:hidden;
+  border-radius:10px;
+  border:1px solid var(--border);
+  user-select:none;
+}
+.ds *{box-sizing:border-box;}
+
+/* ---- 深色（默认皮肤）---- */
+.ds[data-theme="dark"]{
+  --bg:#08090A;
+  --surface:#0F1011;
+  --elev:#1A1C1F;
+  --border:#23252A;
+  --border-strong:#33363D;
+  --rowline:#1C1E22;
+  --head:rgba(255,255,255,.035);
+  --hover:rgba(255,255,255,.055);
+  --text:#F7F8F8;
+  --t2:#B4BCD0;
+  --t3:#8A8F98;
+  --accent:#3BA9C9;
+  --accent-soft:rgba(59,169,201,.16);
+  --accent-text:#7FD1E8;
+  --on-accent:#04191F;
+  --ok:#4CB782;
+  --warn:#F2C94C;
+  --err:#EB5757;
+  --track:rgba(255,255,255,.09);
+  --null:#5C6169;
+  --dirty:rgba(242,201,76,.10);
+  --dirty-bar:#F2C94C;
+  --shadow:0 2px 6px rgba(0,0,0,.45);
+  --shadow-pop:0 16px 44px rgba(0,0,0,.62),0 2px 8px rgba(0,0,0,.4);
+  --scroll:rgba(255,255,255,.14);
+}
+/* ---- 浅色（退化风险最高的一档，必须单独设计而非反转）---- */
+.ds[data-theme="light"]{
+  --bg:#FFFFFF;
+  --surface:#FFFFFF;
+  --elev:#F4F5F8;
+  --border:#E5E5E6;
+  --border-strong:#D2D3D6;
+  --rowline:#F0F1F3;
+  --head:rgba(0,0,0,.022);
+  --hover:rgba(0,0,0,.038);
+  --text:#08090A;
+  --t2:#62666D;
+  --t3:#8A8F98;
+  --accent:#1F819A;
+  --accent-soft:rgba(31,129,154,.11);
+  --accent-text:#155F73;
+  --on-accent:#FFFFFF;
+  --ok:#2DA44E;
+  --warn:#BF8700;
+  --err:#D33C2E;
+  --track:rgba(0,0,0,.07);
+  --null:#B0B4BA;
+  --dirty:rgba(191,135,0,.10);
+  --dirty-bar:#BF8700;
+  --shadow:0 1px 2px rgba(0,0,0,.06);
+  --shadow-pop:0 14px 38px rgba(0,0,0,.16),0 2px 6px rgba(0,0,0,.08);
+  --scroll:rgba(0,0,0,.16);
+}
+
+/* ---------- DS 结构 ---------- */
+.ds-titlebar{
+  display:flex;align-items:center;height:38px;padding:0 12px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  position:relative;flex:none;
+}
+.tl{display:flex;gap:8px;padding-left:8px;}
+.tl i{width:12px;height:12px;border-radius:50%;display:block;}
+.tl i:nth-child(1){background:#FF5F57;}
+.tl i:nth-child(2){background:#FEBC2E;}
+.tl i:nth-child(3){background:#28C840;}
+/* 🔴 交通灯占位：x∈[20,62]，首内容必须从 72px 之后开始 */
+.ds-titlebar .tb-name{
+  margin-left:36px;font-size:12.5px;font-weight:600;color:var(--text);letter-spacing:-.01em;
+}
+.ds-titlebar .tb-path{font-size:11px;color:var(--t3);margin-left:8px;font-family:var(--mono);}
+.ds-titlebar .tb-right{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.env-tag{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;padding:2px 7px;border-radius:4px;
+  background:var(--elev);border:1px solid var(--border);color:var(--t3);white-space:nowrap;flex:none;
+}
+.env-tag.prod{background:rgba(235,87,87,.14);border-color:rgba(235,87,87,.4);color:#FF8C8C;}
+.ds[data-theme="light"] .env-tag.prod{color:#B32B1E;background:rgba(211,60,46,.09);border-color:rgba(211,60,46,.32);}
+
+.ds-body{display:flex;height:100%;min-height:0;}
+
+/* ---------- 侧栏 ---------- */
+.ds-side{
+  width:238px;flex:none;background:var(--elev);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;min-height:0;
+}
+.ds-side-head{
+  display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;flex:none;
+  border-bottom:1px solid var(--rowline);
+}
+.ds-side-head .t{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3);font-weight:600;font-family:var(--mono);}
+.ds-side-head .sp{margin-left:auto;}
+.icon-btn{
+  width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;
+  border-radius:5px;border:1px solid transparent;background:transparent;color:var(--t3);
+  cursor:pointer;padding:0;transition:.12s;flex:none;
+}
+.icon-btn:hover{background:var(--hover);color:var(--text);border-color:var(--border);}
+.icon-btn.on{background:var(--accent-soft);color:var(--accent-text);border-color:var(--accent);}
+.ds-tree{flex:1;overflow-y:auto;padding:5px 6px 10px;min-height:0;}
+.ds-tree::-webkit-scrollbar{width:8px;}
+.ds-tree::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:4px;border:2px solid var(--elev);}
+
+.tn{
+  display:flex;align-items:center;gap:6px;height:24px;padding:0 6px;border-radius:5px;
+  color:var(--t2);font-size:12px;cursor:pointer;position:relative;white-space:nowrap;
+}
+.tn:hover{background:var(--hover);color:var(--text);}
+.tn.sel{background:var(--accent-soft);color:var(--accent-text);font-weight:600;box-shadow:inset 2px 0 0 var(--accent);}
+.tn .caret{width:10px;height:10px;flex:none;color:var(--t3);transition:transform .14s;}
+.tn.open>.caret{transform:rotate(90deg);}
+.tn .ic{width:13px;height:13px;flex:none;opacity:.85;}
+.tn .nm{overflow:hidden;text-overflow:ellipsis;}
+.tn .ct{margin-left:auto;font-size:10px;color:var(--t3);font-family:var(--mono);padding-left:6px;}
+.tn .dot{width:6px;height:6px;border-radius:50%;flex:none;}
+.kids{overflow:hidden;max-height:0;transition:max-height .18s ease;}
+.tn.open+.kids{max-height:600px;}
+.kids .tn{padding-left:22px;}
+.kids .kids .tn{padding-left:38px;}
+.ds-tree .grp{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--t3);padding:9px 6px 4px;
+}
+
+/* ---------- 工作区 ---------- */
+.ds-main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg);min-height:0;}
+
+.ds-tabs{display:flex;align-items:stretch;height:34px;background:var(--surface);border-bottom:1px solid var(--border);flex:none;padding-left:4px;}
+.ds-tab{
+  display:flex;align-items:center;gap:7px;padding:0 12px;font-size:12px;color:var(--t3);
+  border-right:1px solid var(--rowline);cursor:pointer;position:relative;white-space:nowrap;
+}
+.ds-tab:hover{color:var(--t2);background:var(--hover);}
+.ds-tab.on{color:var(--text);background:var(--bg);font-weight:600;}
+.ds-tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--accent);}
+.ds-tab .x{width:13px;height:13px;opacity:.5;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.ds-tab .x:hover{background:var(--hover);opacity:1;}
+.ds-tab .kdot{width:6px;height:6px;border-radius:50%;background:var(--dirty-bar);flex:none;}
+.ds-tab.newtab{color:var(--t3);padding:0 10px;border-right:0;}
+
+/* 让位标注：交通灯与首按钮不重叠 */
+.letmark{
+  display:flex;align-items:center;gap:0;height:26px;background:var(--elev);
+  border-bottom:1px solid var(--rowline);font-family:var(--mono);font-size:9.5px;color:var(--t3);flex:none;
+}
+.letmark .zone{display:flex;align-items:center;justify-content:center;height:100%;border-right:1px dashed var(--border-strong);}
+.letmark .zone.z1{width:72px;color:var(--err);}
+.letmark .zone.z2{flex:none;width:210px;color:var(--ok);}
+
+.ds-toolbar{
+  display:flex;align-items:center;gap:6px;height:36px;padding:0 10px;
+  background:var(--surface);border-bottom:1px solid var(--border);flex:none;overflow:hidden;
+}
+.btn{
+  display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;
+  font-size:11.5px;font-family:inherit;font-weight:500;color:var(--t2);
+  background:var(--elev);border:1px solid var(--border);border-radius:6px;
+  cursor:pointer;white-space:nowrap;transition:.12s;flex:none;
+}
+.btn:hover{background:var(--hover);color:var(--text);border-color:var(--border-strong);}
+.btn:active{transform:translateY(.5px);}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600;}
+.btn.pri:hover{filter:brightness(1.1);color:var(--on-accent);}
+.btn.ghost{background:transparent;border-color:transparent;}
+.btn.ghost:hover{background:var(--hover);border-color:var(--border);}
+.btn.danger{color:var(--err);border-color:rgba(235,87,87,.34);background:rgba(235,87,87,.08);}
+.btn.danger:hover{background:rgba(235,87,87,.15);color:var(--err);}
+.btn[disabled]{opacity:.36;cursor:not-allowed;pointer-events:none;}
+.btn svg{width:11px;height:11px;flex:none;}
+.btn .kbd{
+  font-family:var(--mono);font-size:9px;opacity:.62;border:1px solid currentColor;
+  border-radius:3px;padding:0 3px;line-height:1.5;
+}
+.spacer{margin-left:auto;}
+.chip{
+  font-family:var(--mono);font-size:9.5px;padding:2px 7px;border-radius:99px;
+  background:var(--accent-soft);color:var(--accent-text);font-weight:600;white-space:nowrap;flex:none;
+}
+.chip.gray{background:var(--elev);color:var(--t3);border:1px solid var(--border);}
+.vsep{width:1px;height:16px;background:var(--border);flex:none;margin:0 2px;}
+
+/* ---------- 网格 ---------- */
+.ds-gridwrap{flex:1;min-height:0;display:flex;flex-direction:column;position:relative;overflow:hidden;}
+.ds-grid{flex:1;overflow:auto;min-height:0;position:relative;}
+.ds-grid::-webkit-scrollbar{width:10px;height:10px;}
+.ds-grid::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:5px;border:2px solid var(--bg);}
+
+.grow{display:flex;align-items:center;height:26px;font-size:9.5px;letter-spacing:.07em;
+  text-transform:uppercase;font-weight:600;color:var(--t3);background:var(--head);
+  border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;font-family:var(--mono);}
+.grow .gc,.gr .gc{padding:0 9px;border-right:1px solid var(--rowline);display:flex;align-items:center;gap:5px;
+  overflow:hidden;white-space:nowrap;flex:none;}
+.grow .gc{cursor:pointer;}
+.grow .gc:hover{background:var(--hover);color:var(--t2);}
+.grow .gc .ty{font-size:8.5px;color:var(--t3);opacity:.72;letter-spacing:0;text-transform:none;font-weight:400;}
+.grow .gc.sorted{color:var(--accent-text);}
+.grow .gc .sortic{width:8px;height:8px;flex:none;color:var(--accent);}
+.gc.rn{width:42px;justify-content:flex-end;color:var(--t3);font-size:10px;}
+.gc.cb{width:28px;justify-content:center;}
+
+.gr{display:flex;align-items:center;height:28px;font-size:11.5px;color:var(--t2);
+  border-bottom:1px solid var(--rowline);position:relative;white-space:nowrap;}
+.gr:nth-child(odd){background:rgba(255,255,255,.012);}
+.ds[data-theme="light"] .gr:nth-child(odd){background:rgba(0,0,0,.012);}
+.gr:hover{background:var(--hover);}
+.gr.sel{background:var(--accent-soft);}
+.gr.sel .gc{color:var(--text);}
+.gr .gc .v{overflow:hidden;text-overflow:ellipsis;}
+.gr .pk{display:inline-flex;align-items:center;gap:4px;color:var(--accent-text);}
+.gr .pk .ic{width:10px;height:10px;flex:none;}
+.v.null{color:var(--null);font-style:italic;font-family:var(--mono);font-size:10.5px;}
+.v.num{font-family:var(--mono);text-align:right;width:100%;}
+.v.json{font-family:var(--mono);font-size:10.5px;color:var(--t3);}
+.v.time{font-family:var(--mono);font-size:10.5px;}
+.pillst{display:inline-block;font-size:10px;padding:1px 7px;border-radius:99px;font-weight:600;font-family:var(--mono);}
+.pillst.ok{background:rgba(76,183,130,.16);color:var(--ok);}
+.pillst.warn{background:rgba(242,201,76,.16);color:var(--warn);}
+.pillst.err{background:rgba(235,87,87,.16);color:var(--err);}
+.ds[data-theme="light"] .pillst.warn{color:#8A6300;}
+.ds[data-theme="light"] .pillst.ok{color:#1E7A38;}
+.ds[data-theme="light"] .pillst.err{color:#B32B1E;}
+/* 脏单元格：左侧琥珀条 + 底色，绝不整行覆盖 */
+.cell-dirty{background:var(--dirty);box-shadow:inset 2px 0 0 var(--dirty-bar);}
+.cell-sel{box-shadow:inset 0 0 0 1.5px var(--accent);border-radius:2px;}
+
+.ds-status{
+  display:flex;align-items:center;gap:14px;height:24px;padding:0 11px;flex:none;
+  background:var(--surface);border-top:1px solid var(--border);color:var(--t3);font-size:10.5px;
+  font-family:var(--mono);
+}
+.ds-status .lt{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none;}
+.ds-status b{color:var(--t2);font-weight:500;}
+.ds-status .warnv{color:var(--warn);}
+
+/* ---------- 详情面板 ---------- */
+.ds-detail{
+  width:264px;flex:none;background:var(--surface);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;min-height:0;
+}
+.ds-detail-head{display:flex;align-items:center;gap:7px;height:32px;padding:0 10px;flex:none;border-bottom:1px solid var(--rowline);}
+.ds-detail-head .t{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3);font-family:var(--mono);font-weight:600;}
+.ds-detail-body{flex:1;overflow-y:auto;padding:10px;min-height:0;}
+.ds-detail-body::-webkit-scrollbar{width:8px;}
+.ds-detail-body::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:4px;border:2px solid var(--surface);}
+.dsec{margin-bottom:14px;}
+.dsec .dh{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:7px;display:flex;align-items:center;gap:7px;}
+.dsec .dh::after{content:"";flex:1;height:1px;background:var(--rowline);}
+.kv{display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:11.5px;border-bottom:1px dashed var(--rowline);}
+.kv:last-child{border-bottom:0;}
+.kv .k{color:var(--t3);white-space:nowrap;}
+.kv .val{color:var(--text);font-family:var(--mono);font-size:11px;text-align:right;overflow:hidden;text-overflow:ellipsis;}
+.seg{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--elev);}
+.seg button{
+  flex:1;border:0;background:transparent;font:inherit;font-size:10.5px;padding:4px 0;cursor:pointer;
+  color:var(--t3);font-family:var(--mono);transition:.12s;
+}
+.seg button+button{border-left:1px solid var(--border);}
+.seg button.on{background:var(--accent);color:var(--on-accent);font-weight:600;}
+
+/* ---------- 覆盖层：命令面板 / 写预演 ---------- */
+.ds-overlay{
+  position:absolute;inset:0;background:rgba(0,0,0,.5);display:none;
+  align-items:flex-start;justify-content:center;z-index:50;backdrop-filter:blur(2px);
+}
+.ds[data-theme="light"] .ds-overlay{background:rgba(20,20,25,.28);}
+.ds-overlay.on{display:flex;}
+.cmd{
+  width:min(520px,86%);margin-top:60px;background:var(--elev);border:1px solid var(--border-strong);
+  border-radius:10px;box-shadow:var(--shadow-pop);overflow:hidden;
+}
+.cmd-in{display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--rowline);}
+.cmd-in svg{width:14px;height:14px;color:var(--t3);flex:none;}
+.cmd-in input{flex:1;background:transparent;border:0;outline:none;color:var(--text);font:inherit;font-size:13px;}
+.cmd-in input::placeholder{color:var(--t3);}
+.cmd-list{padding:6px;max-height:290px;overflow:auto;}
+.cmd-grp{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);padding:8px 8px 4px;}
+.cmd-item{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:6px;font-size:12.5px;color:var(--t2);cursor:pointer;}
+.cmd-item svg{width:13px;height:13px;color:var(--t3);flex:none;}
+.cmd-item:hover,.cmd-item.on{background:var(--accent-soft);color:var(--accent-text);}
+.cmd-item.on svg{color:var(--accent);}
+.cmd-item .k{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--t3);border:1px solid var(--border);border-radius:4px;padding:1px 5px;}
+.cmd-item.dead{opacity:.42;}
+.cmd-item.dead .warnmark{margin-left:6px;font-family:var(--mono);font-size:9.5px;color:var(--err);}
+
+.dlg{
+  width:min(600px,88%);margin-top:48px;background:var(--elev);border:1px solid var(--border-strong);
+  border-radius:10px;box-shadow:var(--shadow-pop);overflow:hidden;
+}
+.dlg-head{display:flex;align-items:center;gap:9px;padding:13px 16px;border-bottom:1px solid var(--rowline);}
+.dlg-head .t{font-size:13px;font-weight:600;color:var(--text);}
+.dlg-head .sp{margin-left:auto;}
+.dlg-body{padding:14px 16px;max-height:340px;overflow:auto;}
+.dlg-foot{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--rowline);background:var(--surface);}
+.sqlbox{
+  background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:11px 13px;
+  font-family:var(--mono);font-size:11.5px;line-height:1.75;color:var(--t2);white-space:pre-wrap;
+}
+.sqlbox .kw{color:var(--accent-text);font-weight:600;}
+.sqlbox .st{color:var(--ok);}
+.sqlbox .nu{color:var(--warn);}
+.sqlbox .cmt{color:var(--t3);font-style:italic;}
+.sqlbox .tb{color:var(--text);}
+.dlg-warn{
+  display:flex;gap:9px;align-items:flex-start;padding:10px 12px;border-radius:7px;
+  background:rgba(235,87,87,.09);border:1px solid rgba(235,87,87,.3);margin-bottom:12px;
+  font-size:11.5px;color:var(--t2);line-height:1.6;
+}
+.dlg-warn svg{width:15px;height:15px;color:var(--err);flex:none;margin-top:1px;}
+.dlg-warn b{color:var(--err);}
+
+/* ---------- 迷你双模对照 ---------- */
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.duo .cap{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-top:9px;text-align:center;}
+
+/* ---------- 控件展示架 ---------- */
+.rack{display:flex;flex-wrap:wrap;gap:14px;align-items:center;}
+.rackcell{
+  display:flex;flex-direction:column;gap:7px;align-items:flex-start;
+  background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;
+}
+.rackcell .lb{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);}
+.inp{
+  display:flex;align-items:center;gap:7px;height:26px;padding:0 9px;background:var(--bg);
+  border:1px solid var(--border);border-radius:6px;color:var(--t2);font-size:11.5px;min-width:150px;
+}
+.inp.focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.inp .ph{color:var(--t3);}
+.inp svg{width:12px;height:12px;color:var(--t3);flex:none;}
+.cbx{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--t2);}
+.cbx i{width:14px;height:14px;border-radius:4px;border:1.5px solid var(--border-strong);display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.cbx.on i{background:var(--accent);border-color:var(--accent);color:var(--on-accent);}
+.cbx i svg{width:10px;height:10px;}
+
+/* ---------- 流程 ---------- */
+.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;}
+.fstep{
+  flex:1 1 148px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 14px;
+  position:relative;min-width:148px;
+}
+.fstep .n{font-family:var(--mono);font-size:10px;color:var(--doc-accent);font-weight:600;}
+.fstep h5{margin:5px 0 5px;font-size:13.5px;font-weight:600;letter-spacing:-.01em;}
+.fstep p{margin:0;font-size:12px;color:var(--ink2);line-height:1.6;}
+.fstep .ms{display:inline-block;margin-top:8px;font-family:var(--mono);font-size:10.5px;color:var(--doc-accent);background:var(--doc-soft);padding:1px 6px;border-radius:4px;}
+.farrow{display:flex;align-items:center;color:var(--line2);font-family:var(--mono);font-size:14px;flex:none;}
+
+/* ---------- 清单 ---------- */
+.todo{margin:0;padding:0;list-style:none;font-size:13.5px;}
+.todo li{padding:10px 0 10px 24px;border-top:1px dashed var(--line);color:var(--ink2);line-height:1.62;position:relative;}
+.todo li:first-child{border-top:0;}
+.todo li::before{content:"";position:absolute;left:2px;top:17px;width:7px;height:7px;border-radius:2px;background:var(--doc-accent);transform:rotate(45deg);}
+.todo li b{color:var(--ink);font-weight:600;}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+
+@media (max-width:1080px){
+  .duo,.grid2{grid-template-columns:1fr;}
+  .ds-detail{display:none;}
+}
+@media (max-width:820px){
+  .ds-side{display:none;}
+  .topnav{display:none;}
+}
+footer{padding:34px 0 52px;color:var(--ink3);font-size:12.5px;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div class="brandmark">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1F7A93" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.66 3.58 3 8 3s8-1.34 8-3v-13"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>
+      </svg>
+      DB Studio · GUI 方案预览
+    </div>
+    <nav class="topnav">
+      <a href="#basis">基调</a>
+      <a href="#color">色彩材质</a>
+      <a href="#layout">界面布局</a>
+      <a href="#widgets">控件</a>
+      <a href="#grid">数据网格</a>
+      <a href="#interact">交互</a>
+      <a href="#flow">操作流程</a>
+      <a href="#danger">危险操作</a>
+      <a href="#ship">落地</a>
+    </nav>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">Dark Tech Precision · GUI System Proposal · 2026-09-28</div>
+    <h1>DB Studio 整套界面方案：深色科技精密风</h1>
+    <p class="lede">
+      以参考选型报告中「深色科技精密风」为基调，为 DB Studio 输出一套可直接评估的完整 GUI 方案。
+      页面既是<strong>可点可切的预览</strong>（明暗双模、强调色、树展开、标签切换、命令面板、写预演弹层都能实际操作），
+      也是<strong>规范文档</strong>（token 表、栅格、控件态、键盘映射、操作闭环）。
+    </p>
+    <div class="callout">
+      <b>先说三处必须调整的地方。</b>参考风的原始取值有三项与本项目既有红线冲突，方案里已做替换而不是照抄：
+      ① 强调色 <code>#5E6AD2</code> 是紫蓝，撞项目「禁紫/紫蓝渐变」设计红线 → 换成<b>冰青</b>族；
+      ② 原始建议引入 Inter / Geist / Berkeley Mono 外部字体，撞项目「字体锁定系统栈」约束 → <b>保留 SF / 苹方</b>，仅数据列用 SF Mono；
+      ③ 原始风格主张「不用 backdrop-filter」，而项目方案 A 靠 CSS 毛玻璃做侧栏质感 → <b>给出二选一建议</b>。其余（行高 28px、4px 栅格、发丝描边、近黑画布）与现有工程<b>天然吻合</b>。
+    </div>
+    <div class="metagrid">
+      <div><b>28px</b>网格行高（与现工程一致）</div>
+      <div><b>4px</b>基准栅格</div>
+      <div><b>6 / 8 / 10px</b>圆角三级</div>
+      <div><b>3</b>档强调色候选</div>
+      <div><b>2</b>套完整色板</div>
+      <div><b>0</b>外部字体依赖</div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ 01 基调 ============ -->
+<section id="basis">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">01</span><h2>设计基调与取舍</h2></div>
+    <p class="secdesc">
+      这不是「换一套配色」，而是把产品的隐喻从「原生精致」换成「精密仪器」。隐喻一换，材质、层级、密度、状态的表达方式全都跟着换。
+      但工程骨架不动 —— 三栏布局、虚拟滚动、列式传输、只读双层防线一条都不改，本方案只落在<b>视觉与交互层</b>。
+    </p>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="cardhead"><h4>产品隐喻</h4><span class="sp tag t-info">换的是说法</span></div>
+        <div class="cardbody" style="padding-top:14px">
+          <table class="tk">
+            <tr><td>现在</td><td>「macOS 原生精修应用」—— 柔和、克制、像系统自带的工具</td></tr>
+            <tr><td>改为</td><td>「精密仪器面板」—— 读数清晰、刻度严密、状态可信、长时间盯不累</td></tr>
+            <tr><td>收益</td><td>暗底让状态色与数据可视化<b>自发凸显</b>，等于免费多一维视觉编码</td></tr>
+            <tr><td>代价</td><td>浅色模式容易失色沦为普通后台，<b>必须单独设计而非简单反转</b></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead"><h4>与现状的三处冲突</h4><span class="sp tag t-warn">必须处理</span></div>
+        <div class="cardbody" style="padding-top:14px">
+          <table class="tk">
+            <tr>
+              <td>强调色</td>
+              <td><span class="tag t-bad">冲突</span> 紫蓝 <code>#5E6AD2</code> 撞设计红线 → 换冰青 <code>#3BA9C9</code>，语义色空间完全释放</td>
+            </tr>
+            <tr>
+              <td>字体</td>
+              <td><span class="tag t-bad">冲突</span> 外部字体被项目锁定 → 保留系统栈，数据列用 SF Mono + <code>tabular-nums</code></td>
+            </tr>
+            <tr>
+              <td>材质</td>
+              <td><span class="tag t-warn">取舍</span> 玻璃侧栏 vs 纯色台阶 → 倾向<b>降不透明度保留玻璃</b>，见 §02</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <b>为什么强调色必须换：</b>高密度界面依赖颜色做第二维度编码（NULL / 脏 / 错误 / 只读 / 选中）。
+      品牌色一旦落在紫蓝，语义色（绿黄红）与它的区隔就被压缩 —— 这正是参考报告里「状态色必须与品牌色分离」那条硬约束。
+      DB Studio 的语义色负载比一般工具更重（NULL、脏单元格、错误、只读、生产标签至少五类），这条约束必须执行到位。
+    </div>
+  </div>
+</section>
+
+<!-- ============ 02 色彩与材质 ============ -->
+<section id="color">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">02</span><h2>色彩与材质</h2></div>
+    <p class="secdesc">
+      暗色板不是「黑底 + 白字」，而是<b>带蓝调的近黑台阶</b>：明度分三层表达层级（画布 → 卡片 → 浮层），
+      几乎不靠阴影。这样做的直接好处是滚动热路径上没有任何模糊运算，与本项目 ≥55FPS 的性能门槛方向一致。
+    </p>
+
+    <h3 class="sub">色板总览（深色为主皮肤）</h3>
+    <div class="pal">
+      <span style="background:#08090A"><i>08090A</i></span>
+      <span style="background:#0F1011"><i>0F1011</i></span>
+      <span style="background:#1A1C1F"><i>1A1C1F</i></span>
+      <span style="background:#23252A"><i>23252A</i></span>
+      <span style="background:#3BA9C9"><i>3BA9C9</i></span>
+      <span style="background:#4CB782"><i>4CB782</i></span>
+      <span style="background:#F2C94C"><i>F2C94C</i></span>
+      <span style="background:#EB5757"><i>EB5757</i></span>
+      <span style="background:#F7F8F8"><i>F7F8F8</i></span>
+      <span style="background:#8A8F98"><i>8A8F98</i></span>
+    </div>
+    <div class="palrow">
+      <span class="palchip"><b style="background:#08090A"></b>画布 Canvas</span>
+      <span class="palchip"><b style="background:#0F1011"></b>卡片 Surface</span>
+      <span class="palchip"><b style="background:#1A1C1F"></b>浮层 Elevated</span>
+      <span class="palchip"><b style="background:#23252A"></b>描边 Border</span>
+      <span class="palchip"><b style="background:#3BA9C9"></b>强调 Accent</span>
+      <span class="palchip"><b style="background:#4CB782"></b>成功</span>
+      <span class="palchip"><b style="background:#F2C94C"></b>警告 / 脏标记</span>
+      <span class="palchip"><b style="background:#EB5757"></b>危险</span>
+    </div>
+
+    <h3 class="sub">三档强调色候选（可切换，直接看主界面变化）</h3>
+    <div class="palrow">
+      <button class="btn" data-accent="ice" style="height:28px;font-size:12px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8"/></svg>
+        冰青 #3BA9C9 · 推荐
+      </button>
+      <button class="btn" data-accent="blue" style="height:28px;font-size:12px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8"/></svg>
+        电光蓝 #3E8FF0 · 保守
+      </button>
+      <button class="btn" data-accent="slate" style="height:28px;font-size:12px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8"/></svg>
+        石蓝(单色) #93A6BA · 极克制
+      </button>
+      <span class="chip gray">切换后请往下看主界面</span>
+    </div>
+    <table class="tk" style="margin-top:4px">
+      <tr><th>候选</th><th>深色 / 浅色</th><th>为什么是它</th><th>风险</th></tr>
+      <tr>
+        <td>冰青（推荐）</td>
+        <td><span class="sw" style="background:#3BA9C9"></span>#3BA9C9 · <span class="sw" style="background:#1F819A"></span>#1F819A</td>
+        <td>仪表 / 示波器语汇，与「精密仪器」隐喻同源；与绿黄红语义色在色相上拉得足够开；暗底发亮不刺眼</td>
+        <td>浅色模式下略偏冷，需确认是否合口味</td>
+      </tr>
+      <tr>
+        <td>电光蓝（保守）</td>
+        <td><span class="sw" style="background:#3E8FF0"></span>#3E8FF0 · <span class="sw" style="background:#2568D6"></span>#2568D6</td>
+        <td>离现有 <code>#0A84FF</code> 最近，迁移成本最低，用户无感</td>
+        <td>与现有 Apple 蓝太近，「换风」的辨识度打了折扣</td>
+      </tr>
+      <tr>
+        <td>石蓝（极克制）</td>
+        <td><span class="sw" style="background:#93A6BA"></span>#93A6BA · <span class="sw" style="background:#5B6E82"></span>#5B6E82</td>
+        <td>单色强调，把语义色空间 100% 让给状态；最接近参考报告「近无彩灰阶」的极端形态</td>
+        <td>强调力度弱，主按钮与选中态不够跳，需要靠字重补偿</td>
+      </tr>
+    </table>
+
+    <h3 class="sub">材质与层级规则</h3>
+    <table class="tk">
+      <tr><th>维度</th><th>规则</th><th>与现状的差异</th></tr>
+      <tr>
+        <td>层级表达</td>
+        <td>靠<b>背景明度台阶</b>（#08090A → #0F1011 → #1A1C1F），阴影只用于真正浮起的层</td>
+        <td><span class="tag t-ok">收益</span> 减少合成开销，滚动更稳</td>
+      </tr>
+      <tr>
+        <td>描边</td>
+        <td>结构分割 1px <code>--border</code>；行内分割 1px <code>--rowline</code>（更暗一档）；<b>不用粗边框</b></td>
+        <td><span class="tag t-info">微调</span> 现工程 border 只有一档，新增行内档</td>
+      </tr>
+      <tr>
+        <td>圆角</td>
+        <td>4 / 6 / 10px 三级（按钮 6、输入框 6、卡片 10、标签 4）</td>
+        <td><span class="tag t-warn">收紧</span> 现为 6 / 8 / 12，整体收 2px 更「硬朗」</td>
+      </tr>
+      <tr>
+        <td>阴影</td>
+        <td>常态零阴影；浮层 <code>0 16px 44px rgba(0,0,0,.62)</code>，深色下靠亮度差 + 描边替代</td>
+        <td><span class="tag t-ok">收益</span> 比现状更省，浮层仍清晰</td>
+      </tr>
+      <tr>
+        <td>侧栏材质</td>
+        <td><b>建议：保留玻璃但提高不透明度</b>（现为 sidebar 毛玻璃 + 内容不透明，方案 A 已定）</td>
+        <td><span class="tag t-warn">待定</span> 纯色台阶更贴参考风，但会丢掉 macOS 27 观感，见下方建议</td>
+      </tr>
+      <tr>
+        <td>字体</td>
+        <td>UI 用 <code>-apple-system / SF Pro Text / PingFang SC</code>；数据与 ID 用 <code>SF Mono</code> + <code>tabular-nums</code>；字号 13px 基准，负字距 -0.011em</td>
+        <td><span class="tag t-ok">不变</span> 符合项目字体锁定约束，不引入外部字体</td>
+      </tr>
+    </table>
+
+    <div class="callout">
+      <b>关于侧栏玻璃的取舍建议：</b>参考风的立场是「内容区绝对干净、不用 backdrop-filter」。
+      但 DB Studio 的侧栏不属于内容区 —— 它是不透明的树，不存在「模糊底纹与密集文字抢注意力」那个问题。
+      因此建议<b>保留现有 CSS 毛玻璃侧栏，只把背景不透明度从当前值抬高到 ~0.72</b>：既留住 macOS 27 的观感，
+      又让侧栏底色更贴近深色的近黑台阶，与新皮肤自然衔接。内容区（网格 / 编辑器）保持完全不透明，这一条不动。
+    </div>
+  </div>
+</section>
+
+<!-- ============ 03 界面布局 ============ -->
+<section id="layout">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">03</span><h2>整体界面布局</h2></div>
+    <p class="secdesc">
+      下面这版主界面是<b>真的可以点的</b>：树上点节点会展开、标签可以切、行可以选、右上角能切明暗、
+      工具条的「命令面板」和「保存」分别弹出对应浮层。骨架严格沿用工程现有的
+      <code>app / sidebar(238) / workspace / detail(264)</code> 三栏结构，尺寸与现有 <code>--row-h:28px</code> 对齐。
+    </p>
+
+    <div class="card">
+      <div class="cardhead">
+        <h4>主界面 · 表数据视图</h4>
+        <span class="en">APP SHELL</span>
+        <span class="sp"></span>
+        <div class="seg" style="width:150px" id="mockThemeSeg">
+          <button class="on" data-mt="dark">DARK</button>
+          <button data-mt="light">LIGHT</button>
+        </div>
+      </div>
+      <div class="cardbody" style="padding:14px">
+        <!-- ============ 主 mockup ============ -->
+        <div class="ds" data-theme="dark" id="mainMock" style="height:552px;display:flex;flex-direction:column">
+
+          <!-- 标题栏：交通灯让位 -->
+          <div class="ds-titlebar">
+            <div class="tl"><i></i><i></i><i></i></div>
+            <span class="tb-name">DB Studio</span>
+            <span class="tb-path">dbstudio-mysql › shop › orders</span>
+            <div class="tb-right">
+              <span class="env-tag prod">生产</span>
+              <span class="env-tag">IPC</span>
+              <span class="env-tag">只读 · 关</span>
+            </div>
+          </div>
+
+          <!-- 让位标注条（真实工程里不存在，仅本预览用于说明） -->
+          <div class="letmark">
+            <div class="zone z1">交通灯 20–62</div>
+            <div class="zone z2">首内容须 ≥72px 起</div>
+            <div class="zone" style="flex:1;justify-content:flex-start;padding-left:10px;border-right:0">
+              本次方案：标题栏内容起于 108px（36 间距 + 72 占位），与绿钮间距 46px
+            </div>
+          </div>
+
+          <div class="ds-body" style="flex:1;min-height:0">
+
+            <!-- 侧栏 -->
+            <aside class="ds-side">
+              <div class="ds-side-head">
+                <span class="t">连接</span>
+                <span class="sp"></span>
+                <button class="icon-btn" title="刷新表结构">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>
+                </button>
+                <button class="icon-btn" title="新建连接">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+              </div>
+              <div class="ds-tree" id="tree">
+                <div class="grp">本地 MySQL</div>
+                <div class="tn open" data-node>
+                  <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m9 6 6 6-6 6"/></svg>
+                  <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/></svg>
+                  <span class="nm">dbstudio-mysql</span>
+                  <span class="dot" style="background:#4CB782;margin-left:auto"></span>
+                </div>
+                <div class="kids">
+                  <div class="tn open" data-node>
+                    <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m9 6 6 6-6 6"/></svg>
+                    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6V6"/></svg>
+                    <span class="nm">shop</span><span class="ct">3</span>
+                  </div>
+                  <div class="kids">
+                    <div class="tn sel" data-node>
+                      <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="opacity:.35"><path d="m9 6 6 6-6 6"/></svg>
+                      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                      <span class="nm">orders</span><span class="ct">10M</span>
+                    </div>
+                    <div class="tn" data-node>
+                      <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="opacity:.35"><path d="m9 6 6 6-6 6"/></svg>
+                      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                      <span class="nm">users</span><span class="ct">812K</span>
+                    </div>
+                    <div class="tn" data-node>
+                      <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="opacity:.35"><path d="m9 6 6 6-6 6"/></svg>
+                      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                      <span class="nm">order_items</span><span class="ct">31M</span>
+                    </div>
+                  </div>
+                  <div class="tn" data-node>
+                    <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="opacity:.35"><path d="m9 6 6 6-6 6"/></svg>
+                    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6V6"/></svg>
+                    <span class="nm">audit</span>
+                  </div>
+                </div>
+                <div class="grp">远端 · 经 SSH</div>
+                <div class="tn" data-node>
+                  <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m9 6 6 6-6 6"/></svg>
+                  <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/></svg>
+                  <span class="nm">prod-replica-01</span>
+                  <span class="dot" style="background:#F2C94C;margin-left:auto"></span>
+                </div>
+                <div class="kids">
+                  <div class="tn" data-node>
+                    <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="opacity:.35"><path d="m9 6 6 6-6 6"/></svg>
+                    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6V6"/></svg>
+                    <span class="nm">warehouse</span>
+                  </div>
+                </div>
+              </div>
+            </aside>
+
+            <!-- 工作区 -->
+            <main class="ds-main">
+              <div class="ds-tabs">
+                <div class="ds-tab on" data-tab>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                  orders
+                  <span class="kdot" title="有未保存改动"></span>
+                  <span class="x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+                </div>
+                <div class="ds-tab" data-tab>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                  users
+                  <span class="x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+                </div>
+                <div class="ds-tab" data-tab>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+                  查询 1
+                  <span class="x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+                </div>
+                <div class="ds-tab newtab" title="新建查询标签">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                </div>
+              </div>
+
+              <div class="ds-toolbar">
+                <button class="btn ghost" id="openCmd">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                  命令面板 <span class="kbd">⌘K</span>
+                </button>
+                <button class="btn ghost">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+                  查询 <span class="kbd">⌘T</span>
+                </button>
+                <span class="vsep"></span>
+                <button class="btn pri" id="openPreview">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                  保存 <span class="kbd">⌘S</span>
+                </button>
+                <button class="btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 5h18l-7 8v6l-4 2v-8Z"/></svg>
+                  筛选 <span class="chip gray" style="margin-left:2px">2</span>
+                </button>
+                <button class="btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+                  导出
+                </button>
+                <span class="spacer"></span>
+                <span class="chip gray">约 1,000,000 行</span>
+                <span class="chip">10M / 4 列有索引</span>
+              </div>
+
+              <div class="ds-gridwrap">
+                <div class="ds-grid">
+                  <div class="grow">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">#</div>
+                    <div class="gc" style="width:78px">id <span class="ty">INT</span>
+                      <svg class="sortic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m6 9 6-6 6 6"/></svg>
+                    </div>
+                    <div class="gc" style="width:172px">email <span class="ty">VARCHAR(128)</span></div>
+                    <div class="gc" style="width:146px">amount <span class="ty">BIGINT</span></div>
+                    <div class="gc" style="width:200px">meta <span class="ty">JSON</span></div>
+                    <div class="gc" style="width:186px">created_at <span class="ty">DATETIME(6)</span></div>
+                    <div class="gc" style="width:104px">status <span class="ty">ENUM</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">1</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100001</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">lin.wei@example.com</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">9007199254740993</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"app","v":3}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:12:33.481</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst ok">paid</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">2</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100002</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">zhao.qiang@corp.cn</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">1200</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"web","v":2}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:14:07.902</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst warn">pending</span></div>
+                  </div>
+
+                  <div class="gr sel">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">3</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100003</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">chen.yu@example.com</span></div>
+                    <!-- 脏单元格：左侧琥珀条 + 底色，只标这一格 -->
+                    <div class="gc cell-dirty" style="width:146px"><span class="v num">2480</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"api","v":5}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:19:55.004</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst ok">paid</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">4</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100004</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v null">NULL</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">0</span></div>
+                    <div class="gc" style="width:200px"><span class="v null">NULL</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:21:12.336</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst err">refund</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">5</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100005</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">sun.li@example.com</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">128000000</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"app","v":3,"tags":["vip"]}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:24:41.750</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst ok">paid</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">6</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100006</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">wang.min@corp.cn</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">76</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"web","v":1}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:31:08.211</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst warn">pending</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">7</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100007</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">xu.hao@example.com</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">5400</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"api","v":4}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:35:26.010</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst ok">paid</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">8</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100008</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">he.jing@example.com</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">-320</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"app","v":6}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:41:03.887</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst err">refund</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">9</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100009</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">gao.yang@corp.cn</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">990</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"web","v":2}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:44:19.402</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst ok">paid</span></div>
+                  </div>
+
+                  <div class="gr">
+                    <div class="gc cb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></div>
+                    <div class="gc rn">10</div>
+                    <div class="gc" style="width:78px"><span class="pk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg><span class="v num" style="width:auto">100010</span></span></div>
+                    <div class="gc" style="width:172px"><span class="v">fang.rui@example.com</span></div>
+                    <div class="gc" style="width:146px"><span class="v num">31800</span></div>
+                    <div class="gc" style="width:200px"><span class="v json">{"src":"api","v":3}</span></div>
+                    <div class="gc" style="width:186px"><span class="v time">2026-09-28 10:47:51.669</span></div>
+                    <div class="gc" style="width:104px"><span class="pillst ok">paid</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="ds-status">
+                <span class="lt"></span>
+                <span>就绪 · 读取 <b>8.4ms</b></span>
+                <span>标签 <b>3</b></span>
+                <span class="warnv">脏单元格 <b>1</b></span>
+                <span>可编辑 <b>是</b></span>
+                <span>排序 <b>id ASC</b></span>
+                <span>选中 <b>1 行 / 1 格</b></span>
+                <span class="spacer" style="margin-left:auto"></span>
+                <span>约 <b>1,000,000</b> 行 · 估算值</span>
+              </div>
+            </main>
+
+            <!-- 详情面板 -->
+            <aside class="ds-detail">
+              <div class="ds-detail-head">
+                <span class="t">详情</span>
+                <span class="spacer" style="margin-left:auto"></span>
+                <button class="icon-btn" title="折叠">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
+                </button>
+              </div>
+              <div class="ds-detail-body">
+                <div class="dsec">
+                  <div class="dh">当前单元格</div>
+                  <div class="kv"><span class="k">列</span><span class="val">amount</span></div>
+                  <div class="kv"><span class="k">类型</span><span class="val">BIGINT</span></div>
+                  <div class="kv"><span class="k">原值</span><span class="val">1200</span></div>
+                  <div class="kv"><span class="k">新值</span><span class="val" style="color:var(--warn)">2480</span></div>
+                  <div class="kv"><span class="k">状态</span><span class="val" style="color:var(--warn)">未保存</span></div>
+                </div>
+                <div class="dsec">
+                  <div class="dh">表信息</div>
+                  <div class="kv"><span class="k">库 / 表</span><span class="val">shop / orders</span></div>
+                  <div class="kv"><span class="k">引擎</span><span class="val">InnoDB</span></div>
+                  <div class="kv"><span class="k">行数</span><span class="val">10,000,000</span></div>
+                  <div class="kv"><span class="k">主键</span><span class="val">id</span></div>
+                  <div class="kv"><span class="k">字符集</span><span class="val">utf8mb4</span></div>
+                </div>
+                <div class="dsec">
+                  <div class="dh">视图</div>
+                  <div class="seg">
+                    <button class="on">原始</button><button>格式化</button><button>HEX</button>
+                  </div>
+                </div>
+                <div class="dsec">
+                  <div class="dh">字段</div>
+                  <div class="kv"><span class="k">id</span><span class="val">INT · PK</span></div>
+                  <div class="kv"><span class="k">email</span><span class="val">VARCHAR(128)</span></div>
+                  <div class="kv"><span class="k">amount</span><span class="val">BIGINT</span></div>
+                  <div class="kv"><span class="k">meta</span><span class="val">JSON</span></div>
+                  <div class="kv"><span class="k">created_at</span><span class="val">DATETIME(6)</span></div>
+                  <div class="kv"><span class="k">status</span><span class="val">ENUM</span></div>
+                </div>
+              </div>
+            </aside>
+          </div>
+
+          <!-- 命令面板 -->
+          <div class="ds-overlay" id="cmdOverlay">
+            <div class="cmd">
+              <div class="cmd-in">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input placeholder="输入命令或表名…" id="cmdInput">
+                <span class="chip gray">ESC</span>
+              </div>
+              <div class="cmd-list">
+                <div class="cmd-grp">表</div>
+                <div class="cmd-item on">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                  打开 shop.orders <span class="k">↵</span>
+                </div>
+                <div class="cmd-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                  打开 shop.users
+                </div>
+                <div class="cmd-grp">操作</div>
+                <div class="cmd-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+                  新建查询标签 <span class="k">⌘T</span>
+                </div>
+                <div class="cmd-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+                  导出当前表 <span class="k">⌘E</span>
+                </div>
+                <div class="cmd-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+                  新建连接
+                </div>
+                <div class="cmd-grp">未接线（会被搜到但不应出现）</div>
+                <div class="cmd-item dead">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+                  打开偏好设置 <span class="warnmark">无对应组件</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 写预演 -->
+          <div class="ds-overlay" id="pvOverlay">
+            <div class="dlg">
+              <div class="dlg-head">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                <span class="t">保存预演 · 1 条语句</span>
+                <span class="sp"></span>
+                <span class="chip">只提交被编辑的单元格</span>
+              </div>
+              <div class="dlg-body">
+                <div style="font-size:11.5px;color:var(--t3);margin-bottom:9px;font-family:var(--mono)">
+                  将执行 1 条 UPDATE · 影响 1 行 · 命中主键
+                </div>
+                <div class="sqlbox"><span class="kw">UPDATE</span> <span class="tb">`shop`.`orders`</span>
+<span class="kw">SET</span> `amount` = <span class="nu">2480</span>
+<span class="kw">WHERE</span> `id` = <span class="nu">100003</span> <span class="cmt">-- 主键定位，无 WHERE 风险</span>;</div>
+                <div style="margin-top:12px;font-size:11.5px;color:var(--t2);line-height:1.7">
+                  <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--rowline)"><span style="color:var(--t3)">前值</span><span style="font-family:var(--mono)">1200</span></div>
+                  <div style="display:flex;justify-content:space-between;padding:5px 0"><span style="color:var(--t3)">后值</span><span style="font-family:var(--mono);color:var(--warn)">2480</span></div>
+                </div>
+              </div>
+              <div class="dlg-foot">
+                <span class="chip gray">⌘↵ 执行</span>
+                <span class="chip gray">ESC 取消</span>
+                <span class="spacer" style="margin-left:auto"></span>
+                <button class="btn" onclick="closeAll()">取消</button>
+                <button class="btn pri">执行并保存</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <!-- ============ 主 mockup 结束 ============ -->
+      </div>
+    </div>
+
+    <h3 class="sub">布局尺寸表（与工程现有变量对照）</h3>
+    <table class="tk">
+      <tr><th>区域</th><th>本方案</th><th>工程现状</th><th>动作</th></tr>
+      <tr><td>侧栏宽</td><td>238px（可拖拽 200–360）</td><td>240px（<code>--sidebar-w</code>）</td><td><span class="tag t-info">保持</span></td></tr>
+      <tr><td>详情栏宽</td><td>264px（可拖拽，可折叠）</td><td>280px</td><td><span class="tag t-warn">收 16px</span> 给内容区让宽</td></tr>
+      <tr><td>标题栏高</td><td>38px</td><td>40px 附近</td><td><span class="tag t-info">微调</span></td></tr>
+      <tr><td>标签栏高</td><td>34px</td><td>32px 附近</td><td><span class="tag t-info">微调</span></td></tr>
+      <tr><td>工具条高</td><td>36px</td><td>36px</td><td><span class="tag t-ok">一致</span></td></tr>
+      <tr><td>表头高</td><td>26px</td><td><code>--header-h:30px</code></td><td><span class="tag t-warn">收 4px</span> 提升密度</td></tr>
+      <tr><td>数据行高</td><td><b>28px</b></td><td><code>--row-h:28px</code></td><td><span class="tag t-ok">天然一致</span></td></tr>
+      <tr><td>状态栏高</td><td>24px</td><td>26px 附近</td><td><span class="tag t-info">微调</span></td></tr>
+      <tr><td>交通灯让位</td><td>首内容 x ≥ 72px（本图 108px）</td><td>首按钮 x=10（<b>重叠</b>）</td><td><span class="tag t-bad">必修</span> W-P0 已列</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 04 控件 ============ -->
+<section id="widgets">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">04</span><h2>控件体系与元素样式</h2></div>
+    <p class="secdesc">
+      控件全部落在同一个 <code>.ds</code> 作用域里，跟着主题变量走，所以下面每一格都能被上下文的明暗切换同时带动。
+      尺寸偏小是刻意的：工具类界面的按钮要「能被点中但不抢注意力」，热区靠 <code>padding</code> 补足而不是靠视觉体积。
+    </p>
+
+    <div class="card">
+      <div class="cardhead"><h4>按钮与状态</h4><span class="sp tag t-info">PRIORITY · STATE</span></div>
+      <div class="cardbody" style="padding:0">
+        <div class="ds" data-theme="dark" style="border:0;border-radius:0;padding:16px 18px">
+          <div class="rack">
+            <div class="rackcell"><span class="lb">Primary</span>
+              <button class="btn pri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/></svg>保存 ⌘S</button>
+            </div>
+            <div class="rackcell"><span class="lb">Default</span>
+              <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 5h18l-7 8v6l-4 2v-8Z"/></svg>筛选</button>
+            </div>
+            <div class="rackcell"><span class="lb">Ghost</span>
+              <button class="btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 17l6-6-6-6M12 19h8"/></svg>查询 <span class="kbd">⌘T</span></button>
+            </div>
+            <div class="rackcell"><span class="lb">Danger</span>
+              <button class="btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>删除表</button>
+            </div>
+            <div class="rackcell"><span class="lb">Disabled</span>
+              <button class="btn" disabled>保存 ⌘S</button>
+            </div>
+            <div class="rackcell"><span class="lb">Icon-only</span>
+              <div style="display:flex;gap:6px">
+                <button class="icon-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg></button>
+                <button class="icon-btn on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M3 12h18"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="cardhead"><h4>输入 / 分段 / 复选</h4><span class="sp tag t-info">INPUT · SEGMENT</span></div>
+        <div class="cardbody" style="padding:0">
+          <div class="ds" data-theme="dark" style="border:0;border-radius:0;padding:16px 18px">
+            <div class="rack">
+              <div class="rackcell"><span class="lb">Input · 默认</span>
+                <div class="inp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="ph">搜索字段…</span></div>
+              </div>
+              <div class="rackcell"><span class="lb">Input · 聚焦</span>
+                <div class="inp focus"><span style="color:var(--text)">amount</span></div>
+              </div>
+              <div class="rackcell"><span class="lb">Segmented</span>
+                <div class="seg" style="width:170px"><button class="on">数据</button><button>结构</button><button>索引</button></div>
+              </div>
+              <div class="rackcell"><span class="lb">Checkbox · 行选</span>
+                <div style="display:flex;gap:12px">
+                  <span class="cbx on"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4"><path d="M20 6 9 17l-5-5"/></svg></i>全选</span>
+                  <span class="cbx"><i></i>部分</span>
+                </div>
+              </div>
+              <div class="rackcell"><span class="lb">Chip / Tag</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <span class="chip">10M 行</span><span class="chip gray">IPC</span><span class="pillst ok">paid</span><span class="pillst warn">pending</span><span class="pillst err">refund</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead"><h4>图标语言</h4><span class="sp tag t-info">LUCIDE · currentColor</span></div>
+        <div class="cardbody" style="padding:0">
+          <div class="ds" data-theme="dark" style="border:0;border-radius:0;padding:16px 18px">
+            <div class="rack" style="gap:10px">
+              <div class="rackcell" style="flex:1"><span class="lb">沿用现有 icons.tsx</span>
+                <div style="display:flex;gap:14px;color:var(--t2);align-items:center;flex-wrap:wrap">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6V6"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:14px;font-size:11.5px;color:var(--t2);line-height:1.7">
+              线宽约定不变：外形图标 <b>2</b>，≤14px 加粗到 <b>2.4–2.6</b>；颜色全部 <code>currentColor</code>。
+              新皮肤不需要改一个图标 —— 这是本方案对工程最友好的部分。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub">交互态总表</h3>
+    <table class="tk">
+      <tr><th>元素</th><th>Default</th><th>Hover</th><th>Focus / 选中</th><th>说明</th></tr>
+      <tr><td>按钮</td><td>elev 底 + 1px 描边</td><td>底色抬亮一档</td><td>蓝青柔光 ring 3px</td><td>hover 不用「边框变蓝」</td></tr>
+      <tr><td>树节点</td><td>透明</td><td>白色 5.5% 浮起</td><td>accent 底 + 左侧 2px 实条</td><td>选中态用 left-bar 而非纯底色，扫视更快</td></tr>
+      <tr><td>网格行</td><td>斑马纹 ±1.2%</td><td>白色 5.5%</td><td>accent 16% 整行</td><td>斑马纹按<b>全局行号</b>加 class，禁止 nth-child</td></tr>
+      <tr><td>单元格（脏）</td><td>—</td><td>—</td><td>琥珀底 + 左侧 2px 琥珀条</td><td>只标被编辑的那一格，绝不整行覆盖</td></tr>
+      <tr><td>单元格（当前）</td><td>—</td><td>—</td><td>1.5px accent 内描边</td><td>与脏标记可叠加且互不吞没</td></tr>
+      <tr><td>标签</td><td>t3 文字</td><td>t2 + hover 底</td><td>t 文字 + 底部 2px accent</td><td>脏标签加琥珀圆点</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 05 网格专项 ============ -->
+<section id="grid">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">05</span><h2>数据网格专项</h2></div>
+    <p class="secdesc">
+      网格是这个产品的主战场，也是「深色科技精密风」最能体现价值的地方。
+      下面把五个必须处理好的表达逐项摊开 —— 每一项都直接对应工程里的红线或既有决策。
+    </p>
+
+    <div class="card">
+      <div class="cardhead"><h4>网格取值表达规则</h4><span class="sp tag t-bad">红线相关</span></div>
+      <div class="cardbody" style="padding:0">
+        <div class="ds" data-theme="dark" style="border:0;border-radius:0">
+          <div class="ds-grid" style="max-height:none">
+            <div class="grow">
+              <div class="gc cb"> </div>
+              <div class="gc rn">#</div>
+              <div class="gc" style="width:150px">场景</div>
+              <div class="gc" style="width:250px">网格里的样子</div>
+              <div class="gc" style="flex:1">依据</div>
+            </div>
+            <div class="gr">
+              <div class="gc cb"> </div><div class="gc rn">1</div>
+              <div class="gc" style="width:150px"><span class="v">NULL</span></div>
+              <div class="gc" style="width:250px"><span class="v null">NULL</span></div>
+              <div class="gc" style="flex:1"><span class="v" style="font-size:11px">斜体 + t3 灰，<b>与空串严格区分</b>（空串显示为空，不加斜体）</span></div>
+            </div>
+            <div class="gr">
+              <div class="gc cb"> </div><div class="gc rn">2</div>
+              <div class="gc" style="width:150px"><span class="v">空字符串</span></div>
+              <div class="gc" style="width:250px"><span class="v" style="opacity:.5">（空白）</span></div>
+              <div class="gc" style="flex:1"><span class="v" style="font-size:11px">保留空位，不写 NULL，不改判</span></div>
+            </div>
+            <div class="gr">
+              <div class="gc cb"> </div><div class="gc rn">3</div>
+              <div class="gc" style="width:150px"><span class="v">BIGINT 超 2^53</span></div>
+              <div class="gc" style="width:250px"><span class="v num">9007199254740993</span></div>
+              <div class="gc" style="flex:1"><span class="v" style="font-size:11px">SF Mono 右对齐、<b>字符串直出</b>不转 Number；列头标 BIGINT</span></div>
+            </div>
+            <div class="gr">
+              <div class="gc cb"> </div><div class="gc rn">4</div>
+              <div class="gc" style="width:150px"><span class="v">DATETIME(6)</span></div>
+              <div class="gc" style="width:250px"><span class="v time">2026-09-28 10:19:55.004</span></div>
+              <div class="gc" style="flex:1"><span class="v" style="font-size:11px">微秒不截断，等宽对齐保证竖向可读</span></div>
+            </div>
+            <div class="gr">
+              <div class="gc cb"> </div><div class="gc rn">5</div>
+              <div class="gc" style="width:150px"><span class="v">JSON 长值</span></div>
+              <div class="gc" style="width:250px"><span class="v json">{"src":"app","v":3,"tags":["vip"]}</span></div>
+              <div class="gc" style="flex:1"><span class="v" style="font-size:11px">网格内截断 + mono 灰，完整值在右侧详情面板看</span></div>
+            </div>
+            <div class="gr sel">
+              <div class="gc cb"> </div><div class="gc rn">6</div>
+              <div class="gc" style="width:150px"><span class="v">脏单元格</span></div>
+              <div class="gc cell-dirty" style="width:250px"><span class="v num">2480</span></div>
+              <div class="gc" style="flex:1"><span class="v" style="font-size:11px">琥珀底 + 左侧条；状态栏「脏单元格」计数同步</span></div>
+            </div>
+            <div class="gr">
+              <div class="gc cb"> </div><div class="gc rn">7</div>
+              <div class="gc" style="width:150px"><span class="v">主键列</span></div>
+              <div class="gc" style="width:250px"><span class="pk" style="font-size:11.5px"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M17 6l3 3"/></svg>100003</span></div>
+              <div class="gc" style="flex:1"><span class="v" style="font-size:11px">钥匙图标 + accent 色，让「这行能定位」一眼可见</span></div>
+            </div>
+            <div class="gr" style="opacity:.62">
+              <div class="gc cb"> </div><div class="gc rn">8</div>
+              <div class="gc" style="width:150px"><span class="v">无唯一键的表</span></div>
+              <div class="gc" style="width:250px"><span class="v" style="font-size:11px">整表只读（不显示脏标记与勾选框）</span></div>
+              <div class="gc" style="flex:1"><span class="v" style="font-size:11px">判定只走 <code>isEditable()</code>，UI 不许自判</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="cardhead"><h4>密度与性能</h4></div>
+        <div class="cardbody">
+          <table class="tk">
+            <tr><td>行高</td><td>28px → 1080p 可视约 26 行（与现工程一致，<b>零改动</b>）</td></tr>
+            <tr><td>表头</td><td>26px，列类型提示降 1px 灰字，不占额外高度</td></tr>
+            <tr><td>滚动路径</td><td>斑马纹、脏底色、选中底色全部靠 <b>class 切换</b>，不在滚动回调里算样式</td></tr>
+            <tr><td>模糊运算</td><td>内容区<b>零 backdrop-filter</b>，与 ≥55FPS 门槛方向一致</td></tr>
+            <tr><td>色盲可辨</td><td>状态不只靠颜色：paid/pending/refund 带文字，脏标记带左侧条，不依赖色相区分</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="cardhead"><h4>浅色模式的设计要点</h4><span class="sp tag t-warn">易失手</span></div>
+        <div class="cardbody">
+          <table class="tk">
+            <tr><td>不做反转</td><td>浅色不是深色的取反。近黑画布在浅色下必须换成<b>纯白画布 + 冷灰面板</b>，否则发灰发脏</td></tr>
+            <tr><td>强调色加深</td><td>#3BA9C9 → #1F819A，保证白底上的对比度够</td></tr>
+            <tr><td>描边承担层级</td><td>浅色下明度台阶变弱，1px 描边成为主要分层手段，<code>--border</code> 不能太浅</td></tr>
+            <tr><td>斑马纹更轻</td><td>浅色斑马纹降到 1.2% 黑，再重就显脏</td></tr>
+            <tr><td>语义色降饱和</td><td>绿黄红在浅底上原值会刺眼，统一压一档</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub">双模实拍对照（同一骨架，左右并排）</h3>
+    <div class="duo">
+      <div>
+        <div class="ds" data-theme="dark" style="height:212px;display:flex;flex-direction:column">
+          <div class="ds-titlebar" style="height:30px"><div class="tl"><i></i><i></i><i></i></div><span class="tb-name" style="margin-left:36px;font-size:11.5px">dark</span><div class="tb-right"><span class="env-tag">DARK</span></div></div>
+          <div class="ds-toolbar" style="height:30px;padding:0 8px">
+            <button class="btn pri" style="height:21px;font-size:10.5px">保存</button>
+            <button class="btn" style="height:21px;font-size:10.5px">筛选</button>
+            <span class="spacer"></span><span class="chip gray">1,000,000 行</span>
+          </div>
+          <div class="ds-grid" style="flex:1">
+            <div class="grow"><div class="gc rn">#</div><div class="gc" style="width:120px">email</div><div class="gc" style="width:110px">amount</div><div class="gc" style="width:80px">status</div></div>
+            <div class="gr"><div class="gc rn">1</div><div class="gc" style="width:120px"><span class="v">lin.wei@…</span></div><div class="gc" style="width:110px"><span class="v num">9007199254740993</span></div><div class="gc" style="width:80px"><span class="pillst ok">paid</span></div></div>
+            <div class="gr"><div class="gc rn">2</div><div class="gc" style="width:120px"><span class="v null">NULL</span></div><div class="gc" style="width:110px"><span class="v num">0</span></div><div class="gc" style="width:80px"><span class="pillst err">refund</span></div></div>
+            <div class="gr"><div class="gc rn">3</div><div class="gc" style="width:120px"><span class="v">zhao.qiang@…</span></div><div class="gc cell-dirty" style="width:110px"><span class="v num">2480</span></div><div class="gc" style="width:80px"><span class="pillst warn">pending</span></div></div>
+          </div>
+          <div class="ds-status" style="height:20px;font-size:9.5px"><span class="lt"></span><span>就绪</span><span class="warnv">脏 1</span></div>
+        </div>
+        <div class="cap">DARK · 主皮肤</div>
+      </div>
+      <div>
+        <div class="ds" data-theme="light" style="height:212px;display:flex;flex-direction:column">
+          <div class="ds-titlebar" style="height:30px"><div class="tl"><i></i><i></i><i></i></div><span class="tb-name" style="margin-left:36px;font-size:11.5px">light</span><div class="tb-right"><span class="env-tag">LIGHT</span></div></div>
+          <div class="ds-toolbar" style="height:30px;padding:0 8px">
+            <button class="btn pri" style="height:21px;font-size:10.5px">保存</button>
+            <button class="btn" style="height:21px;font-size:10.5px">筛选</button>
+            <span class="spacer"></span><span class="chip gray">1,000,000 行</span>
+          </div>
+          <div class="ds-grid" style="flex:1">
+            <div class="grow"><div class="gc rn">#</div><div class="gc" style="width:120px">email</div><div class="gc" style="width:110px">amount</div><div class="gc" style="width:80px">status</div></div>
+            <div class="gr"><div class="gc rn">1</div><div class="gc" style="width:120px"><span class="v">lin.wei@…</span></div><div class="gc" style="width:110px"><span class="v num">9007199254740993</span></div><div class="gc" style="width:80px"><span class="pillst ok">paid</span></div></div>
+            <div class="gr"><div class="gc rn">2</div><div class="gc" style="width:120px"><span class="v null">NULL</span></div><div class="gc" style="width:110px"><span class="v num">0</span></div><div class="gc" style="width:80px"><span class="pillst err">refund</span></div></div>
+            <div class="gr"><div class="gc rn">3</div><div class="gc" style="width:120px"><span class="v">zhao.qiang@…</span></div><div class="gc cell-dirty" style="width:110px"><span class="v num">2480</span></div><div class="gc" style="width:80px"><span class="pillst warn">pending</span></div></div>
+          </div>
+          <div class="ds-status" style="height:20px;font-size:9.5px"><span class="lt"></span><span>就绪</span><span class="warnv">脏 1</span></div>
+        </div>
+        <div class="cap">LIGHT · 需单独调校</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 06 交互 ============ -->
+<section id="interact">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">06</span><h2>交互逻辑与键盘映射</h2></div>
+    <p class="secdesc">
+      交互原则一句话：<b>能用键盘闭环的，绝不用鼠标</b>。目标用户是开发者，手指离开键盘就是损失。
+      下表是完整键位，其中「必须挂 window」的一条是已经在真机上踩过的坑。
+    </p>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="cardhead"><h4>全局与导航</h4><span class="sp tag t-ok">已实现为主</span></div>
+        <div class="cardbody" style="padding-top:12px">
+          <table class="tk">
+            <tr><td>⌘K</td><td>命令面板（搜索命令 / 表名，↑↓ 选择，↵ 执行）</td></tr>
+            <tr><td>⌘T</td><td>新建查询标签</td></tr>
+            <tr><td>⌘W</td><td>关闭当前标签（有脏改动先弹确认）</td></tr>
+            <tr><td>⌘⇧[ / ⌘⇧]</td><td>前后切换标签</td></tr>
+            <tr><td>⌘⌥S</td><td>展开 / 收起侧栏</td></tr>
+            <tr><td>⌘⌥D</td><td>展开 / 收起详情面板</td></tr>
+            <tr><td>⌘R</td><td>刷新当前表数据</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="cardhead"><h4>网格与编辑</h4><span class="sp tag t-bad">多处待接线</span></div>
+        <div class="cardbody" style="padding-top:12px">
+          <table class="tk">
+            <tr><td>↑ ↓ ← →</td><td>移动当前单元格</td></tr>
+            <tr><td>⇧ + 方向</td><td>扩展矩形选区</td></tr>
+            <tr><td>⌘A / ⌘C</td><td>全选 / 复制（含表头）</td></tr>
+            <tr><td>⌘V</td><td>从剪贴板粘贴多行 —— <span class="tag t-bad">现传空函数，需接线</span></td></tr>
+            <tr><td>⌘⌫</td><td>删除选中行 —— <span class="tag t-bad">现传空函数，需接线</span></td></tr>
+            <tr><td>Enter / Tab</td><td>进入编辑 / 提交并右移</td></tr>
+            <tr><td>ESC</td><td>撤销当前单元格编辑</td></tr>
+            <tr><td>⌘S</td><td>保存（先弹写预演，再执行）</td></tr>
+            <tr><td>⌘↵</td><td>在写预演弹层内直接确认执行</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <b>一条必须遵守的实现约束：全局快捷键挂 <code>window</code>，不要挂网格容器。</b>
+      这条在真机上踩过 —— 只挂网格容器时，焦点一旦落在树或工具栏里，⌘S / ⌘K 会全部失效。
+      另外编辑器卸载后要把焦点还给网格 viewport，否则方向键会「失去响应」。
+      新增任何交互组件都要复查一遍焦点流转。
+    </div>
+
+    <h3 class="sub">交互反馈节流</h3>
+    <table class="tk">
+      <tr><th>动作</th><th>反馈方式</th><th>时延目标</th><th>理由</th></tr>
+      <tr><td>树节点展开</td><td>本地立即展开 + 异步补全子节点</td><td><span class="tag t-ok">即时</span></td><td>决策 D1：树展开记忆，绝不阻塞在网络上</td></tr>
+      <tr><td>点表打开</td><td>标签先上屏 + 骨架行占位</td><td>≤1s 首屏</td><td>硬性性能门槛</td></tr>
+      <tr><td>单元格进入编辑</td><td>立即显示输入框</td><td>0 帧延迟</td><td>不能在热路径上做对象分配</td></tr>
+      <tr><td>保存</td><td>先弹预演，用户确认后才执行</td><td>预演 ≤100ms</td><td>写操作必须可逐条预览</td></tr>
+      <tr><td>长查询</td><td>状态栏转圈 + 「取消」按钮（真 KILL QUERY）</td><td>随时可中断</td><td>取消必须是真的取消</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 07 流程 ============ -->
+<section id="flow">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">07</span><h2>操作流程</h2></div>
+    <p class="secdesc">
+      北极星指标是「单日完成 连接 → 定位表 → 查改数据 闭环的次数」，所以主流程上的每一步都被压缩到最少动作。
+      下面这条链是产品的心脏，任何新功能都不应插进这条链中间。
+    </p>
+
+    <div class="flow">
+      <div class="fstep">
+        <div class="n">STEP 1</div>
+        <h5>建立连接</h5>
+        <p>侧栏「+」新建；已存连接的密码走 safeStorage 解密，不弹窗。「连接」按钮点一次直连。</p>
+        <span class="ms">目标 ≤1 次点击</span>
+      </div>
+      <div class="farrow">→</div>
+      <div class="fstep">
+        <div class="n">STEP 2</div>
+        <h5>定位表</h5>
+        <p>树形展开（记忆上次层级）或 ⌘K 输入表名直达。两万张表也靠模糊搜索收敛。</p>
+        <span class="ms">目标 ≤3 秒</span>
+      </div>
+      <div class="farrow">→</div>
+      <div class="fstep">
+        <div class="n">STEP 3</div>
+        <h5>首屏数据</h5>
+        <p>默认拉 3000 行，只解码可视区。列式 ArrayBuffer 传输，内存有界。</p>
+        <span class="ms">预算 ≤1s</span>
+      </div>
+      <div class="farrow">→</div>
+      <div class="fstep">
+        <div class="n">STEP 4</div>
+        <h5>查找 / 排序</h5>
+        <p>点击列头排序（服务端执行）；⌘F 筛选条件面板；结果集只重取不重算。</p>
+        <span class="ms">预算 ≤1.5s</span>
+      </div>
+      <div class="farrow">→</div>
+      <div class="fstep">
+        <div class="n">STEP 5</div>
+        <h5>编辑单元格</h5>
+        <p>双击或直接输入；只标脏格，绝不整行覆盖。无唯一键的表整表只读。</p>
+        <span class="ms">红线：逐格提交</span>
+      </div>
+      <div class="farrow">→</div>
+      <div class="fstep">
+        <div class="n">STEP 6</div>
+        <h5>写预演</h5>
+        <p>⌘S 弹出全部 SQL 原文，逐条可预览、可剔单条、可取消。</p>
+        <span class="ms">红线：可预演</span>
+      </div>
+      <div class="farrow">→</div>
+      <div class="fstep">
+        <div class="n">STEP 7</div>
+        <h5>执行并回收</h5>
+        <p>⌘↵ 执行；失败单独列出、成功的照样落地；脏标记清零、状态栏同步。</p>
+        <span class="ms">闭环完成</span>
+      </div>
+    </div>
+
+    <h3 class="sub">分叉路径</h3>
+    <table class="tk">
+      <tr><th>触发</th><th>系统行为</th><th>EARS 类型</th></tr>
+      <tr>
+        <td>连接未配置 SSH / SSL</td>
+        <td>When 用户点击连接，系统应使用直连路径；隧道字段留空时不得发起 SSH 握手</td>
+        <td>Event-driven</td>
+      </tr>
+      <tr>
+        <td>表的定位策略为 <code>none</code></td>
+        <td>While 表无主键且无唯一键，网格应为只读，隐藏勾选框与脏标记</td>
+        <td>State-driven</td>
+      </tr>
+      <tr>
+        <td>连接处于只读模式</td>
+        <td>If 只读连接收到写语句，系统应拒绝执行并记录被拦截的语句</td>
+        <td>Unwanted</td>
+      </tr>
+      <tr>
+        <td>查询长时间未返回</td>
+        <td>When 用户点取消，系统应发送 KILL QUERY 并使查询真正提前返回</td>
+        <td>Event-driven</td>
+      </tr>
+      <tr>
+        <td>SSH 转发被服务端禁用</td>
+        <td>If forwardOut 既不 accept 也不 reject，系统应在独立超时后关闭隧道并报错</td>
+        <td>Unwanted</td>
+      </tr>
+    </table>
+
+    <div class="callout">
+      <b>流程产物建议流转：</b>本条主流程对应 PRD-v1.0 §6 的界面描述。
+      方案定稿后可把「第 5–6 步的写操作可预演」拆成事项分配给研发，并邀请测试同学关注
+      「逐格提交 / 无唯一键只读 / 只读连接拦截」这三条红线的回归范围。
+    </div>
+  </div>
+</section>
+
+<!-- ============ 08 危险操作 ============ -->
+<section id="danger">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">08</span><h2>危险操作与二次确认</h2></div>
+    <p class="secdesc">
+      DROP / TRUNCATE / 无 WHERE 的改删一律二次确认；生产连接再叠一层红色。这是产品安全观感的来源，
+      也是新皮肤里唯一允许使用高饱和红的地方 —— 语义色在这一刻必须压倒所有审美考虑。
+    </p>
+
+    <div class="card">
+      <div class="cardhead"><h4>危险确认弹层 · 生产连接 + 无 WHERE 删除</h4><span class="sp tag t-bad">红色标签 +1 层</span></div>
+      <div class="cardbody" style="padding:0">
+        <div class="ds" data-theme="dark" style="border:0;border-radius:0;min-height:340px">
+          <div class="ds-overlay on" style="position:relative;inset:auto;min-height:340px;padding:22px 0 30px;background:rgba(0,0,0,.35)">
+            <div class="dlg" style="margin-top:0">
+              <div class="dlg-head">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--err)" stroke-width="2.2" stroke-linecap="round"><path d="M10.3 4.1 2.9 17a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.1a2 2 0 0 0-3.4 0Z"/><path d="M12 9.5v4.2"/><circle cx="12" cy="17" r="1.1" fill="currentColor" stroke="none"/></svg>
+                <span class="t">确认删除行</span>
+                <span class="sp"></span>
+                <span class="env-tag prod">生产 · prod-replica-01</span>
+              </div>
+              <div class="dlg-body">
+                <div class="dlg-warn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10.3 4.1 2.9 17a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.1a2 2 0 0 0-3.4 0Z"/><path d="M12 9.5v4.2"/><circle cx="12" cy="17" r="1.1" fill="currentColor" stroke="none"/></svg>
+                  <div><b>该语句没有 WHERE 条件，将删除整张表的数据。</b><br>
+                  这是生产连接，操作不可回滚。请确认你已备份，并输入表名以继续。</div>
+                </div>
+                <div class="sqlbox"><span class="kw">DELETE FROM</span> <span class="tb">`shop`.`orders`</span>;  <span class="cmt">-- ⚠ 无 WHERE</span></div>
+                <div style="margin-top:12px">
+                  <div class="inp" style="min-width:0;width:100%;height:30px">
+                    <span class="ph">输入 orders 以确认</span>
+                  </div>
+                </div>
+                <div style="margin-top:10px;font-size:11px;color:var(--t3);font-family:var(--mono)">
+                  影响行数预估：10,000,000（information_schema 估算）
+                </div>
+              </div>
+              <div class="dlg-foot">
+                <span class="chip gray">ESC 取消</span>
+                <span class="spacer" style="margin-left:auto"></span>
+                <button class="btn">取消</button>
+                <button class="btn danger" style="height:26px;padding:0 12px">永久删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="cardhead"><h4>危险分级</h4></div>
+        <div class="cardbody">
+          <table class="tk">
+            <tr><td>L1 普通写</td><td>有主键定位的 UPDATE/DELETE 单行 → 写预演弹层，一次确认</td></tr>
+            <tr><td>L2 影响面</td><td>无 WHERE / DROP / TRUNCATE → 二次确认 + 输入表名</td></tr>
+            <tr><td>L3 生产</td><td>连接被标记为生产 → 弹层顶部红色标签，配色强制切到危险色，不跟随皮肤</td></tr>
+            <tr><td>拦截</td><td>只读连接的任何写语句 → <b>主进程 AST 白名单</b>拒绝，渲染层拦截不算防线</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="cardhead"><h4>皮肤与安全的边界</h4></div>
+        <div class="cardbody">
+          <table class="tk">
+            <tr><td>可以换</td><td>普通按钮、选中态、强调色、背景台阶、圆角</td></tr>
+            <tr><td>不能换</td><td>危险色 <code>#EB5757</code>、只读锁定的置灰、生产标签红</td></tr>
+            <tr><td>原因</td><td>这些颜色是安全语义，一旦跟着皮肤漂移，用户的危险直觉就会失效</td></tr>
+            <tr><td>实现</td><td>它们定义为<b>独立 token</b>（<code>--danger-fixed</code>），不参与主题变量替换</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 09 落地 ============ -->
+<section id="ship">
+  <div class="wrap">
+    <div class="sechead"><span class="secnum">09</span><h2>落地清单与待确认</h2></div>
+    <p class="secdesc">
+      方案如果通过评估，落地成本可控 —— 因为骨架、图标、行高都不用动，改的几乎全是一层 CSS 变量与少量状态类。
+    </p>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="cardhead"><h4>改动清单</h4><span class="sp tag t-ok">低风险</span></div>
+        <div class="cardbody">
+          <table class="tk">
+            <tr><td>styles.css</td><td>重写 <code>:root</code> 与 <code>[data-theme='dark']</code> 两套色板；新增 <code>--rowline</code> / <code>--elev</code> / <code>--dirty</code> 等档位（<b>两处深色必须同步，改一处必改另一处</b>）</td></tr>
+            <tr><td>圆角</td><td><code>--r-sm/r/r-lg</code> 由 6/8/12 调到 4/6/10</td></tr>
+            <tr><td>表头</td><td><code>--header-h</code> 30 → 26</td></tr>
+            <tr><td>交通灯</td><td>工具条 / 标题栏 <code>padding-left</code> 提到 ≥72px（W-P0）</td></tr>
+            <tr><td>斑马纹 / 脏标记</td><td>改为纯 class 驱动，确认不在滚动回调里算</td></tr>
+            <tr><td>图标</td><td><b>零改动</b></td></tr>
+            <tr><td>字体</td><td><b>零改动</b></td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="cardhead"><h4>验收动作</h4></div>
+        <div class="cardbody">
+          <table class="tk">
+            <tr><td>体积</td><td><code>npm run check:bundle</code> —— 纯 CSS 改动，首屏特征串断言应保持不变</td></tr>
+            <tr><td>行为</td><td><code>npm run e2e:ui</code> —— 选择器与结构未变，应全绿</td></tr>
+            <tr><td>观感</td><td><code>node docs/design-mockups/verify.mjs</code> —— 浅/深双主题真实截图人工比对</td></tr>
+            <tr><td>性能</td><td>网格滚动帧率复测 ≥55FPS（本方案减少模糊运算，预期不退化）</td></tr>
+            <tr><td>全量</td><td><code>npm run verify</code></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub">需要你确认的四个问题</h3>
+    <div class="card">
+      <div class="cardbody">
+        <ul class="todo">
+          <li><b>① 强调色定哪一档？</b>冰青 #3BA9C9（推荐，仪器感最强）/ 电光蓝 #3E8FF0（最贴现状）/ 石蓝 #93A6BA（最克制）。可回到 §02 直接切着看。</li>
+          <li><b>② 浅色模式是否同步改造？</b>只做深色省一半工作量，但项目既有三态主题机制会变成「一半新一半旧」，长期观感割裂。建议同步改。</li>
+          <li><b>③ 侧栏玻璃保留还是改纯色台阶？</b>保留 = 留住 macOS 27 观感（推荐）；改纯色 = 更贴参考风但丢一层质感。</li>
+          <li><b>④ 这一版是「全量替换」还是「新增可选皮肤」？</b>若要保留现有 Apple 精修，可做成主题下拉里的第二档 —— 但要注意参考报告里提过的维护成本问题。</li>
+        </ul>
+        <div style="margin-top:16px;padding:13px 15px;background:var(--card2);border:1px solid var(--line);border-radius:8px;font-size:13.5px;color:var(--ink2);line-height:1.75">
+          <b style="color:var(--ink)">确认后我会直接输出：</b>① 两套完整 CSS 变量（可直接贴进 <code>styles.css</code>）；
+          ② 逐文件的改动 diff 清单；③ 一版跑完 <code>npm run verify</code> 的实现，你在真机 Electron 里验收。
+        </div>
+      </div>
+    </div>
+
+    <div class="callout warn" style="margin-top:22px">
+      <b>一句实话：</b>这套皮肤真正值钱的不是「好看」，是它<b>顺手解决了三个既有问题</b>——
+      密度（表头收 4px、行高已是 28px）、性能（内容区零模糊运算）、色盲可辨（状态不只靠色相）。
+      如果只是想要「深色版」，那么把现有调色板加深就够了；要的是「精密仪器」那层观感，才值得走这一整套。
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>本预览基于 <code>ui-style-selection.html</code> 中「深色科技精密风 / Dark Tech Precision」的 token 与设计主张，结合 DB Studio 现有工程结构（三栏布局、28px 行高、icons.tsx 图标体系、方案 A 玻璃约束）改编。色值为提案值，落地前建议在真机屏幕再校准一次伽马。</div>
+    <div style="margin-top:8px;font-family:var(--mono);font-size:11.5px;color:var(--ink3)">DB Studio · GUI System Proposal · 2026-09-28</div>
+  </div>
+</footer>
+
+<script>
+/* ================= 主题切换（全局 & 主 mockup） =================
+   注意：applyAccent 会把强调色写成【内联变量】，内联优先级高于
+   .ds[data-theme="light"] 的 CSS 规则 —— 所以切换主题后必须重跑一次
+   applyAccent，否则浅色会沿用深色的强调值（曾实测踩到）。 */
+let curAccent = 'ice';
+function setMockTheme(t){
+  document.getElementById('mainMock').dataset.theme = t;
+  document.querySelectorAll('#mockThemeSeg button').forEach(b=>{
+    b.classList.toggle('on', b.dataset.mt === t);
+  });
+  applyAccent(curAccent);
+}
+document.querySelectorAll('#mockThemeSeg button').forEach(b=>{
+  b.addEventListener('click', ()=> setMockTheme(b.dataset.mt));
+});
+
+/* ================= 强调色切换 ================= */
+const ACCENTS = {
+  ice:   { dark:'#3BA9C9', light:'#1F819A', darkSoft:'rgba(59,169,201,.16)',  darkText:'#7FD1E8', lightSoft:'rgba(31,129,154,.11)', lightText:'#155F73', darkOn:'#04191F' },
+  blue:  { dark:'#3E8FF0', light:'#2568D6', darkSoft:'rgba(62,143,240,.18)',  darkText:'#8FBDF8', lightSoft:'rgba(37,104,214,.12)', lightText:'#1A4FA8', darkOn:'#04121F' },
+  slate: { dark:'#93A6BA', light:'#5B6E82', darkSoft:'rgba(147,166,186,.18)', darkText:'#B8C6D6', lightSoft:'rgba(91,110,130,.12)',  lightText:'#3E4E60', darkOn:'#0C1218' }
+};
+function applyAccent(key){
+  const a = ACCENTS[key] || ACCENTS.ice;
+  curAccent = ACCENTS[key] ? key : 'ice';
+  document.querySelectorAll('.ds[data-theme="dark"]').forEach(el=>{
+    el.style.setProperty('--accent', a.dark);
+    el.style.setProperty('--accent-soft', a.darkSoft);
+    el.style.setProperty('--accent-text', a.darkText);
+    el.style.setProperty('--on-accent', a.darkOn);
+  });
+  document.querySelectorAll('.ds[data-theme="light"]').forEach(el=>{
+    el.style.setProperty('--accent', a.light);
+    el.style.setProperty('--accent-soft', a.lightSoft);
+    el.style.setProperty('--accent-text', a.lightText);
+    el.style.setProperty('--on-accent', '#FFFFFF');
+  });
+  document.querySelectorAll('[data-accent]').forEach(b=>{
+    b.classList.toggle('pri', b.dataset.accent === key);
+  });
+}
+document.querySelectorAll('[data-accent]').forEach(b=>{
+  b.addEventListener('click', ()=> applyAccent(b.dataset.accent));
+});
+applyAccent('ice');
+
+/* ================= 树展开 ================= */
+document.querySelectorAll('#tree .tn[data-node]').forEach(node=>{
+  node.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const kids = node.nextElementSibling;
+    if (kids && kids.classList.contains('kids')){
+      node.classList.toggle('open');
+    }
+    document.querySelectorAll('#tree .tn').forEach(n=>n.classList.remove('sel'));
+    node.classList.add('sel');
+  });
+});
+
+/* ================= 标签切换 ================= */
+document.querySelectorAll('.ds-tab[data-tab]').forEach(tab=>{
+  tab.addEventListener('click', ()=>{
+    document.querySelectorAll('.ds-tab[data-tab]').forEach(t=>t.classList.remove('on'));
+    tab.classList.add('on');
+  });
+});
+
+/* ================= 行选中 ================= */
+document.querySelectorAll('#mainMock .gr').forEach(row=>{
+  row.addEventListener('click', ()=>{
+    document.querySelectorAll('#mainMock .gr').forEach(r=>r.classList.remove('sel'));
+    row.classList.add('sel');
+  });
+});
+
+/* ================= 命令面板 / 写预演 ================= */
+const cmdOverlay = document.getElementById('cmdOverlay');
+const pvOverlay  = document.getElementById('pvOverlay');
+function closeAll(){ cmdOverlay.classList.remove('on'); pvOverlay.classList.remove('on'); }
+function openCmd(){ closeAll(); cmdOverlay.classList.add('on'); const i=document.getElementById('cmdInput'); if(i) i.focus(); }
+document.getElementById('openCmd').addEventListener('click', openCmd);
+document.getElementById('openPreview').addEventListener('click', ()=>{ closeAll(); pvOverlay.classList.add('on'); });
+cmdOverlay.addEventListener('click', e=>{ if(e.target===cmdOverlay) closeAll(); });
+pvOverlay.addEventListener('click', e=>{ if(e.target===pvOverlay) closeAll(); });
+document.addEventListener('keydown', e=>{
+  if ((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); openCmd(); }
+  if (e.key==='Escape') closeAll();
+});
+window.closeAll = closeAll;
+
+/* ================= 详情面板视图分段 ================= */
+document.querySelectorAll('.ds-detail .seg button').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    b.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+  });
+});
+</script>
+
+</body>
+</html>

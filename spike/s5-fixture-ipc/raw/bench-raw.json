@@ -1,0 +1,800 @@
+{
+  "meta": {
+    "ts": "2026-09-21T03:21:33.427Z",
+    "env": {
+      "node": "v22.22.2",
+      "mysql": "8.0"
+    }
+  },
+  "connectMs": 0.038792000000000826,
+  "s3000": {
+    "label": "LIMIT 3000",
+    "rows": 3000,
+    "columns": [
+      {
+        "name": "id",
+        "typeCode": 8
+      },
+      {
+        "name": "name",
+        "typeCode": 253
+      },
+      {
+        "name": "email",
+        "typeCode": 253
+      },
+      {
+        "name": "status",
+        "typeCode": 253
+      },
+      {
+        "name": "city",
+        "typeCode": 253
+      },
+      {
+        "name": "amount",
+        "typeCode": 246
+      },
+      {
+        "name": "score",
+        "typeCode": 5
+      },
+      {
+        "name": "qty",
+        "typeCode": 3
+      },
+      {
+        "name": "flag",
+        "typeCode": 1
+      },
+      {
+        "name": "created_at",
+        "typeCode": 12
+      },
+      {
+        "name": "payload",
+        "typeCode": 245
+      },
+      {
+        "name": "deleted_at",
+        "typeCode": 12
+      }
+    ],
+    "p50": {
+      "qMs": 4.138666999999998,
+      "encMs": 4.154124999999993,
+      "sizeColMB": 0.4770622253417969,
+      "decFullMs": 1.5326669999999751,
+      "dec40Ms": 0.02879199999999571,
+      "cloneColMs": 0.07045800000000213,
+      "jsonEncMs": 0.7026250000000118,
+      "sizeJsonMB": 0.44312381744384766,
+      "jsonDecMs": 1.100500000000011,
+      "cloneJsonMs": 0.07604100000000358
+    },
+    "_runs": [
+      {
+        "qMs": 4.8643749999999955,
+        "encMs": 5.6213750000000005,
+        "sizeCol": 500236,
+        "decFullMs": 2.814125000000004,
+        "dec40Ms": 0.03433299999998951,
+        "cloneColMs": 0.10354199999999025,
+        "jsonEncMs": 0.7567090000000007,
+        "sizeJson": 464649,
+        "jsonDecMs": 1.9006669999999986,
+        "cloneJsonMs": 0.07604100000000358
+      },
+      {
+        "qMs": 4.824667000000005,
+        "encMs": 4.232833999999997,
+        "sizeCol": 500236,
+        "decFullMs": 2.4599580000000003,
+        "dec40Ms": 0.02879199999999571,
+        "cloneColMs": 0.07045800000000213,
+        "jsonEncMs": 0.6681659999999994,
+        "sizeJson": 464649,
+        "jsonDecMs": 1.366540999999998,
+        "cloneJsonMs": 0.07933300000000543
+      },
+      {
+        "qMs": 4.33312500000001,
+        "encMs": 4.154124999999993,
+        "sizeCol": 500236,
+        "decFullMs": 1.3962499999999949,
+        "dec40Ms": 0.03937500000000682,
+        "cloneColMs": 0.14295800000000725,
+        "jsonEncMs": 0.7115000000000009,
+        "sizeJson": 464649,
+        "jsonDecMs": 0.9628330000000034,
+        "cloneJsonMs": 0.12358299999999645
+      },
+      {
+        "qMs": 3.673000000000002,
+        "encMs": 2.9037500000000023,
+        "sizeCol": 500236,
+        "decFullMs": 2.0077499999999873,
+        "dec40Ms": 0.07679100000000005,
+        "cloneColMs": 0.06341700000000117,
+        "jsonEncMs": 0.6696669999999898,
+        "sizeJson": 464649,
+        "jsonDecMs": 1.008749999999992,
+        "cloneJsonMs": 0.054417000000000826
+      },
+      {
+        "qMs": 4.000707999999989,
+        "encMs": 2.879041000000001,
+        "sizeCol": 500236,
+        "decFullMs": 1.5326669999999751,
+        "dec40Ms": 0.02225000000001387,
+        "cloneColMs": 0.16800000000000637,
+        "jsonEncMs": 0.7335829999999817,
+        "sizeJson": 464649,
+        "jsonDecMs": 1.100500000000011,
+        "cloneJsonMs": 0.05937500000001705
+      },
+      {
+        "qMs": 4.138666999999998,
+        "encMs": 2.714334000000008,
+        "sizeCol": 500236,
+        "decFullMs": 1.4927079999999933,
+        "dec40Ms": 0.02179200000000492,
+        "cloneColMs": 0.06766700000000014,
+        "jsonEncMs": 0.664874999999995,
+        "sizeJson": 464649,
+        "jsonDecMs": 1.3932499999999948,
+        "cloneJsonMs": 0.08233400000000302
+      },
+      {
+        "qMs": 3.510041000000001,
+        "encMs": 5.182999999999993,
+        "sizeCol": 500236,
+        "decFullMs": 1.3706249999999898,
+        "dec40Ms": 0.022375000000010914,
+        "cloneColMs": 0.04766599999999244,
+        "jsonEncMs": 0.7026250000000118,
+        "sizeJson": 464649,
+        "jsonDecMs": 1.0872919999999908,
+        "cloneJsonMs": 0.0605419999999981
+      }
+    ]
+  },
+  "s10000": {
+    "label": "LIMIT 10000",
+    "rows": 10000,
+    "columns": [
+      {
+        "name": "id",
+        "typeCode": 8
+      },
+      {
+        "name": "name",
+        "typeCode": 253
+      },
+      {
+        "name": "email",
+        "typeCode": 253
+      },
+      {
+        "name": "status",
+        "typeCode": 253
+      },
+      {
+        "name": "city",
+        "typeCode": 253
+      },
+      {
+        "name": "amount",
+        "typeCode": 246
+      },
+      {
+        "name": "score",
+        "typeCode": 5
+      },
+      {
+        "name": "qty",
+        "typeCode": 3
+      },
+      {
+        "name": "flag",
+        "typeCode": 1
+      },
+      {
+        "name": "created_at",
+        "typeCode": 12
+      },
+      {
+        "name": "payload",
+        "typeCode": 245
+      },
+      {
+        "name": "deleted_at",
+        "typeCode": 12
+      }
+    ],
+    "p50": {
+      "qMs": 12.271415999999988,
+      "encMs": 12.91024999999999,
+      "sizeColMB": 1.6020994186401367,
+      "decFullMs": 5.443249999999978,
+      "dec40Ms": 0.028082999999980984,
+      "cloneColMs": 0.18916699999999764,
+      "jsonEncMs": 2.443958000000009,
+      "sizeJsonMB": 1.491506576538086,
+      "jsonDecMs": 3.9834999999999923,
+      "cloneJsonMs": 0.19695799999999508
+    },
+    "_runs": [
+      {
+        "qMs": 12.271415999999988,
+        "encMs": 13.207084000000009,
+        "sizeCol": 1679923,
+        "decFullMs": 5.443249999999978,
+        "dec40Ms": 0.029583999999999833,
+        "cloneColMs": 0.3775829999999871,
+        "jsonEncMs": 2.639417000000009,
+        "sizeJson": 1563958,
+        "jsonDecMs": 4.347707999999983,
+        "cloneJsonMs": 0.2067920000000072
+      },
+      {
+        "qMs": 12.231791999999984,
+        "encMs": 12.91024999999999,
+        "sizeCol": 1679923,
+        "decFullMs": 5.531999999999982,
+        "dec40Ms": 0.028125000000017053,
+        "cloneColMs": 0.26270900000000097,
+        "jsonEncMs": 2.3909170000000017,
+        "sizeJson": 1563958,
+        "jsonDecMs": 3.1968339999999955,
+        "cloneJsonMs": 0.32791700000001356
+      },
+      {
+        "qMs": 14.657125000000008,
+        "encMs": 12.188417000000015,
+        "sizeCol": 1679923,
+        "decFullMs": 5.649208999999985,
+        "dec40Ms": 0.06645800000001145,
+        "cloneColMs": 0.40537499999999227,
+        "jsonEncMs": 2.603207999999995,
+        "sizeJson": 1563958,
+        "jsonDecMs": 4.438208999999972,
+        "cloneJsonMs": 0.171291999999994
+      },
+      {
+        "qMs": 14.869666999999993,
+        "encMs": 12.864708000000007,
+        "sizeCol": 1679923,
+        "decFullMs": 4.350708000000054,
+        "dec40Ms": 0.024459000000035758,
+        "cloneColMs": 0.11112500000001546,
+        "jsonEncMs": 2.4521670000000313,
+        "sizeJson": 1563958,
+        "jsonDecMs": 4.163333000000023,
+        "cloneJsonMs": 0.18554100000000062
+      },
+      {
+        "qMs": 14.722291999999982,
+        "encMs": 13.755375000000015,
+        "sizeCol": 1679923,
+        "decFullMs": 5.272582999999997,
+        "dec40Ms": 0.025291999999978998,
+        "cloneColMs": 0.10820899999998801,
+        "jsonEncMs": 2.412916999999993,
+        "sizeJson": 1563958,
+        "jsonDecMs": 3.693290999999988,
+        "cloneJsonMs": 0.19695799999999508
+      },
+      {
+        "qMs": 8.11462499999999,
+        "encMs": 13.589666000000022,
+        "sizeCol": 1679923,
+        "decFullMs": 5.992000000000019,
+        "dec40Ms": 0.026416999999980817,
+        "cloneColMs": 0.18916699999999764,
+        "jsonEncMs": 2.443958000000009,
+        "sizeJson": 1563958,
+        "jsonDecMs": 3.7531660000000215,
+        "cloneJsonMs": 0.17891700000001265
+      },
+      {
+        "qMs": 8.452709000000027,
+        "encMs": 12.121041999999989,
+        "sizeCol": 1679923,
+        "decFullMs": 4.467874999999992,
+        "dec40Ms": 0.028082999999980984,
+        "cloneColMs": 0.12620800000001964,
+        "jsonEncMs": 2.3312500000000114,
+        "sizeJson": 1563958,
+        "jsonDecMs": 3.9834999999999923,
+        "cloneJsonMs": 0.2733750000000441
+      }
+    ]
+  },
+  "sort": {
+    "label": "ORDER BY created_at",
+    "rows": 3000,
+    "columns": [
+      {
+        "name": "id",
+        "typeCode": 8
+      },
+      {
+        "name": "name",
+        "typeCode": 253
+      },
+      {
+        "name": "email",
+        "typeCode": 253
+      },
+      {
+        "name": "status",
+        "typeCode": 253
+      },
+      {
+        "name": "city",
+        "typeCode": 253
+      },
+      {
+        "name": "amount",
+        "typeCode": 246
+      },
+      {
+        "name": "score",
+        "typeCode": 5
+      },
+      {
+        "name": "qty",
+        "typeCode": 3
+      },
+      {
+        "name": "flag",
+        "typeCode": 1
+      },
+      {
+        "name": "created_at",
+        "typeCode": 12
+      },
+      {
+        "name": "payload",
+        "typeCode": 245
+      },
+      {
+        "name": "deleted_at",
+        "typeCode": 12
+      }
+    ],
+    "p50": {
+      "qMs": 4.018167000000005,
+      "encMs": 2.911083000000019,
+      "sizeColMB": 0.5153045654296875,
+      "decFullMs": 1.2624160000000302,
+      "dec40Ms": 0.017792000000042663,
+      "cloneColMs": 0.05558300000001282,
+      "jsonEncMs": 0.6942090000000007,
+      "sizeJsonMB": 0.493865966796875,
+      "jsonDecMs": 1.2026250000000118,
+      "cloneJsonMs": 0.07754099999999653
+    },
+    "_runs": [
+      {
+        "qMs": 3.485500000000002,
+        "encMs": 2.530625000000043,
+        "sizeCol": 540336,
+        "decFullMs": 1.232541000000026,
+        "dec40Ms": 0.017083000000013726,
+        "cloneColMs": 0.05579099999999926,
+        "jsonEncMs": 0.8977910000000406,
+        "sizeJson": 517856,
+        "jsonDecMs": 1.2608749999999986,
+        "cloneJsonMs": 0.08116699999999355
+      },
+      {
+        "qMs": 3.8566660000000184,
+        "encMs": 2.9692920000000527,
+        "sizeCol": 540336,
+        "decFullMs": 1.2638749999999845,
+        "dec40Ms": 0.019875000000013188,
+        "cloneColMs": 0.051916999999946256,
+        "jsonEncMs": 0.6798750000000382,
+        "sizeJson": 517856,
+        "jsonDecMs": 1.178875000000005,
+        "cloneJsonMs": 0.07754099999999653
+      },
+      {
+        "qMs": 3.8603330000000255,
+        "encMs": 2.6593749999999545,
+        "sizeCol": 540336,
+        "decFullMs": 1.2425000000000068,
+        "dec40Ms": 0.017792000000042663,
+        "cloneColMs": 0.04745900000000347,
+        "jsonEncMs": 0.6942090000000007,
+        "sizeJson": 517856,
+        "jsonDecMs": 1.2026250000000118,
+        "cloneJsonMs": 0.0635000000000332
+      },
+      {
+        "qMs": 4.0301659999999515,
+        "encMs": 2.911083000000019,
+        "sizeCol": 540336,
+        "decFullMs": 1.2564590000000067,
+        "dec40Ms": 0.01779199999998582,
+        "cloneColMs": 0.04570899999998801,
+        "jsonEncMs": 0.7385419999999954,
+        "sizeJson": 517856,
+        "jsonDecMs": 1.159167000000025,
+        "cloneJsonMs": 0.07062500000000682
+      },
+      {
+        "qMs": 4.46391600000004,
+        "encMs": 3.4364589999999566,
+        "sizeCol": 540336,
+        "decFullMs": 1.4554160000000138,
+        "dec40Ms": 0.06791599999996834,
+        "cloneColMs": 0.09383300000001782,
+        "jsonEncMs": 0.6863329999999905,
+        "sizeJson": 517856,
+        "jsonDecMs": 1.108916000000022,
+        "cloneJsonMs": 0.08650000000000091
+      },
+      {
+        "qMs": 5.540333000000032,
+        "encMs": 4.369916999999987,
+        "sizeCol": 540336,
+        "decFullMs": 1.2624160000000302,
+        "dec40Ms": 0.01779199999998582,
+        "cloneColMs": 0.05558300000001282,
+        "jsonEncMs": 0.7726669999999558,
+        "sizeJson": 517856,
+        "jsonDecMs": 1.2089169999999854,
+        "cloneJsonMs": 0.06212500000003729
+      },
+      {
+        "qMs": 4.018167000000005,
+        "encMs": 2.6310419999999795,
+        "sizeCol": 540336,
+        "decFullMs": 1.9552499999999782,
+        "dec40Ms": 0.020542000000034477,
+        "cloneColMs": 0.057542000000012195,
+        "jsonEncMs": 0.6693750000000023,
+        "sizeJson": 517856,
+        "jsonDecMs": 1.5697079999999914,
+        "cloneJsonMs": 0.08387499999992087
+      }
+    ]
+  },
+  "s200k": {
+    "label": "LIMIT 200000",
+    "rows": 200000,
+    "columns": [
+      {
+        "name": "id",
+        "typeCode": 8
+      },
+      {
+        "name": "name",
+        "typeCode": 253
+      },
+      {
+        "name": "email",
+        "typeCode": 253
+      },
+      {
+        "name": "status",
+        "typeCode": 253
+      },
+      {
+        "name": "city",
+        "typeCode": 253
+      },
+      {
+        "name": "amount",
+        "typeCode": 246
+      },
+      {
+        "name": "score",
+        "typeCode": 5
+      },
+      {
+        "name": "qty",
+        "typeCode": 3
+      },
+      {
+        "name": "flag",
+        "typeCode": 1
+      },
+      {
+        "name": "created_at",
+        "typeCode": 12
+      },
+      {
+        "name": "payload",
+        "typeCode": 245
+      },
+      {
+        "name": "deleted_at",
+        "typeCode": 12
+      }
+    ],
+    "p50": {
+      "qMs": 151.81624999999985,
+      "encMs": 338.694833,
+      "sizeColMB": 33.19594383239746,
+      "decFullMs": 132.33012499999995,
+      "dec40Ms": 0.0286670000000413,
+      "cloneColMs": 11.615583000000015,
+      "jsonEncMs": 50.45687500000031,
+      "sizeJsonMB": 31.317794799804688,
+      "jsonDecMs": 178.38133400000015,
+      "cloneJsonMs": 4.539792000000034
+    },
+    "_runs": [
+      {
+        "qMs": 157.910708,
+        "encMs": 338.694833,
+        "sizeCol": 34808470,
+        "decFullMs": 222.84629199999995,
+        "dec40Ms": 0.027041999999937616,
+        "cloneColMs": 11.615583000000015,
+        "jsonEncMs": 51.37308299999995,
+        "sizeJson": 32839088,
+        "jsonDecMs": 107.87524999999982,
+        "cloneJsonMs": 4.642790999999988
+      },
+      {
+        "qMs": 161.42200000000003,
+        "encMs": 405.94387500000016,
+        "sizeCol": 34808470,
+        "decFullMs": 120.86487500000021,
+        "dec40Ms": 0.02999999999974534,
+        "cloneColMs": 9.428541999999652,
+        "jsonEncMs": 50.45687500000031,
+        "sizeJson": 32839088,
+        "jsonDecMs": 105.95941700000003,
+        "cloneJsonMs": 4.539792000000034
+      },
+      {
+        "qMs": 150.4673340000004,
+        "encMs": 344.9638749999999,
+        "sizeCol": 34808470,
+        "decFullMs": 124.03320800000029,
+        "dec40Ms": 0.028000000000247383,
+        "cloneColMs": 8.289416999999958,
+        "jsonEncMs": 45.98645799999986,
+        "sizeJson": 32839088,
+        "jsonDecMs": 178.38133400000015,
+        "cloneJsonMs": 5.4489580000004025
+      },
+      {
+        "qMs": 151.81624999999985,
+        "encMs": 283.308458,
+        "sizeCol": 34808470,
+        "decFullMs": 132.33012499999995,
+        "dec40Ms": 0.0286670000000413,
+        "cloneColMs": 22.374708000000282,
+        "jsonEncMs": 51.322749999999814,
+        "sizeJson": 32839088,
+        "jsonDecMs": 191.48454200000015,
+        "cloneJsonMs": 3.863749999999527
+      },
+      {
+        "qMs": 142.49575000000004,
+        "encMs": 277.1225829999994,
+        "sizeCol": 34808470,
+        "decFullMs": 133.75733299999956,
+        "dec40Ms": 0.06574999999975262,
+        "cloneColMs": 15.691749999999956,
+        "jsonEncMs": 49.290624999999636,
+        "sizeJson": 32839088,
+        "jsonDecMs": 210.0365409999995,
+        "cloneJsonMs": 3.5929580000001806
+      }
+    ]
+  },
+  "s500k": {
+    "label": "LIMIT 500000",
+    "rows": 500000,
+    "columns": [
+      {
+        "name": "id",
+        "typeCode": 8
+      },
+      {
+        "name": "name",
+        "typeCode": 253
+      },
+      {
+        "name": "email",
+        "typeCode": 253
+      },
+      {
+        "name": "status",
+        "typeCode": 253
+      },
+      {
+        "name": "city",
+        "typeCode": 253
+      },
+      {
+        "name": "amount",
+        "typeCode": 246
+      },
+      {
+        "name": "score",
+        "typeCode": 5
+      },
+      {
+        "name": "qty",
+        "typeCode": 3
+      },
+      {
+        "name": "flag",
+        "typeCode": 1
+      },
+      {
+        "name": "created_at",
+        "typeCode": 12
+      },
+      {
+        "name": "payload",
+        "typeCode": 245
+      },
+      {
+        "name": "deleted_at",
+        "typeCode": 12
+      }
+    ],
+    "p50": {
+      "qMs": 408.75766699999986,
+      "encMs": 981.8386249999985,
+      "sizeColMB": 83.57787322998047,
+      "decFullMs": 327.79954199999884,
+      "dec40Ms": 0.029209000000264496,
+      "cloneColMs": 41.07258299999921,
+      "jsonEncMs": 186.07087500000125,
+      "sizeJsonMB": 78.98669815063477,
+      "jsonDecMs": 338.29733399999895,
+      "cloneJsonMs": 10.395375000000058
+    },
+    "_runs": [
+      {
+        "qMs": 424.1156659999997,
+        "encMs": 1109.6367920000002,
+        "sizeCol": 87637752,
+        "decFullMs": 366.27887499999997,
+        "dec40Ms": 0.028000000000247383,
+        "cloneColMs": 23.488917000000583,
+        "jsonEncMs": 137.43229100000008,
+        "sizeJson": 82823556,
+        "jsonDecMs": 482.17670799999996,
+        "cloneJsonMs": 13.520333000000392
+      },
+      {
+        "qMs": 391.2275830000008,
+        "encMs": 981.8386249999985,
+        "sizeCol": 87637752,
+        "decFullMs": 317.9623339999998,
+        "dec40Ms": 0.029499999998733983,
+        "cloneColMs": 52.53095799999937,
+        "jsonEncMs": 184.39495800000077,
+        "sizeJson": 82823556,
+        "jsonDecMs": 315.5861249999998,
+        "cloneJsonMs": 10.126333000000159
+      },
+      {
+        "qMs": 429.3443329999991,
+        "encMs": 1011.4959170000002,
+        "sizeCol": 87637752,
+        "decFullMs": 341.71033400000124,
+        "dec40Ms": 0.02900000000045111,
+        "cloneColMs": 41.07258299999921,
+        "jsonEncMs": 204.79558299999917,
+        "sizeJson": 82823556,
+        "jsonDecMs": 339.37633300000016,
+        "cloneJsonMs": 13.988541999999143
+      },
+      {
+        "qMs": 408.75766699999986,
+        "encMs": 935.9112079999995,
+        "sizeCol": 87637752,
+        "decFullMs": 318.9059159999997,
+        "dec40Ms": 0.029209000000264496,
+        "cloneColMs": 40.52491700000064,
+        "jsonEncMs": 186.07087500000125,
+        "sizeJson": 82823556,
+        "jsonDecMs": 317.1374169999999,
+        "cloneJsonMs": 10.395375000000058
+      },
+      {
+        "qMs": 402.8893339999995,
+        "encMs": 919.4583340000008,
+        "sizeCol": 87637752,
+        "decFullMs": 327.79954199999884,
+        "dec40Ms": 0.030167000000801636,
+        "cloneColMs": 55.25445899999977,
+        "jsonEncMs": 206.48370799999975,
+        "sizeJson": 82823556,
+        "jsonDecMs": 338.29733399999895,
+        "cloneJsonMs": 8.914457999999286
+      }
+    ]
+  },
+  "correctness": {
+    "bigint_precision": {
+      "raw": "9007199254740993",
+      "decoded": "9007199254740993",
+      "pass": true
+    },
+    "datetime_micro": {
+      "raw": "2026-09-21 12:34:56.123456",
+      "pass": true
+    },
+    "json_bigint": {
+      "raw": "{\"id\": 9007199254740993, \"name\": \"x\"}",
+      "pass": true
+    },
+    "decimal_string": {
+      "raw": "1234567890.12",
+      "pass": true
+    },
+    "nullmask": {
+      "row1": null,
+      "row2": "2026-09-20 00:00:00.000000",
+      "pass": true
+    }
+  },
+  "verdicts": {
+    "firstScreen1000ms": {
+      "value": 8.4,
+      "budget": 1000,
+      "reachable": true
+    },
+    "firstRowRender500ms": {
+      "value": 12.9,
+      "budget": 500,
+      "reachable": true,
+      "note": "含列式编码+解码40行；transfer零拷贝≈0"
+    },
+    "sort1500ms": {
+      "value": 6.9,
+      "budget": 1500,
+      "reachable": true
+    }
+  },
+  "columnarVsJson": {
+    "limit3000": {
+      "sizeMB": {
+        "columnar": 0.477,
+        "json": 0.443,
+        "savedMB": -0.034
+      },
+      "encodeMs": {
+        "columnar": 4.154,
+        "json": 0.703,
+        "savedMs": -3.451
+      },
+      "decodeMs": {
+        "columnarFull": 1.533,
+        "jsonFull": 1.101,
+        "columnar40": 0.0288,
+        "jsonMustParseAll": 1.101
+      }
+    },
+    "limit10000": {
+      "sizeMB": {
+        "columnar": 1.602,
+        "json": 1.492,
+        "savedMB": -0.111
+      },
+      "encodeMs": {
+        "columnar": 12.91,
+        "json": 2.444
+      },
+      "decodeMs": {
+        "columnarFull": 5.443,
+        "jsonFull": 3.983,
+        "columnar40": 0.0281
+      }
+    }
+  }
+}

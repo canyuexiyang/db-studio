@@ -1,0 +1,97 @@
+{
+  "group": "G3",
+  "window": {
+    "transparent": false,
+    "frame": true,
+    "roundedCorners": true,
+    "vibrancy": null,
+    "backgroundColor": "#ffffff",
+    "glassApplied": {
+      "attempted": false,
+      "applied": false,
+      "note": "G2 不加玻璃"
+    }
+  },
+  "rows": 10000,
+  "cols": 20,
+  "sysinfo": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "darwinRelease": "27.0.0",
+    "darwinMajor": 27,
+    "isGlassSupported": true,
+    "electron": "44.4.3",
+    "node": "24.21.0",
+    "date": "2026-09-21T04:07:38.143Z"
+  },
+  "glassModule": {
+    "loaded": false,
+    "error": "Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: No \"exports\" main defined in /Users/guhui/software/ai-project/work-buddy/database-app/spike/s1-glass-grid/node_modules/electron-window-glass/package.json\n    at exportsNotFound (node:internal/modules/esm/resolve:319:10)\n    at packageExportsResolve (node:internal/modules/esm/resolve:610:13)\n    at resolveExports (node:internal/modules/cjs/loader:761:36)\n    at Module._findPath (node:internal/modules/cjs/loader:828:31)\n    at node:internal/modules/cjs/loader:1564:27\n    at Module._resolveFilename (node:electron/js2c/browser_init:1:142652)\n    at wrapResolveFilename (node:internal/modules/cjs/loader:1125:27)\n    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1149:10)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1176:12)\n    at Module._load (node:internal/modules/cjs/loader:1348:5)",
+    "path": null
+  },
+  "result": {
+    "rows": 10000,
+    "cols": 20,
+    "rounds": [
+      {
+        "frames": 699,
+        "p50Fps": 120.5,
+        "p95Fps": 131.6,
+        "meanFps": 120,
+        "minFps": 106.4,
+        "maxFps": 137,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "totalMs": 5825
+      },
+      {
+        "frames": 700,
+        "p50Fps": 120.5,
+        "p95Fps": 131.6,
+        "meanFps": 120,
+        "minFps": 106.4,
+        "maxFps": 137,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "totalMs": 5833
+      },
+      {
+        "frames": 700,
+        "p50Fps": 120.5,
+        "p95Fps": 135.1,
+        "meanFps": 120,
+        "minFps": 106.4,
+        "maxFps": 137,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "totalMs": 5832
+      },
+      {
+        "frames": 700,
+        "p50Fps": 120.5,
+        "p95Fps": 131.6,
+        "meanFps": 120,
+        "minFps": 106.4,
+        "maxFps": 137,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "totalMs": 5834
+      },
+      {
+        "frames": 700,
+        "p50Fps": 120.5,
+        "p95Fps": 133.3,
+        "meanFps": 120,
+        "minFps": 106.4,
+        "maxFps": 137,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "totalMs": 5833
+      }
+    ],
+    "overall": {
+      "p50Fps": 120.5,
+      "p95Fps": 131.6
+    }
+  }
+}

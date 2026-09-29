@@ -1,0 +1,18 @@
+{
+  "name": "@dbstudio/core-ssh-tunnel",
+  "version": "0.1.0",
+  "description": "SSH 隧道（direct-tcpip 端口转发）。纯逻辑可注入 ssh2，单测不起真 SSH 服务",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  }
+}

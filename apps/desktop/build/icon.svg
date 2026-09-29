@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DB Studio 应用图标（源文件，手写 SVG）
+
+  设计基准：macOS 27 Liquid Glass 规范（D7）
+    - squircle 圆角矩形（824/1024 画布 + rx≈185，Apple 模板比例）
+    - 深色渐变底（呼应渲染层暗色主题 --bg: #1e1e1e / --bg-alt: #232323）
+    - 玻璃高光（顶部弧面高光 + 内描边 + 边缘光）
+    - 居中「数据库」意象：三叠层圆柱体（数据/表/分层存储）
+    - 主色取自 apps/desktop/renderer/src/styles.css 的 --accent: #0a84ff
+
+  用法：本文件是【源文件】，不直接参与打包；
+       运行 `node scripts/make-icon.mjs` 用本机 Chromium 渲染成
+       icon.iconset（10 个尺寸）→ iconutil 生成 icon.icns → sips 生成 icon.png。
+  修改图标请改本文件后重新执行上面的命令，产物会被整体覆盖（可重复运行）。
+-->
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- squircle 底：深蓝黑对角渐变（暗色主题的蓝调延伸） -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2b3a55"/>
+      <stop offset="0.5" stop-color="#1a2436"/>
+      <stop offset="1" stop-color="#0e1522"/>
+    </linearGradient>
+    <!-- 玻璃高光：顶部弧面，白光从左上扫入 -->
+    <linearGradient id="sheen" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <!-- 内描边：上亮下暗，模拟玻璃边缘受光 -->
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.38"/>
+      <stop offset="0.4" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.02"/>
+    </linearGradient>
+    <!-- 圆柱体：--accent #0a84ff 纵向明暗 -->
+    <linearGradient id="dbBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3fa4ff"/>
+      <stop offset="0.45" stop-color="#0a84ff"/>
+      <stop offset="1" stop-color="#075fc2"/>
+    </linearGradient>
+    <!-- 圆柱体横向柱面光：中间亮、两侧暗 -->
+    <linearGradient id="dbSide" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#04264d" stop-opacity="0.55"/>
+      <stop offset="0.22" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="0.78" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#04264d" stop-opacity="0.55"/>
+    </linearGradient>
+    <!-- 顶面玻璃：浅蓝到白 -->
+    <linearGradient id="dbTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2f9ff"/>
+      <stop offset="1" stop-color="#8fc6ff"/>
+    </linearGradient>
+    <!-- 层间分隔：接近底色的暗带（透视随椭圆弧下弯） -->
+    <linearGradient id="gap" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1322" stop-opacity="0.92"/>
+      <stop offset="0.6" stop-color="#101b2e" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#0b1322" stop-opacity="0"/>
+    </linearGradient>
+    <!-- 圆柱投影 -->
+    <radialGradient id="shadow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <!-- 底盘裁剪：任何背景光效不得溢出 squircle 边界 -->
+    <clipPath id="plate">
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
+    </clipPath>
+  </defs>
+
+  <!-- ===== 底盘：squircle 深色渐变底 ===== -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <!-- 底部内发光：让深色不死黑（裁剪进底盘） -->
+  <g clip-path="url(#plate)">
+    <ellipse cx="512" cy="880" rx="430" ry="160" fill="#0a84ff" opacity="0.10"/>
+  </g>
+
+  <!-- ===== 居中「数据库」三叠层圆柱体 ===== -->
+  <!-- 落地投影 -->
+  <ellipse cx="512" cy="726" rx="252" ry="52" fill="url(#shadow)"/>
+  <!-- 柱身（rx=192, 顶面圆心 y=318, 底面圆心 y=694） -->
+  <path d="M 320 318 L 320 694 A 192 62 0 0 0 704 694 L 704 318 Z" fill="url(#dbBody)"/>
+  <!-- 柱面横向光 -->
+  <path d="M 320 318 L 320 694 A 192 62 0 0 0 704 694 L 704 318 Z" fill="url(#dbSide)"/>
+  <!-- 层间分隔 1（三叠层：数据层） -->
+  <path d="M 320 448 A 192 62 0 0 0 704 448 L 704 482 A 192 62 0 0 1 320 482 Z" fill="url(#gap)"/>
+  <path d="M 320 486 A 192 62 0 0 0 704 486 L 704 492 A 192 62 0 0 1 320 492 Z" fill="#bfe0ff" opacity="0.35"/>
+  <!-- 层间分隔 2（索引/结构层） -->
+  <path d="M 320 574 A 192 62 0 0 0 704 574 L 704 608 A 192 62 0 0 1 320 608 Z" fill="url(#gap)"/>
+  <path d="M 320 612 A 192 62 0 0 0 704 612 L 704 618 A 192 62 0 0 1 320 618 Z" fill="#bfe0ff" opacity="0.28"/>
+  <!-- 柱身左右轮廓暗线（玻璃体边缘） -->
+  <path d="M 320 318 L 320 694" stroke="#0a3f7e" stroke-opacity="0.55" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 704 318 L 704 694" stroke="#0a3f7e" stroke-opacity="0.55" stroke-width="3" stroke-linecap="round"/>
+  <!-- 顶面玻璃椭圆 -->
+  <ellipse cx="512" cy="318" rx="192" ry="62" fill="url(#dbTop)"/>
+  <ellipse cx="512" cy="318" rx="192" ry="62" fill="none" stroke="#ffffff" stroke-opacity="0.65" stroke-width="3"/>
+  <!-- 顶面高光（偏左上的小 specular） -->
+  <ellipse cx="452" cy="306" rx="118" ry="30" fill="#ffffff" opacity="0.55"/>
+
+  <!-- ===== 玻璃高光层 ===== -->
+  <!-- 顶部弧面高光（顺 squircle 上缘） -->
+  <path d="M 100 330
+           Q 100 100 285 100
+           L 739 100
+           Q 924 100 924 330
+           L 924 388
+           Q 700 470 512 470
+           Q 324 470 100 388
+           Z" fill="url(#sheen)"/>
+  <!-- 对角长条斜光（Liquid Glass 常见的 specular streak） -->
+  <path d="M 176 118 L 342 118 L 176 470 L 128 470 Z" fill="#ffffff" opacity="0.07"/>
+  <!-- 内描边：玻璃边缘受光 -->
+  <rect x="102.5" y="102.5" width="819" height="819" rx="182.5" fill="none" stroke="url(#rim)" stroke-width="5"/>
+  <!-- 外缘极细暗线：与浅色壁纸托底分离 -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="none" stroke="#000000" stroke-opacity="0.22" stroke-width="2"/>
+</svg>

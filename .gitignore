@@ -1,0 +1,31 @@
+node_modules/
+dist/
+out/
+release/
+*.log
+.spike-out/
+spike/**/out/
+spike/**/*.xlsx
+fixtures/
+.DS_Store
+.e2e-tmp/
+
+# electron-builder 打包产物（P2-2）
+apps/desktop/release/
+
+# ---- 开源发布补充（2026-09-29 归档）----
+# WorkBuddy 项目内部数据（长期记忆 / 会话记录），不属于代码资产
+.workbuddy/
+# IDE 工具本地配置
+.zcodeignore
+# e2e 临时探针文件
+.e2e-tmp-ast.mts
+# TS 增量编译缓存
+*.tsbuildinfo
+# Spike 打包产物（s2/s4 的 .app，数百 MB；已被上面的 dist/ 覆盖，这里显式声明意图）
+spike/*/dist/
+# 编辑器/系统
+.idea/
+.vscode/
+*.swp
+Thumbs.db

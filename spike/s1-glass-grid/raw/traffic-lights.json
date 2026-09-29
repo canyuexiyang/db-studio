@@ -1,0 +1,30 @@
+{
+  "mode": "tl",
+  "sysinfo": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "darwinRelease": "27.0.0",
+    "darwinMajor": 27,
+    "isGlassSupported": true,
+    "electron": "44.4.3",
+    "node": "24.21.0",
+    "date": "2026-09-21T04:19:35.176Z"
+  },
+  "tests": [
+    {
+      "config": "frame:false",
+      "methods": {
+        "setWindowButtonVisibility": true,
+        "setWindowButtonPosition": true
+      },
+      "applyResult": "ok (no throw)"
+    },
+    {
+      "config": "frame:true + titleBarStyle:'hiddenInset'",
+      "methods": {},
+      "created": true,
+      "applyResult": "ok (constructor accepted titleBarStyle)"
+    }
+  ],
+  "note": ""
+}

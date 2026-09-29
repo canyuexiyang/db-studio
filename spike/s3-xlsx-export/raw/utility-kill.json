@@ -1,0 +1,14 @@
+{
+  "fork_ok": false,
+  "messages_received": 10,
+  "kill_ok": true,
+  "exit_event": {
+    "code": 0
+  },
+  "process_gone": true,
+  "main_alive_after_kill": true,
+  "partial_file_bytes": 60,
+  "kill_latency_ms": 6,
+  "messages_received_before_kill": 10,
+  "stopped_writing": true
+}

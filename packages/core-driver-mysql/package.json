@@ -1,0 +1,18 @@
+{
+  "name": "@dbstudio/core-driver-mysql",
+  "version": "0.1.0",
+  "description": "MySQL 驱动封装（R10 参数规范 / 流式 / KILL QUERY 取消 / 元数据 introspect）",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "mysql2": "^3.11.0"
+  }
+}

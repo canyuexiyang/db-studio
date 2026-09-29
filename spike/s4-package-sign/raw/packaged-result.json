@@ -1,0 +1,27 @@
+{
+  "electron_version": "44.4.3",
+  "node_version": "24.21.0",
+  "chrome_version": "152.0.7977.130",
+  "arch": "arm64",
+  "platform": "darwin",
+  "darwin_release": "27.0.0",
+  "glass_load": {
+    "ok": true,
+    "exports": [
+      "WindowGlass",
+      "createWindowGlass"
+    ]
+  },
+  "glass_apply": {
+    "ok": true,
+    "kind": "glass"
+  },
+  "traffic_lights": {
+    "setWindowButtonPosition": true,
+    "setWindowButtonVisibility": true,
+    "call_error": null
+  },
+  "window_created": true,
+  "errors": [],
+  "darwin_major": 27
+}

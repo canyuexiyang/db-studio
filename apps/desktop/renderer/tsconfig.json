@@ -1,0 +1,53 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    // ⚠️ baseUrl 相对【本 tsconfig 所在目录】解析：renderer → desktop → apps → 根，
+    //    所以是 ../../.. 而不是 ../..。之前写错成 ../.. 时解析到了 apps/ 目录下，
+    //    所有 core-* alias 其实一直在 fallback 到 node_modules 碰运气。
+    "baseUrl": "../../..",
+    "paths": {
+      "@dbstudio/core-grid-view": ["packages/core-grid-view/src/index.ts"],
+      "@dbstudio/core-clipboard": ["packages/core-clipboard/src/index.ts"],
+      "@dbstudio/core-filter": ["packages/core-filter/src/index.ts"],
+      "@dbstudio/core-tree-view": ["packages/core-tree-view/src/index.ts"],
+      "@dbstudio/core-command-palette": ["packages/core-command-palette/src/index.ts"],
+      "@dbstudio/core-sql-editor": ["packages/core-sql-editor/src/index.ts"],
+      "@dbstudio/core-sql-editor/facts": ["packages/core-sql-editor/src/facts.ts"],
+      "@dbstudio/core-sql-editor/tokens": ["packages/core-sql-editor/src/tokens.ts"],
+      "@dbstudio/core-sql-editor/formatter": ["packages/core-sql-editor/src/formatter.ts"],
+      "@dbstudio/core-sql-editor/lint": ["packages/core-sql-editor/src/lint.ts"],
+      "@dbstudio/core-sql-editor/hints": ["packages/core-sql-editor/src/hints.ts"],
+      "@dbstudio/core-ipc-codec": ["packages/core-ipc-codec/src/index.ts"],
+      "@dbstudio/core-mutation": ["packages/core-mutation/src/index.ts"],
+      "@dbstudio/core-schema-cache": ["packages/core-schema-cache/src/index.ts"],
+      "@dbstudio/core-connection": ["packages/core-connection/src/index.ts"],
+      "@dbstudio/core-sql-guard": ["packages/core-sql-guard/src/index.ts"],
+      "@dbstudio/core-sql-ident": ["packages/core-sql-ident/src/index.ts"],
+      "@dbstudio/core-history": ["packages/core-history/src/index.ts"],
+      "@dbstudio/core-table-designer": ["packages/core-table-designer/src/index.ts"],
+      "@dbstudio/core-import": ["packages/core-import/src/index.ts"],
+      "@dbstudio/shared-ipc": ["apps/desktop/src/shared/renderer-types.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "vite.config.ts",
+    "../src/shared/renderer-types.ts",
+    "../src/shared/ipc-channels.ts"
+  ]
+}

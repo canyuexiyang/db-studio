@@ -1,0 +1,54 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@dbstudio/core-sql-guard": ["./packages/core-sql-guard/src/index.ts"],
+      "@dbstudio/core-sql-ident": ["./packages/core-sql-ident/src/index.ts"],
+      "@dbstudio/core-history": ["./packages/core-history/src/index.ts"],
+      "@dbstudio/core-schema-cache": ["./packages/core-schema-cache/src/index.ts"],
+      "@dbstudio/core-secret": ["./packages/core-secret/src/index.ts"],
+      "@dbstudio/core-export": ["./packages/core-export/src/index.ts"],
+      "@dbstudio/core-connection": ["./packages/core-connection/src/index.ts"],
+      "@dbstudio/core-driver-mysql": ["./packages/core-driver-mysql/src/index.ts"],
+      "@dbstudio/core-ipc-codec": ["./packages/core-ipc-codec/src/index.ts"],
+      "@dbstudio/core-mutation": ["./packages/core-mutation/src/index.ts"],
+      "@dbstudio/core-grid-view": ["./packages/core-grid-view/src/index.ts"],
+      "@dbstudio/core-clipboard": ["./packages/core-clipboard/src/index.ts"],
+      "@dbstudio/core-filter": ["./packages/core-filter/src/index.ts"],
+      "@dbstudio/core-tree-view": ["./packages/core-tree-view/src/index.ts"],
+      "@dbstudio/core-command-palette": ["./packages/core-command-palette/src/index.ts"],
+      "@dbstudio/core-sql-editor": ["./packages/core-sql-editor/src/index.ts"],
+      "@dbstudio/core-sql-editor/facts": ["./packages/core-sql-editor/src/facts.ts"],
+      "@dbstudio/core-sql-editor/tokens": ["./packages/core-sql-editor/src/tokens.ts"],
+      "@dbstudio/core-sql-editor/formatter": ["./packages/core-sql-editor/src/formatter.ts"],
+      "@dbstudio/core-sql-editor/lint": ["./packages/core-sql-editor/src/lint.ts"],
+      "@dbstudio/core-sql-editor/hints": ["./packages/core-sql-editor/src/hints.ts"],
+      "@dbstudio/core-ssh-tunnel": ["./packages/core-ssh-tunnel/src/index.ts"],
+      "@dbstudio/core-table-designer": ["./packages/core-table-designer/src/index.ts"],
+      "@dbstudio/core-import": ["./packages/core-import/src/index.ts"]
+    }
+  },
+  // ⚠️ 渲染层【不在】这里 —— 它有独立的 apps/desktop/renderer/tsconfig.json。
+  //    两套配置的 lib 不同（渲染层要 DOM，主进程/包只要 Node），
+  //    塞进同一份会互相污染：根配置缺 DOM lib，一碰 window 就 TS2304；
+  //    渲染层特有的 @dbstudio/shared-ipc 映射在根配置里也没有。
+  //    两边各自 typecheck，由 npm run typecheck 串起来。
+  "include": ["packages/**/src/**/*.ts", "apps/**/src/**/*.ts"],
+  "exclude": ["apps/desktop/renderer"]
+}

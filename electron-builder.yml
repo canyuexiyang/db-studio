@@ -1,0 +1,128 @@
+# ============================================================
+# DB Studio electron-builder 生产配置（P2-2 / 任务 B）
+#
+# 复现：
+#   npm run dist                    # build + dmg + dir（arm64）
+#   npx electron-builder --mac --arm64 --dir   # 只打 .app 目录（本机验证用）
+#
+# 依据 spike/s4-package-sign/RESULTS.md 的关键集成约束：
+#   - electron-window-glass 自带 arm64/x64 预编译 N-API .node，无需 rebuild
+#     → npmRebuild: false
+#   - 签名仅 ad-hoc（identity: null），自用单机不做 Developer ID / 公证
+#   - .node 原生模块不能从 asar 里加载 → asarUnpack: **/*.node
+#   - electron-window-glass 是 ESM-only（只能 import()），Electron 的 ESM
+#     不能从 asar 加载 → 整包放 asar 外（见下方 extraResources）
+#
+# ⚠️ workspaces monorepo 的运行时依赖（实测 EB 26.15.3 的坑）：
+#   EB 只自动收集【根 package.json dependencies】闭包（exceljs / ssh2 /
+#   @codemirror/* ✅ 已自动进包）。但：
+#   1. files 里写 node_modules/** 模式【永远无效】——EB 源码
+#      （fileMatcher.js）会在任何含 node_modules 的模式前强制插入
+#      "!**/node_modules/**"，node_modules 只能走依赖收集器；
+#   2. 依赖收集器对 workspaces 的提升（hoist）有缺陷：mysql2 在
+#      core-driver-mysql 的依赖树里、electron-window-glass /
+#      @dbstudio/core-import 在 devDependencies / workspace 软链里，
+#      都没被收进包（实测 asar 里缺失）。
+#   解法：把这四个运行时包（+mysql2 的传递闭包）用 extraResources
+#   复制到 Contents/Resources/node_modules/（asar 之外）。Node/Electron
+#   的模块解析从 app.asar 内向上遍历 node_modules，越过 asar 根后会命中
+#   Resources/node_modules —— require(mysql2) 与 import(electron-window-glass)
+#   都能解析；且 ESM/原生模块在真实文件系统上加载，天然避开 asar 限制。
+# ============================================================
+
+appId: com.dbstudio.desktop
+productName: DB Studio
+copyright: Copyright © 2026 canyuexiyang. MIT License.
+
+directories:
+  # 打包产物输出到 apps/desktop/release（.gitignore 已含 release/）
+  output: apps/desktop/release
+  # 图标等构建资源目录：EB 默认在 <config 目录>/build 找 icon.icns，
+  # 本仓库 build 在 apps/desktop/build，这里显式指过去
+  buildResources: apps/desktop/build
+
+asar: true
+compression: normal
+
+files:
+  # EB 会自动改写 app 内 package.json 的 main（见 extraMetadata）
+  - package.json
+  # 主进程 + preload + utilityProcess workers（dist/main/main.cjs、
+  # dist/preload/preload.cjs、dist/main/workers/*.cjs、各目录的 CJS 标记 package.json）
+  - apps/desktop/dist/**/*
+  # 渲染层产物（main.cjs 里 htmlPath = __dirname/../../renderer/dist/index.html，
+  # 即 app 内 apps/desktop/renderer/dist/ —— 与 dist 保持相同相对结构）
+  - apps/desktop/renderer/dist/**/*
+  # sourcemap 不进生产包
+  - "!**/*.map"
+
+# ---- 运行时依赖补集（原因见文件头「workspaces monorepo 的运行时依赖」）----
+# 落点：Contents/Resources/node_modules/<包名>（asar 外）
+extraResources:
+  # 导入/导出 worker 与主进程 require('mysql2/promise')（根 devDependencies，
+  # 传递闭包手工核算：aws-ssl-profiles / generate-function / iconv-lite /
+  # is-property / long / lru.min / named-placeholders / safer-buffer / sql-escaper）
+  - { from: node_modules/mysql2, to: node_modules/mysql2 }
+  - { from: node_modules/aws-ssl-profiles, to: node_modules/aws-ssl-profiles }
+  - { from: node_modules/generate-function, to: node_modules/generate-function }
+  - { from: node_modules/iconv-lite, to: node_modules/iconv-lite }
+  - { from: node_modules/is-property, to: node_modules/is-property }
+  - { from: node_modules/long, to: node_modules/long }
+  - { from: node_modules/lru.min, to: node_modules/lru.min }
+  - { from: node_modules/named-placeholders, to: node_modules/named-placeholders }
+  - { from: node_modules/safer-buffer, to: node_modules/safer-buffer }
+  - { from: node_modules/sql-escaper, to: node_modules/sql-escaper }
+  # GlassProvider 动态 import 的 ESM-only 包（根 devDependencies）；
+  # 放 asar 外同时解决「ESM 不能从 asar 加载」与 .node 原生模块加载
+  - { from: node_modules/electron-window-glass, to: node_modules/electron-window-glass }
+  # 导入 worker require('@dbstudio/core-import')（workspace 软链包，非 npm 依赖；
+  # 只取运行所需的 package.json + src/runtime.cjs，runtime.cjs 零外部 require）
+  - from: packages/core-import
+    to: node_modules/@dbstudio/core-import
+    filter:
+      - package.json
+      - src/runtime.cjs
+  # 主进程 bundle require('node-sql-parser')（core-sql-guard 的 AST 只读拦截；
+  # vite SSR 构建把它留在外部，但它不在根 dependencies 里 → 依赖收集器不收。
+  # 缺失后果：主进程模块求值即抛 "Cannot find module 'node-sql-parser'"，
+  # Electron 弹错误对话框、应用假死——P2-2 实测踩坑）
+  - { from: node_modules/node-sql-parser, to: node_modules/node-sql-parser }
+  - { from: node_modules/big-integer, to: node_modules/big-integer }
+  - { from: node_modules/@types/pegjs, to: node_modules/@types/pegjs }
+
+# ssh2 可选原生依赖（cpu-features 等）若被收进包，.node 必须解包出 asar
+asarUnpack:
+  - "**/*.node"
+
+# electron-window-glass 自带预编译 N-API 产物（S4 实测无需 rebuild），
+# 关掉 rebuild 省时间也避免 electron-rebuild 去扫 workspace 包
+npmRebuild: false
+
+# 应用内 package.json 附加字段：主进程入口指向产物里的 main.cjs
+extraMetadata:
+  main: apps/desktop/dist/main/main.cjs
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: dir
+      arch:
+        - arm64
+  # 在 directories.buildResources（apps/desktop/build）内按名解析
+  icon: icon.icns
+  # macOS 合法的应用类别值（LSApplicationCategoryType）
+  category: public.app-category.utilities
+  darkModeSupport: true
+  # 自用单机：仅 ad-hoc 签名，不做 Developer ID / 公证（S4 §4）
+  identity: null
+  # ⚠️ 实测（2026-09-27，EB 26.15.3）：identity:null 时 EB 直接【跳过签名】，
+  #    产物残留 Electron 模板的旧签名 → codesign --verify 报
+  #    "code has no resources but signature indicates they must be present"。
+  #    打包后手动补一次【外层】ad-hoc 重签：
+  #      codesign --force --sign - "apps/desktop/release/mac-arm64/DB Studio.app"
+  #    🔴 绝不能用 --deep：它会把内嵌 Helper 的 entitlements 抹掉，
+  #    网络服务反复崩溃、渲染层加载不出（真机踩坑）。
+  hardenedRuntime: false
+  gatekeeperAssess: false

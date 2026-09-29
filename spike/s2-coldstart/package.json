@@ -1,0 +1,49 @@
+{
+  "name": "db-studio-coldstart",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DB Studio Spike S2 — 冷启动探针（C1 朴素 / C2 懒加载 / C3 打包）",
+  "main": "main.mjs",
+  "scripts": {
+    "probe:c1": "node run.mjs --group C1",
+    "probe:c2": "node run.mjs --group C2",
+    "probe:c3": "node run.mjs --group C3",
+    "probe:all": "node run.mjs --group all",
+    "build": "electron-builder --mac --arm64 --config"
+  },
+  "build": {
+    "appId": "com.dbstudio.spike.s2",
+    "productName": "DB Studio",
+    "electronDist": "/Users/guhui/software/ai-project/work-buddy/database-app/node_modules/electron/dist",
+    "electronVersion": "44.4.3",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "probe"
+    ],
+    "asar": true,
+    "compression": "normal",
+    "mac": {
+      "target": "dir",
+      "identity": null,
+      "gatekeeperAssess": false,
+      "hardenedRuntime": false,
+      "category": "public.app-category.developer-tools"
+    },
+    "forceCodeSigning": false
+  },
+  "devDependencies": {
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "codemirror": "^5.65.18",
+    "mysql2": "^3.24.4",
+    "pg": "^8.23.0",
+    "ssh2": "^1.17.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'" />
+<title>DB Studio S1 FPS Probe</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #ffffff; /* 内容区不透明（方案 A 的内容层） */
+    font: 12px/1.2 -apple-system, "SF Pro Text", Menlo, monospace;
+    color: #1d1d1f;
+    overflow: hidden;
+  }
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0; height: 22px;
+    background: #0a84ff; color: #fff; padding: 3px 8px; z-index: 10;
+    box-sizing: border-box; font-weight: 600;
+  }
+  /* 侧边栏条：半透明，模拟方案 A 的"侧边栏玻璃 + 内容不透明"分层 */
+  #sidebar {
+    position: fixed; top: 22px; left: 0; bottom: 0; width: 200px;
+    background: rgba(180, 200, 230, 0.45);
+    border-right: 1px solid rgba(0,0,0,0.08);
+    z-index: 5; padding: 8px;
+    backdrop-filter: blur(8px);
+  }
+  #viewport {
+    position: fixed; top: 22px; left: 200px; right: 0; bottom: 0;
+    overflow-y: auto; overflow-x: hidden;
+    background: #ffffff;
+  }
+  #spacer { position: relative; width: 100%; }
+  .row {
+    display: flex; align-items: center;
+    border-bottom: 1px solid #f0f0f2;
+    background: #ffffff;
+    will-change: transform;
+    contain: layout style paint;
+  }
+  .row:nth-child(even) { background: #fafafc; }
+  .cell {
+    flex: 1 1 0; min-width: 0; padding: 0 6px; overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis;
+    border-right: 1px solid #f5f5f7;
+  }
+  /* 透明窗口下，body 需要可被"看穿"的部分——这里仅 HUD/侧边栏用半透明，
+     内容区保持不透明；透明窗口由 BrowserWindow transparent:true 控制整体 alpha。 */
+</style>
+</head>
+<body>
+  <div id="hud">S1 probe warming up…</div>
+  <div id="sidebar">sidebar (glass region)</div>
+  <div id="viewport"><div id="spacer"></div></div>
+  <script src="./renderer.js"></script>
+</body>
+</html>

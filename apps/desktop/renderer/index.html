@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <!--
+    placeholders: CSP 由 renderCsp() 插件在【构建期】注入，这里只留占位。
+    为什么不直接写死在 HTML 里：dev 模式下 Vite 会注入内联的 react-refresh
+    脚本 + /@vite/client + HMR websocket，一条严格的 CSP 会把它们全挡掉，
+    表现为 dev server 页面白屏、控制台一堆违规提示。
+    而 CSP 本身是【生产产物】才需要的约束 —— 构建期注入各得其所。
+  -->
+  <!--DBSTUDIO_CSP-->
+  <!--
+    主题引导必须最先执行（P1-2 无闪烁）：在任何 CSS 应用之前同步运行，
+    把 localStorage 的主题偏好写到 <html data-theme>。
+    用外部文件而不是内联脚本 —— 生产 CSP 是 script-src 'self'，内联会被拦。
+  -->
+  <script src="./theme-boot.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DB Studio</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./src/main.tsx"></script>
+</body>
+</html>

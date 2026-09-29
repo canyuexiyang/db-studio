@@ -1,0 +1,62 @@
+{
+  "env": {
+    "node": "v22.22.2",
+    "cpu": "Apple M5 Pro",
+    "mem_gb": 48
+  },
+  "runs": 3,
+  "scenarios": [
+    {
+      "id": "E1",
+      "label": "10万行×12列 exceljs 流式默认",
+      "rows": 100000,
+      "p50_ms": 1810,
+      "times_ms": [
+        1807,
+        1934,
+        1810
+      ],
+      "peak_mem_mb": 458,
+      "file_mb": 8.9
+    },
+    {
+      "id": "E2",
+      "label": "100万行×12列 exceljs 流式默认",
+      "rows": 1000000,
+      "p50_ms": 20277,
+      "times_ms": [
+        20277,
+        20266,
+        20492
+      ],
+      "peak_mem_mb": 2739,
+      "file_mb": 88.3
+    },
+    {
+      "id": "E3",
+      "label": "100万行×12列 exceljs useSharedStrings:false+useStyles:false",
+      "rows": 1000000,
+      "p50_ms": 6255,
+      "times_ms": [
+        7450,
+        6255,
+        6102
+      ],
+      "peak_mem_mb": 987,
+      "file_mb": 83.2
+    },
+    {
+      "id": "E4",
+      "label": "100万行×12列 手写 sheet XML + archiver 流式 zip",
+      "rows": 1000000,
+      "p50_ms": 3119,
+      "times_ms": [
+        3153,
+        3099,
+        3119
+      ],
+      "peak_mem_mb": 1166,
+      "file_mb": 89.3
+    }
+  ]
+}

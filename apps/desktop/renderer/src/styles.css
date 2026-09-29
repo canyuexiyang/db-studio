@@ -1,0 +1,4088 @@
+/**
+ * DB Studio 渲染层样式
+ *
+ * 方案 A（S1 实测拍板）：整窗原生玻璃由 Electron 侧负责（transparent:true），
+ * 这里的内容区必须**完全不透明** —— Apple 的指引是玻璃只用于浮动导航层，
+ * 内容层透明会让文字失去对比度。侧边栏用 CSS 毛玻璃模拟浮动层观感。
+ */
+
+:root {
+  color-scheme: light;
+  /* Apple 原生精修 · 浅色(2026-09 定稿,用户拍板风格 E) */
+  --bg: #ffffff;
+  --bg-alt: #f5f5f7;
+  --bg-panel: #f6f6f8;
+  --border: #e5e5ea;
+  --border-strong: #d2d2d7;
+  --text: #1d1d1f;
+  --text-dim: #86868b;
+  --accent: #007aff;
+  --on-accent: #ffffff;
+  --dirty-bg: rgba(255, 149, 0, 0.14);
+  --dirty-bar: #ff9500;
+  --error-bg: rgba(255, 59, 48, 0.1);
+  --error-bar: #ff3b30;
+  --null-text: #aeaeb2;
+  --sel-bg: rgba(0, 122, 255, 0.1);
+  /* A19 行号列选中底色：--sel-bg 是半透明的，盖不住横滚的单元格，行号列要用实色
+     （= sel-bg 复合在 --bg 上的结果；改 --sel-bg 或 --bg 时同步换算） */
+  --row-sel-solid: #e6f2ff;
+  --ok: #248a3d;
+  --warn: #b25e00;
+  --row-hover: rgba(0, 0, 0, 0.04);
+  --focus-ring: rgba(0, 122, 255, 0.28);
+  --shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --r-sm: 6px;
+  --r: 8px;
+  --r-lg: 12px;
+  --row-h: 28px;
+  --header-h: 30px;
+  --sidebar-w: 240px;
+}
+
+/**
+ * P1-2 深色模式三态：`data-theme` 是唯一权威（App 挂载时必写 dark|light，
+ * 启动首帧由 public/theme-boot.js 在 CSS 之前同步写好 —— 切换/启动都无闪烁）。
+ * 下面的媒体查询只是【JS 失效时】的兜底；两处 dark 调色板必须保持一致。
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #1c1c1e;
+  --bg-alt: #262628;
+  --bg-panel: #212123;
+  --border: #323234;
+  --border-strong: #48484a;
+  --text: #f5f5f7;
+  --text-dim: #98989d;
+  --accent: #0a84ff;
+  --on-accent: #ffffff;
+  --dirty-bg: rgba(255, 159, 10, 0.16);
+  --dirty-bar: #ff9f0a;
+  --error-bg: rgba(255, 69, 58, 0.14);
+  --error-bar: #ff453a;
+  --null-text: #636366;
+  --sel-bg: rgba(10, 132, 255, 0.25);
+  --row-sel-solid: #183656;
+  --ok: #30d158;
+  --warn: #ffd60a;
+  --row-hover: rgba(255, 255, 255, 0.045);
+  --focus-ring: rgba(10, 132, 255, 0.45);
+  --shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --bg: #1c1c1e;
+    --bg-alt: #262628;
+    --bg-panel: #212123;
+    --border: #323234;
+    --border-strong: #48484a;
+    --text: #f5f5f7;
+    --text-dim: #98989d;
+    --accent: #0a84ff;
+    --on-accent: #ffffff;
+    --dirty-bg: rgba(255, 159, 10, 0.16);
+    --dirty-bar: #ff9f0a;
+    --error-bg: rgba(255, 69, 58, 0.14);
+    --error-bar: #ff453a;
+    --null-text: #636366;
+    --sel-bg: rgba(10, 132, 255, 0.25);
+    --row-sel-solid: #183656;
+    --ok: #30d158;
+    --warn: #ffd60a;
+    --row-hover: rgba(255, 255, 255, 0.045);
+    --focus-ring: rgba(10, 132, 255, 0.45);
+    --shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* SVG 图标基线对齐(lucide 风格,颜色跟 currentColor) */
+.ic {
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  /* 内容层不透明：这是方案 A 的硬要求，不要改 */
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 三栏骨架 ---------- */
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+/* 面板分隔条：悬停显形,拖拽时高亮;4px 命中区,视觉上只有 1px 线 */
+.panel-resizer {
+  flex: 0 0 4px;
+  margin: 0 -2px;
+  z-index: 5;
+  cursor: col-resize;
+  position: relative;
+  touch-action: none;
+}
+.panel-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 1px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.panel-resizer:hover::after,
+body.resizing .panel-resizer::after { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* 拖拽中：全局禁选中,光标锁定为列调整 */
+body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
+
+.sidebar {
+  width: var(--sidebar-w);
+  flex: 0 0 var(--sidebar-w);
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  /* 浮动导航层：CSS 毛玻璃降级路径（原生玻璃不可用时靠它顶上） */
+  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar.collapsed { display: none; }
+
+.workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* ---------- 工具栏 ---------- */
+
+.toolbar {
+  height: 38px;
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  /* 窄窗口下按钮放不下时横向滚动（按钮永不收缩，见下），不留死区 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.toolbar::-webkit-scrollbar { height: 3px; }
+.toolbar::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+
+.toolbar button,
+.toolbar select,
+.toolbar input { -webkit-app-region: no-drag; }
+
+.toolbar button {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
+  /* 文字永不竖排;空间不够时由标题 span 承担收缩 */
+  white-space: nowrap;
+  flex: 0 0 auto;
+  /* 图标 + 文字基线对齐（图标来自 ui/icons.tsx，尺寸 11px） */
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.toolbar button .ic { margin-right: 0; }
+
+/* 工具栏里的说明文本可收缩省略,把空间让给按钮(窄窗口/全按钮时) */
+.toolbar > span:not(.spacer) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 环境标签(IPC/DEMO):苹果风小胶囊,永不收缩截断(特异性需盖过上面的 span 收缩规则) */
+.toolbar > span.env-tag {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: visible;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.toolbar select {
+  font-size: 12px;
+  /* 🔴 必须显式给 token 配色：UA 的原生 select 面孔在 color-scheme 动态切换时
+     不重绘（headless 截图实测白底残留），显式 background/color 才跟主题走。
+     与 .ce-input select 同口径。 */
+  padding: 3px 22px 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* 苹果味 hover:灰底浮起,而不是边框变蓝 */
+.toolbar button:hover:not(:disabled) { background: var(--bg-alt); }
+.toolbar button:disabled { opacity: 0.45; cursor: default; }
+.toolbar button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+}
+.toolbar button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+
+.spacer { flex: 1 1 auto; }
+
+/* ---------- 网格 ---------- */
+
+.grid {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: hidden;
+}
+
+.grid-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+}
+
+.grid-canvas {
+  position: relative;
+  /* 由 JS 设置 height = rowCount * rowHeight */
+}
+
+.grid-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  height: var(--header-h);
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border-strong);
+  /* A19：盒宽必须覆盖全部列 —— 否则只有视口宽，sticky-left 的行号头
+     横滚超过一屏后会被 containing block 拉走脱锚；min-width 保证窄表下
+     底色仍然铺满视口 */
+  width: max-content;
+  min-width: 100%;
+}
+
+.grid-header-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-right: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 主键徽标(替代旧 emoji 图标) */
+.pk-badge {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font: 600 8.5px/1.2 "SF Mono", Menlo, monospace;
+  letter-spacing: 0.04em;
+}
+
+.grid-header-cell .sort-mark { color: var(--accent); font-size: 10px; }
+.grid-header-cell .type { color: var(--text-dim); font-weight: 400; font-size: 10px; }
+
+.grid-rows {
+  position: relative;
+  /* translateY 到可视区首行，由 JS 控制 */
+}
+
+.grid-row {
+  position: absolute;
+  left: 0;
+  display: flex;
+  height: var(--row-h);
+  contain: layout style paint;
+}
+
+/* 斑马纹(alt 由全局行号取模,虚拟滚动下不错位);顺序:斑马 → hover → 选中 */
+.grid-row.alt { background: var(--bg-alt); }
+.grid-row:hover { background: var(--row-hover); }
+/* A19：选中行的 accent 色条画在行号列左缘（画在行上会被不透明的行号列盖住） */
+.grid-row.selected { background: var(--sel-bg); }
+.grid-row.selected > .gd-rowno {
+  background: var(--row-sel-solid);
+  background-image: none;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ---------- A19 行号列（gutter）：sticky 左钉，宽表横滚不脱锚 ---------- */
+/**
+ * 实现要点（改前必读）：
+ *  - sticky 相对滚动容器定位；.grid-row 的 contain:paint 实测（Chromium）
+ *    不劫持 sticky，行号钉得住 —— 若未来换滚动实现需重测；
+ *  - 底色必须不透明（红线 11：内容区不透明；且要盖住横滚的单元格），
+ *    所以选中态用实色 token --row-sel-solid，hover 用 background-image
+ *    半透明叠加 —— 两者都保持在元素自身上合成，不依赖下层透出；
+ *  - 行号不参与复制/选区（DataGrid 的 columnIndexes 始终是原始数据列下标）。
+ */
+.gd-rowno {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text-dim);
+  font: 500 10px/1 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  cursor: pointer;
+  border-right: 1px solid var(--border-strong);
+}
+.grid-row.alt .gd-rowno { background: var(--bg-alt); }
+.grid-row:hover .gd-rowno { background-image: linear-gradient(var(--row-hover), var(--row-hover)); }
+.gd-rowno-head {
+  /* 压过表头单元格与它们的列宽热区（横滚时行号头要钉在左上角） */
+  z-index: 4;
+  background: var(--bg-alt);
+  cursor: default;
+}
+
+.grid-cell {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.grid-cell.null { color: var(--null-text); font-style: italic; }
+.grid-cell.numeric { font-variant-numeric: tabular-nums; justify-content: flex-end; }
+
+/* 脏单元格：左侧色条 + 背景色（PRD §6.3.4 要求"明确的视觉标记"） */
+.grid-cell.dirty {
+  background: var(--dirty-bg);
+  box-shadow: inset 3px 0 0 0 var(--dirty-bar);
+}
+
+.grid-cell.invalid {
+  background: var(--error-bg);
+  box-shadow: inset 3px 0 0 0 var(--error-bar);
+}
+
+.grid-cell.focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.grid-cell-editor {
+  flex: 1 1 auto;
+  height: 100%;
+  border: none;
+  outline: none;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  padding: 0 4px;
+}
+
+/* ---------- 底部状态条 ---------- */
+
+.statusbar {
+  height: 26px;
+  flex: 0 0 26px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.banner {
+  padding: 6px 10px;
+  background: var(--dirty-bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.banner.warn { background: var(--error-bg); }
+
+/* ---------- 只读拦截条 ---------- */
+
+.readonly-banner {
+  padding: 6px 10px;
+  background: var(--error-bg);
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ---------- 保存预演弹窗 ---------- */
+
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  z-index: 100;
+}
+
+.modal {
+  width: 640px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.modal header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.modal .body { padding: 12px 14px; overflow: auto; }
+
+.modal pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.modal footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.modal footer button {
+  font: inherit;
+  padding: 5px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.modal footer button:hover:not(:disabled) { background: var(--bg-alt); }
+.modal footer button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+}
+
+/* ---------- V5 偏好设置面板（外壳样式必须在首屏就位，红线 9） ---------- */
+
+.prefs-modal { width: 560px; }
+
+.prefs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prefs-head .spacer { flex: 1 1 auto; }
+
+.prefs-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.prefs-close:hover { background: var(--bg-alt); color: var(--text); }
+
+.prefs-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 66vh;
+}
+
+.prefs-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.prefs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.prefs-row + .prefs-row { margin-top: 8px; }
+
+.prefs-label {
+  flex: none;
+  width: 84px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* 分段控件（外观三态） */
+.prefs-segmented {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.prefs-segmented button {
+  font: inherit;
+  padding: 4px 12px;
+  border: none;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  border-right: 1px solid var(--border-strong);
+}
+.prefs-segmented button:last-child { border-right: none; }
+.prefs-segmented button.active {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+}
+
+/* 字体缩放档位 */
+.prefs-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.prefs-zoom button {
+  font: inherit;
+  width: 26px;
+  height: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.prefs-zoom button:hover:not(:disabled) { background: var(--bg-alt); }
+.prefs-zoom button:disabled { opacity: 0.4; cursor: default; }
+.prefs-zoom-value {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.prefs-zoom-reset { width: auto !important; padding: 0 10px; }
+
+.prefs-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 200px;
+}
+
+.prefs-check-row {
+  cursor: pointer;
+  font-size: 12px;
+}
+.prefs-check-row input { margin: 0; }
+
+.prefs-shortcuts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 18px;
+}
+.prefs-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.prefs-shortcut kbd {
+  flex: none;
+  min-width: 78px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-alt);
+  font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  text-align: center;
+  color: var(--text);
+}
+.prefs-shortcut span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prefs-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ---------- V7 目标库选择（连接级「运行 SQL 脚本」前置，首屏就位 红线 9） ---------- */
+
+.script-db-modal { width: 420px; }
+.script-db-modal header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.script-db-modal header .spacer { flex: 1 1 auto; }
+.script-db-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+.script-db-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow: auto;
+}
+.script-db-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.script-db-item:hover { background: var(--bg-alt); border-color: var(--border); }
+.script-db-item.selected { background: var(--sel-bg); border-color: var(--accent); color: var(--text); }
+.script-db-item .script-db-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+}
+.script-db-empty { font-size: 12px; color: var(--text-dim); padding: 8px 2px; }
+
+/* ---------- 树 ---------- */
+
+.tree {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 4px 0 8px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  margin: 0 5px;
+  padding: 0 7px;
+  border-radius: var(--r-sm);
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.1s ease;
+}
+
+/* 苹果侧栏选中:蓝底白字 */
+.tree-row:hover { background: var(--row-hover); }
+.tree-row.active { background: var(--accent); color: var(--on-accent); }
+.tree-row.active .tree-caret,
+.tree-row.active .tree-label,
+.tree-row.active .tree-badge { color: inherit; }
+.tree-row.active .tree-act,
+.tree-row.active .tree-state { color: rgba(255, 255, 255, 0.9); }
+.tree-row.active .tree-act:hover { color: var(--on-accent); }
+
+.tree-caret {
+  width: 16px;
+  flex: 0 0 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 9px;
+  cursor: default;
+  user-select: none;
+}
+.tree-caret:hover { color: var(--text); }
+.tree-row.active .tree-caret:hover { color: var(--on-accent); }
+
+/* 行内节点图标(树行直下的 svg):颜色压灰,active 时跟白字 */
+.tree-row > svg { flex: 0 0 auto; color: var(--text-dim); }
+.tree-row.active > svg { color: var(--on-accent); }
+
+/* 生产环境红点(替代旧 emoji,规范:图标不允许用 emoji 字符) */
+.danger-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--error-bar);
+  vertical-align: 1px;
+}
+
+.tree-label { overflow: hidden; text-overflow: ellipsis; }
+.tree-badge { margin-left: auto; color: var(--text-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.tree-danger { color: var(--error-bar); }
+.tree-row.active .tree-danger { color: var(--on-accent); }
+
+/* 树空态(无连接/加载失败) */
+.tree-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 20px 16px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+  overflow: auto;
+}
+
+/* 侧边栏头部：标题 + 刷新 / 新建连接入口 */
+.sidebar-head {
+  position: relative; /* 交通灯安全区（.traffic-light-safe）的定位基准 */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  flex: 0 0 30px;
+  /**
+   * 🔴 W1：左侧 78px 是 macOS 原生交通灯的安全区，不许放任何内容。
+   *
+   * 真机实测（2026-09-29，dist 产物 + Electron 44.x）：
+   *   setWindowButtonPosition({x:16,y:14}) → 三个按钮占 x ∈ [10, 62]，直径 12px。
+   *   W-P0 命中测试确认：这个矩形下面压着的是 **.sidebar-head 的「连接」标题**
+   *   （不是此前推测的工具栏 —— 工具栏在 x=240 之后，压根不重叠）。
+   *   78 = 62（按钮右缘）+ 16（与首个内容的呼吸间距）。
+   *
+   * 全屏态刻意**不**回收这段留白：全屏下 macOS 把交通灯叠在内容区上方，
+   * 回收了就会重新出现标题被压住的问题。宁可空 78px 也不要文字被盖。
+   */
+  padding: 0 8px 0 78px;
+  border-bottom: 1px solid var(--border);
+}
+
+/**
+ * 交通灯的 no-drag 命中区（W4）。
+ *
+ * 为什么单独铺一层：整窗在 .toolbar 上有 app-region:drag，若将来侧栏也被
+ * 标成 drag，按钮区会被拖拽吞掉 hover —— macOS 的「hover 显示 ✕ ─ ＋ 符号」
+ * 就失效了。这一层显式声明 no-drag，把原生按钮的鼠标事件让回去。
+ * 纯透明、不参与布局（absolute），不影响任何可见观感。
+ */
+.traffic-light-safe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 72px;
+  height: 30px;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}
+
+.sidebar-title { color: var(--text-dim); font-size: 11px; font-weight: 600; }
+
+.sidebar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.sidebar-btn:hover { border-color: var(--accent); color: var(--accent); }
+.sidebar-btn.wide { display: block; margin: 8px auto 0; padding: 4px 14px; }
+
+/* 连接节点上的行内操作（连接/断开、编辑、删除），hover 才显形 */
+.tree-acts { margin-left: auto; display: flex; gap: 2px; opacity: 0; }
+.tree-row:hover .tree-acts { opacity: 1; }
+
+.tree-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  cursor: default;
+}
+
+.tree-act:hover { color: var(--accent); background: var(--row-hover); }
+.tree-row.active .tree-act { color: rgba(255, 255, 255, 0.9); }
+.tree-row.active .tree-act:hover { color: var(--on-accent); background: rgba(255, 255, 255, 0.15); }
+
+/* 连接状态标记：纯 CSS 圆点（不用 emoji/字符），失败态红、活动态绿 */
+.tree-state { flex: 0 0 auto; }
+.tree-state::before {
+  content: '';
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.tree-state.state-idle::before,
+.tree-state.state-closed::before {
+  background: transparent;
+  border: 1.5px solid var(--text-dim);
+}
+.tree-state.state-connected::before { background: var(--ok); }
+.tree-state.state-busy::before { background: var(--warn); }
+.tree-state.state-connecting::before,
+.tree-state.state-disconnected::before {
+  background: var(--warn);
+  animation: state-pulse 1s ease-in-out infinite;
+}
+.tree-state.state-failed::before { background: var(--error-bar); }
+
+@keyframes state-pulse {
+  50% { opacity: 0.35; }
+}
+
+.tree-search {
+  margin: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.tree-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ---------- 命令面板 ---------- */
+
+.palette {
+  width: 640px;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.palette input {
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: 14px/1.4 inherit;
+  outline: none;
+}
+
+.palette ul { list-style: none; margin: 0; padding: 4px 0; max-height: 360px; overflow: auto; }
+
+.palette li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 14px;
+  cursor: default;
+}
+
+.palette li.active { background: var(--accent); color: var(--on-accent); }
+.palette li .sub { color: var(--text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.palette li.active .sub { color: rgba(255, 255, 255, 0.8); }
+.palette li .badge { margin-left: auto; font-size: 10px; color: var(--text-dim); }
+.palette li.active .badge { color: rgba(255, 255, 255, 0.8); }
+
+/* ---------- 树右键菜单（Navicat 式各级别操作） ---------- */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 190px;
+  max-width: 300px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+  user-select: none;
+}
+
+.ctx-title {
+  padding: 4px 10px 5px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-sep { height: 1px; background: var(--border); margin: 3px 6px; }
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: default;
+  white-space: nowrap;
+  transition: none;
+}
+
+.ctx-item .ctx-ico { display: inline-flex; flex: 0 0 14px; color: var(--text-dim); justify-content: center; }
+.ctx-item .ctx-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.ctx-item .ctx-shortcut { color: var(--text-dim); font-size: 10px; margin-left: 12px; }
+
+/* Apple 菜单味:整行蓝底白字;危险项红底 */
+.ctx-item:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.ctx-item:hover:not(:disabled) .ctx-ico,
+.ctx-item:hover:not(:disabled) .ctx-shortcut { color: var(--on-accent); }
+
+.ctx-item.danger { color: var(--error-bar); }
+.ctx-item.danger:hover:not(:disabled) { background: var(--error-bar); color: var(--on-accent); }
+
+.ctx-item:disabled { opacity: 0.4; }
+
+/* 查询目标库下拉(Navicat 式库上下文切换) */
+.sql-db-select {
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  max-width: 180px;
+}
+
+/* ---------- SQL 编辑器（§6.4） ----------
+   注意：CodeMirror 自己的样式随 lazy chunk 载入，这里只管外壳骨架。
+   外壳必须在首屏就有样式 —— 否则懒加载那 300ms 里布局是塌的。 */
+
+.sql-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.sql-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.sql-toolbar button {
+  padding: 3px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+  transition: background 0.12s ease;
+}
+
+.sql-toolbar button:hover:not(:disabled) { background: var(--bg-alt); }
+.sql-toolbar button:disabled { opacity: 0.45; }
+.sql-toolbar button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+}
+
+.sql-running { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
+
+.spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.tag-readonly {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--error-bg);
+  color: var(--error-bar);
+  font-size: 10px;
+}
+
+.sql-timeout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px;
+}
+
+.sql-timeout button {
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+}
+
+.sql-timeout button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+.sql-host {
+  position: relative;
+  flex: 0 0 38%;
+  min-height: 120px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+
+.sql-host .cm-editor { height: 100%; }
+.sql-host .cm-scroller { font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+
+.sql-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+.sql-results {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sql-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px 0;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  overflow-x: auto;
+}
+
+.sql-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 10px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 5px 5px 0 0;
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  font: inherit;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+.sql-tab.active { background: var(--bg); color: var(--text); border-color: var(--border-strong); }
+.sql-tab.errored { color: var(--error-bar); }
+
+/* 结果页签标题可截断,把空间让给关闭按钮 */
+.sql-tab-title { overflow: hidden; text-overflow: ellipsis; }
+
+/* 结果页签关闭按钮:悬停显形(与 ws-tab-close 同族) */
+.sql-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  padding: 1px 3px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.sql-tab:hover .sql-tab-close,
+.sql-tab.active .sql-tab-close { opacity: 1; }
+.sql-tab-close:hover:not(:disabled) { background: var(--error-bg); color: var(--error-bar); }
+.sql-tab-close:disabled { opacity: 0.25; cursor: default; }
+
+.sql-message {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+.sql-message .dur { margin-left: auto; }
+.sql-message .dur.warn { color: var(--warn); }
+.sql-message .dur.bad { color: var(--error-bar); }
+
+/* EXPLAIN（§6.4.3） */
+.explain-view { flex: 1 1 auto; overflow: auto; padding: 0; }
+.explain-view table { border-collapse: collapse; width: 100%; font: 11px/1.4 ui-monospace, Menlo, monospace; }
+.explain-view th {
+  position: sticky;
+  top: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  text-align: left;
+  white-space: nowrap;
+}
+.explain-view td { padding: 3px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.explain-view td.danger { background: var(--error-bg); color: var(--error-bar); font-weight: 600; }
+.explain-view td.warn { background: var(--dirty-bg); }
+.explain-legend { padding: 6px 8px; color: var(--text-dim); font-size: 10px; }
+
+/* ---------- 右侧详情面板（§6.7） ---------- */
+
+.detail-panel {
+  flex: 0 0 var(--detail-w, 280px);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg-alt);
+  min-height: 0;
+  min-width: 0;
+  /* 窗口矮于内容时整列可滚（各分区自身也有局部滚动） */
+  overflow-y: auto;
+}
+
+.detail-panel.collapsed { flex-basis: 28px; overflow: hidden; }
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.detail-head button {
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+}
+
+.detail-section { border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+
+.detail-section > h4 {
+  margin: 0;
+  padding: 5px 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.detail-kv { display: grid; grid-template-columns: 76px 1fr; gap: 2px 8px; padding: 4px 8px 8px; }
+.detail-kv dt { color: var(--text-dim); }
+.detail-kv dd { margin: 0; word-break: break-all; }
+
+.detail-cols { max-height: 300px; overflow: auto; }
+
+.detail-col {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+}
+
+.detail-col:hover { background: var(--bg); }
+.detail-col .name { font-weight: 600; }
+.detail-col .type { color: var(--text-dim); font-size: 10px; }
+.detail-col .flags { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+
+.detail-value {
+  padding: 6px 8px;
+  font: 11px/1.5 ui-monospace, Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow: auto;
+}
+
+/* ---------- 筛选器（§6.3.3） ---------- */
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  flex: 0 0 auto;
+}
+
+.filter-bar button {
+  padding: 2px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+  transition: background 0.12s ease;
+}
+
+.filter-bar button:hover:not(:disabled) { background: var(--bg-alt); }
+.filter-bar button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
+.filter-bar .preview {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+}
+
+.filter-modal .body { max-height: 60vh; }
+
+.filter-group {
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.filter-cond {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+  flex-wrap: wrap;
+}
+
+.filter-cond select,
+.filter-cond input {
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.filter-cond .col { min-width: 130px; }
+.filter-cond .op { min-width: 96px; }
+.filter-cond input { flex: 1 1 110px; min-width: 80px; }
+
+.filter-cond .del {
+  padding: 1px 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.filter-cond .del:hover { color: var(--error-bar); }
+.filter-logic { min-width: 54px; }
+.filter-incomplete { color: var(--text-dim); font-size: 10px; }
+
+/* ---------- 连接编辑器（§6.1） ----------
+   注意：这个弹窗与 SQL 编辑器一样走 lazy()，外壳样式必须先在首屏就位，
+   否则首次点开时那几十毫秒里表单是没有样式的。 */
+
+/* 连接编辑器字段多（三分区卡片 + 校验错误区），放宽高度上限 ——
+   基类 70vh 在 900px 高视口下会把「连接选项」卡片挤出可视区（视觉验收抓到） */
+.connection-editor { width: 640px; max-height: 88vh; }
+.connection-editor .body { padding: 10px 14px; }
+
+/* 2026-09-27 布局重排：字段按关联性进分区卡片（对齐 TablePlus/Navicat 的表单分区），
+   label 上置 + 两列栅格，替代旧的 118px 左标签平铺。
+   ⚠️ 竖排与栅格都限定在 .connection-editor 作用域内 —— .ce-field/.ce-check
+   还被 PasswordPromptModal、ImportWizard 复用（横排语义），不能全局改。 */
+.connection-editor .ce-section {
+  margin-bottom: 10px;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+.connection-editor .ce-section:last-child { margin-bottom: 0; }
+.connection-editor .ce-section-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.connection-editor .ce-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+  margin-bottom: 8px;
+}
+.connection-editor .ce-grid:last-child { margin-bottom: 0; }
+.connection-editor .ce-grid.cols-3 { grid-template-columns: 1fr 1.7fr 0.7fr; }
+.connection-editor .ce-grid .span-2 { grid-column: span 2; }
+.connection-editor .ce-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  margin: 0;
+}
+.connection-editor .ce-label { flex: none; text-align: left; }
+.connection-editor .ce-check { padding-left: 0; margin: 0; align-self: center; }
+
+/* promptEveryTime 密码弹窗：小而聚焦 */
+.password-modal { width: 420px; }
+.password-modal .body { padding-bottom: 4px; }
+.password-modal .ce-label { flex-basis: 48px; }
+
+.ce-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ce-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  font: inherit;
+  cursor: default;
+}
+
+.ce-tabs button.active {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.ce-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ce-field {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ce-label {
+  flex: 0 0 118px;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.ce-input { flex: 1 1 auto; min-width: 0; }
+
+.ce-input input,
+.ce-input select {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.ce-input input:focus,
+.ce-input select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.ce-row { display: flex; gap: 12px; }
+.ce-row > .ce-field { flex: 1 1 0; min-width: 0; }
+.ce-row > .ce-field .ce-label { flex-basis: 84px; }
+
+.ce-secret { display: flex; gap: 6px; }
+.ce-secret input { flex: 1 1 auto; min-width: 0; }
+.ce-secret button {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-alt);
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+}
+
+.ce-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 10px;
+  padding-left: 126px;
+}
+
+.ce-check.prominent { padding-left: 0; font-weight: 600; margin-bottom: 12px; }
+
+.ce-msg { display: block; margin-top: 2px; font-size: 10px; }
+.ce-msg.error, .ce-msg .error { color: var(--error-bar); }
+.ce-msg.warning { color: var(--warn); }
+.ce-msg.ok { color: var(--ok); }
+.ce-hint { display: block; margin-top: 2px; color: var(--text-dim); font-size: 10px; }
+
+.ce-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ce-note.warn {
+  border-color: var(--dirty-bar);
+  background: var(--dirty-bg);
+  color: var(--text);
+}
+
+.ce-issues {
+  margin: 0 14px 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-alt);
+  font-size: 11px;
+  line-height: 1.6;
+  /* 校验错误多时列表自身滚动，不吃掉表单 body 的空间（空表单可积累 4-5 条） */
+  max-height: 88px;
+  overflow: auto;
+}
+
+.ce-issues.error { border-color: var(--error-bar); background: var(--error-bg); }
+.ce-issues.warning { border-color: var(--dirty-bar); background: var(--dirty-bg); }
+.ce-issues.ok { border-color: var(--ok); }
+
+/* ---------- 导出/导入（§6.6 / D3） ---------- */
+
+.export-modal,
+.import-modal {
+  width: 560px;
+}
+
+.export-formats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.export-format {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.export-format.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
+
+.export-format input { margin: 0; }
+
+.export-hint {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.export-hint b.bad,
+.import-notes li.bad { color: var(--error-bar); }
+.export-hint b.ok { color: var(--ok); }
+
+.export-done .ic { color: var(--ok); }
+.export-error .ic { color: var(--error-bar); }
+.import-notes .ic { margin-right: 3px; }
+
+.export-progress { padding: 6px 0; }
+
+.export-stat { margin-bottom: 8px; color: var(--text-dim); }
+
+.export-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-alt);
+  overflow: hidden;
+}
+
+.export-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.export-bar-fill.indeterminate {
+  width: 40%;
+  animation: export-indeterminate 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes export-indeterminate {
+  from { margin-left: 0; }
+  to { margin-left: 60%; }
+}
+
+.export-done p,
+.export-error p { margin: 4px 0; }
+
+/* 运行 SQL 脚本（库/表级别导入脚本） */
+
+.script-modal { width: 560px; }
+
+.script-pick .primary { margin-top: 4px; }
+
+.script-options {
+  display: flex;
+  gap: 20px;
+  margin: 12px 0;
+}
+
+.script-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.script-opt span { color: var(--text-dim); }
+
+.script-opt select {
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.script-stats {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0 10px;
+  font-size: 12px;
+}
+
+.script-stats th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--text-dim);
+  padding: 5px 12px 5px 0;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.script-stats td {
+  padding: 5px 20px 5px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.script-errors {
+  margin: 6px 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.script-more { color: var(--text-dim); font-size: 11px; }
+
+/* 导入向导 */
+
+.import-modal { width: 680px; }
+
+.wizard-steps {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  font-weight: 400;
+  font-size: 11px;
+}
+
+.wizard-step { color: var(--text-dim); }
+.wizard-step.active { color: var(--accent); font-weight: 600; }
+.wizard-step.done { color: var(--ok); }
+
+.import-file-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.import-file-info > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+
+.import-mapping-table,
+.import-preview-grid table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.import-mapping-table th,
+.import-mapping-table td,
+.import-preview-grid th,
+.import-preview-grid td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.import-mapping-table select {
+  width: 100%;
+  font: inherit;
+  padding: 2px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.import-mapping-table th {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.import-preview-grid {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.import-preview-grid th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.import-preview-grid td.row-no { color: var(--text-dim); width: 36px; }
+.import-preview-grid tr.has-error td { background: var(--error-bg); }
+.import-preview-grid .skipped { color: var(--text-dim); }
+
+.import-notes {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.import-step1 { padding: 4px 0; }
+
+/* ---------- 表设计器（§6.5） ---------- */
+
+.designer-modal {
+  width: 880px;
+  max-height: 82vh;
+}
+
+.designer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.designer-meta {
+  display: flex;
+  gap: 12px;
+}
+
+.designer-meta .ce-field { flex: 1; margin: 0; }
+
+.designer-issues {
+  margin: 0;
+  padding: 6px 10px 6px 22px;
+  border-radius: 6px;
+  background: var(--error-bg);
+  color: var(--error-bar);
+  font-size: 11px;
+  list-style: disc;
+}
+
+.designer-columns {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 300px;
+}
+
+.designer-columns table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.designer-columns th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  font-weight: 500;
+  padding: 5px 4px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.designer-columns td {
+  padding: 2px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.designer-columns input,
+.designer-columns select {
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.designer-columns .w-chk { width: 34px; text-align: center; }
+.designer-columns .w-len { width: 56px; }
+.designer-columns .w-order { width: 46px; white-space: nowrap; }
+
+.designer-columns .w-order button,
+.designer-index-col button,
+.designer-fk-row button,
+.designer-add {
+  font: inherit;
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.designer-add {
+  display: block;
+  margin: 6px;
+  padding: 4px 12px;
+}
+
+.designer-add:hover { border-color: var(--accent); }
+
+.designer-index-card,
+.designer-fk-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.designer-index-head,
+.designer-fk-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.designer-index-head input,
+.designer-fk-head input {
+  font: inherit;
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.designer-index-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.designer-index-col { display: flex; gap: 4px; align-items: center; }
+
+.designer-fk-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.designer-fk-row label {
+  color: var(--text-dim);
+  font-size: 11px;
+  min-width: 110px;
+}
+
+.designer-fk-row select {
+  font: inherit;
+  padding: 2px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.designer-hint {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.designer-ddl {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-alt);
+  overflow: hidden;
+}
+
+.designer-ddl-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.designer-ddl-switch { display: flex; gap: 4px; }
+
+.designer-ddl-switch button {
+  font: inherit;
+  font-weight: 400;
+  padding: 1px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.designer-ddl-switch button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.designer-ddl-summary {
+  margin: 0;
+  padding: 4px 10px 4px 24px;
+  font-size: 11px;
+  color: var(--text-dim);
+  list-style: disc;
+}
+
+.designer-ddl pre {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 140px;
+  overflow: auto;
+  background: var(--bg-alt);
+  border: none;
+  font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap;
+}
+
+/* ---------- 危险操作确认（§8.5） ---------- */
+
+.danger-modal {
+  width: 560px;
+}
+
+.danger-modal header.danger {
+  color: var(--error-bar);
+}
+
+/* 生产环境红点(替代旧 emoji) */
+.state-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--error-bar);
+  vertical-align: 0;
+}
+
+.modal header .ic { vertical-align: -1.5px; margin-right: 6px; }
+
+.danger-reason {
+  margin: 0 0 8px;
+  color: var(--error-bar);
+  font-weight: 600;
+}
+
+.danger-label {
+  margin: 4px 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.danger-sql {
+  max-height: 200px;
+  overflow: auto;
+}
+
+.danger-sql pre {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--error-bar);
+  border-radius: 6px;
+  font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.danger-input-row {
+  margin-top: 10px;
+}
+
+.danger-input-row label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--error-bar);
+}
+
+.danger-input-row input {
+  width: 100%;
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.danger-input-row input:focus {
+  border-color: var(--error-bar);
+  outline: none;
+}
+
+.danger-primary {
+  background: var(--error-bar) !important;
+  border-color: var(--error-bar) !important;
+}
+
+/* ---------- 多标签工作区（P0-4） ---------- */
+
+.ws-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 34px;
+  flex: 0 0 34px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ws-tabs::-webkit-scrollbar { height: 3px; }
+.ws-tabs::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+
+.ws-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px 0 10px;
+  margin: 4px 0;
+  min-width: 110px;
+  max-width: 200px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-dim);
+  background: transparent;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.12s ease;
+}
+
+.ws-tab:hover { background: var(--row-hover); }
+
+/* 苹果分段控件味:白底浮起,去掉旧的蓝条 inset */
+.ws-tab.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border);
+}
+
+.ws-tab-icon { font-size: 10px; opacity: 0.8; }
+
+.ws-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+
+.ws-tab-dirty { color: var(--dirty-bar); font-weight: 700; }
+
+/* 只读锁图标:压灰小尺寸,hover/active 提亮 */
+.ws-tab-readonly { color: var(--text-dim); display: inline-flex; vertical-align: -1px; margin-left: 3px; }
+.ws-tab.active .ws-tab-readonly { color: var(--text); }
+
+/* 列命中行(搜索结果)的路径文本:不用状态圆点 */
+.tree-col-hit .tree-state { font-size: 10px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+.tree-col-hit .tree-state::before { display: none; }
+
+.ws-tab-close {
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 4px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.ws-tab:hover .ws-tab-close,
+.ws-tab.active .ws-tab-close { opacity: 1; }
+
+.ws-tab-close:hover { background: var(--error-bg); color: var(--error-bar); }
+
+.ws-tab-index {
+  position: absolute;
+  bottom: 1px;
+  right: 4px;
+  font-size: 8px;
+  color: var(--text-dim);
+  opacity: 0.55;
+}
+
+.ws-tab-new {
+  font: inherit;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ws-tab-new:hover { color: var(--accent); }
+
+/* tab 内容切换：隐藏但保留 DOM（编辑器实例/网格状态不销毁） */
+.ws-tab-pane { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.ws-tab-pane.hidden { display: none; }
+
+/* ══════════ R1 并行研发合并区（2026-09-26，由各模块独立 css 合并而来） ══════════ */
+
+/* ─────── 网格（A1 查找 / A5 列显隐 / A7 列宽 / A8 聚合 / A18 换行 / A2-A4 编辑增强） ─────── */
+/**
+ * 数据网格 A 板块新增样式（2026-09-26 网格 A 代理）
+ *
+ * 选择器前缀 `.gd-`（grid data-grid），复用 styles.css 的既有 token。
+ * 集成时本文件会被主控合并回 styles.css —— 所以这里不写主题调色板，
+ * 不写 `:root` 变量，只引用既有 token；浅/深主题零额外成本。
+ *
+ * 视觉基调：Apple 原生精修，克制 —— 工具栏 26px 细条，浮层小圆角 + 柔和阴影。
+ * 禁紫色系；图标颜色跟 currentColor。
+ */
+
+/* ---------- 工具栏（A5） ---------- */
+
+/* 工具栏占据 grid 顶部 26px，viewport 从其下开始（覆盖 styles.css 的 inset:0 顶边） */
+.grid > .grid-viewport {
+  top: 26px;
+}
+
+.gd-toolbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+/* 图标小方按钮：12px 圆角小面积，hover 灰底浮起（Apple 味，不变蓝） */
+.gd-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.gd-tool-btn:hover:not(:disabled) { background: var(--bg-alt); color: var(--text); }
+.gd-tool-btn:disabled { opacity: 0.4; cursor: default; }
+.gd-tool-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+/* 开关类按钮的「开」态：淡蓝底 + 主题色图标，不用边框变蓝 */
+.gd-tool-btn.gd-on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+
+/* 列选择器锚点：按钮与下拉面板的定位父级 */
+.gd-tool-anchor { position: relative; display: inline-flex; }
+
+.gd-tool-sep { width: 1px; height: 14px; margin: 0 4px; background: var(--border); flex-shrink: 0; }
+.gd-tool-spacer { flex: 1 1 auto; }
+
+/* ---------- A5 列选择器下拉 ---------- */
+
+.gd-col-menu {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  z-index: 9;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+}
+
+.gd-col-menu-head {
+  padding: 4px 6px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+
+.gd-col-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.gd-col-menu-item:hover { background: var(--bg-alt); }
+.gd-col-menu-item input[type='checkbox'] { accent-color: var(--accent); margin: 0; flex-shrink: 0; }
+.gd-col-menu-name { flex-shrink: 0; }
+.gd-col-menu-type { color: var(--text-dim); font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- A16 跳转到行 ---------- */
+
+.gd-jump-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-dim);
+}
+.gd-jump-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+
+.gd-jump {
+  width: 72px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: 500 11px/1 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+}
+.gd-jump::placeholder { color: var(--text-dim); font-weight: 400; }
+
+/* ---------- A1 查找条 ---------- */
+
+.gd-search {
+  position: absolute;
+  top: 30px;
+  right: 16px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-dim);
+}
+
+.gd-search-input {
+  width: 180px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: 400 12px/1.2 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  padding: 2px 0;
+}
+.gd-search-input::placeholder { color: var(--text-dim); }
+
+.gd-search-count {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+
+/* ---------- A8 聚合浮动条 ---------- */
+
+/* 左下角：绝对定位避开了底部水平滚动条与右侧垂直滚动条 */
+.gd-aggregate {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 48px);
+  overflow: hidden;
+  padding: 4px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+  font: 500 11px/1.4 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.gd-agg-item { font-variant-numeric: tabular-nums; }
+.gd-agg-dim { color: var(--text-dim); font-weight: 400; }
+.gd-agg-warn { color: var(--warn); font-weight: 400; }
+
+/* ---------- A7 列宽拖拽热区 ---------- */
+
+.gd-header-cell { position: relative; }
+
+.gd-col-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  /* 压过表头单元格自己的 border-right，热区手感更准 */
+  z-index: 1;
+}
+.gd-col-resize:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* ---------- A1 匹配高亮 ---------- */
+
+/* 普通命中：暖黄底（与脏标记的橙、错误的红错开，且浅深主题都可读） */
+.grid-cell.gd-cell-match { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+/* 当前命中：主题色描边 + 更实一点的底 */
+.grid-cell.gd-cell-match-current {
+  background: color-mix(in srgb, var(--warn) 34%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ---------- V3 拖选矩形选区（拖动中的临时高亮，松手后由 .focus/统计接管） ---------- */
+
+/**
+ * 拖拽中**不写 React state**（避免 60~120Hz 指针事件变成等量重渲染），
+ * 直接由 DataGrid 给命中的单元格加 .gd-drag；松手时清掉、bump 一次落真实选区。
+ * 底色用半透明 accent 叠加 —— 与既有的 --sel-bg 语义一致，不破坏斑马纹。
+ */
+.grid-cell.gd-drag {
+  background: var(--sel-bg);
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -1px;
+}
+
+/* ---------- A18 换行显示 ---------- */
+
+/**
+ * ⚠️ 刻意的：行高保持固定不变（虚拟滚动约束 —— 行高若随内容变化，
+ * offsetTop/totalHeight 的线性公式全部失效，DOM 池化定位会错位）。
+ * 所以换行只是 white-space 放开 + 最多 2 行 line-clamp 截断，
+ * 超出部分靠 title 悬浮看全。
+ */
+.gd-wrap {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-all;
+  width: 100%;
+}
+
+/* 换行模式下单元格顶对齐更像表格软件（行高不变，只是文字多行） */
+.grid-cell.gd-cell-wrap { align-items: flex-start; padding-top: 3px; }
+
+/* ---------- 单元格右键菜单（A3，网格 B 代理追加） ---------- */
+
+/* fixed 定位浮层，挂 grid 根部渲染；尺寸收敛在 CellContextMenu 内完成 */
+.gd-ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 208px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  user-select: none;
+}
+
+.gd-ctx-title {
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gd-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.gd-ctx-item:hover:not(:disabled) { background: var(--bg-alt); }
+.gd-ctx-item:disabled { opacity: 0.4; }
+
+.gd-ctx-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+.gd-ctx-item:hover:not(:disabled) .gd-ctx-ico { color: var(--text); }
+
+.gd-ctx-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.gd-ctx-sub { padding-left: 10px; }
+.gd-ctx-group { padding: 6px 8px 2px; font-size: 10px; color: var(--text-dim); }
+.gd-ctx-kbd { flex-shrink: 0; font-size: 10px; color: var(--text-dim); }
+.gd-ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+
+/* ─────── 详情面板（A9 JSON 高亮 / A10 BLOB·图片·HEX） ─────── */
+/**
+ * 详情面板 B 板块新增样式（2026-09-26 网格 B 代理）
+ *
+ * A9 JSON 格式化高亮 / A10 BLOB·图片·HEX 预览。
+ * 选择器前缀 `.dt-`（detail extra），复用 styles.css 既有 token；
+ * 集成时本文件会被主控合并回 styles.css —— 所以不写 :root 变量、
+ * 不写主题调色板，浅/深主题零额外成本。禁紫色系。
+ */
+
+/* ---------- A9：JSON 格式化视图 ---------- */
+
+.dt-json-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 4px;
+}
+
+.dt-json-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.dt-json-bar button:hover { background: var(--bg-alt); color: var(--text); }
+.dt-json-bar button.dt-on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: transparent;
+  color: var(--accent);
+}
+.dt-json-bar-spacer { flex: 1 1 auto; }
+
+.dt-json-hint {
+  margin: 4px 0;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+/* 格式化 JSON：等宽 + 不换行滚动（跟 .detail-value 的截断语义区分开） */
+pre.dt-json {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--bg-alt);
+  border-radius: 6px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* 四类 token：key 琥珀 / string 绿 / number 蓝 / bool·null 红 —— 全走主题 token，禁紫色 */
+.dt-json-key { color: var(--warn); }
+.dt-json-str { color: var(--ok); }
+.dt-json-num { color: var(--accent); font-variant-numeric: tabular-nums; }
+.dt-json-bool { color: var(--error-bar); }
+
+/* ---------- A10：二进制 / 图片 / HEX ---------- */
+
+.dt-binary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  min-height: 0;
+}
+
+.dt-binary-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 图片预览：不拉伸，最长边收进面板；灰底衬托透明 PNG */
+.dt-image {
+  max-width: 100%;
+  max-height: 240px;
+  align-self: flex-start;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-alt);
+}
+
+pre.dt-hex {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--bg-alt);
+  border-radius: 6px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+  min-height: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-binary-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.dt-binary-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.dt-binary-actions button:hover { background: var(--bg-alt); }
+
+/* ─────── SQL 编辑器（B1 片段 / B4 计划树 / B6 定位 / B7 导出） ─────── */
+/**
+ * SQL 编辑器追加样式（B1/B4/B6/B7）。
+ *
+ * 为什么单独一个文件：styles.css 是主控独占（并行研发契约 §〇.4），
+ * 新样式进自有文件，集成阶段由主控合并回去。选择器一律 `.sql-` 前缀，
+ * 只复用既有 token（--bg / --border / --accent / --error-bar / --warn…），
+ * 禁止紫色系。
+ */
+
+/* 面板要当对话框遮罩的定位基准 */
+.sql-editor { position: relative; }
+
+/* 工具栏按钮带图标时（保存片段）对齐：SVG 默认基线对齐会下沉 */
+.sql-toolbar button { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ---------- B6：错误定位横幅 ---------- */
+
+/* 错误 + 定位链接同行排布；错误文本可换行，链接不缩 */
+.sql-error-banner { display: flex; align-items: center; gap: 10px; }
+.sql-error-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+
+/* ---------- B1：保存片段对话框 ---------- */
+
+.sql-dialog-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 64px;
+  background: var(--overlay, rgba(0, 0, 0, 0.28));
+}
+
+.sql-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 360px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md, 8px);
+  background: var(--bg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.sql-dialog-title { font-weight: 600; font-size: 12px; }
+
+.sql-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.sql-dialog-field input {
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm, 5px);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.sql-dialog-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring, 0 0 0 3px rgba(0, 122, 255, 0.25));
+}
+
+.sql-dialog-note { color: var(--text-dim); font-size: 10px; }
+
+.sql-dialog-error { color: var(--error-bar); font-size: 11px; }
+
+.sql-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.sql-dialog-actions button {
+  padding: 3px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm, 5px);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.sql-dialog-actions button:hover:not(:disabled) { background: var(--bg-alt); }
+.sql-dialog-actions button:disabled { opacity: 0.45; }
+.sql-dialog-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent, #fff);
+  font-weight: 500;
+}
+
+/* ---------- B6：错误定位 / B7：结果导出 ---------- */
+
+/* 错误横幅里的「定位到语句」链接 */
+.sql-locate-link {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  padding: 0;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 结果消息行右侧的小按钮（导出 / 视图切换同族） */
+.sql-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm, 5px);
+  background: var(--bg);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.sql-mini-btn:hover:not(:disabled) { background: var(--bg-alt); color: var(--text); }
+.sql-mini-btn:disabled { opacity: 0.45; }
+.sql-mini-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent, #fff);
+}
+
+/* ---------- B4：EXPLAIN 树形视图 ---------- */
+
+.sql-explain-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.sql-explain-header .sql-mini-btn { padding: 1px 9px; font-size: 11px; }
+
+.sql-explain-hint { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+
+.sql-explain-tree {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 8px 10px;
+  font: 12px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.sql-node-kids {
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.sql-node-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  flex-wrap: wrap;
+}
+
+/* 访问类型上色：ALL 红 / index 黄 / 其余蓝（与表格视图的 danger/warn 口径一致） */
+.sql-access-badge {
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.sql-access-badge.sql-access-all { background: var(--error-bg); color: var(--error-bar); }
+.sql-access-badge.sql-access-index { background: var(--dirty-bg); color: var(--warn); }
+.sql-access-badge.sql-access-other { background: var(--bg-alt); color: var(--accent); }
+
+.sql-node-title { font-weight: 600; color: var(--text); }
+
+.sql-node-cost { color: var(--text-dim); font-size: 10px; }
+
+.sql-node-detail {
+  width: 100%;
+  padding-left: 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.sql-node-detail .sql-warn-text { color: var(--warn); }
+
+/* ─────── 导入导出（E1 Markdown / E2 选项 / E3 JSON / E4 整库 / E5 重试） ─────── */
+/**
+ * 导入导出扩展样式（E1~E5/B7）—— 前缀 .xf-，集成时主控合并回 styles.css。
+ * 复用既有 token（--bg/--border/--text/--accent/--focus-ring…），禁止紫色系。
+ */
+
+/* ---------- E4 范围选择（复用 .export-formats 的 radiogroup 结构，只补间距） ---------- */
+
+.xf-scope {
+  margin-bottom: 10px;
+}
+
+/* 整库模式下不可用的格式选项 */
+.xf-format-off {
+  opacity: 0.4;
+}
+
+/* ---------- E2 高级选项（可折叠） ---------- */
+
+.xf-adv {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.xf-adv-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.xf-adv-head:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+
+.xf-adv-head:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.xf-adv-body {
+  display: grid;
+  gap: 8px;
+  padding: 8px 2px 2px;
+}
+
+.xf-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.xf-field-label {
+  flex: 0 0 auto;
+  min-width: 56px;
+  color: var(--text-dim);
+}
+
+.xf-seg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.xf-chip {
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.xf-chip:hover {
+  background: var(--bg-alt);
+  border-color: var(--border-strong);
+}
+
+.xf-chip.active {
+  background: var(--sel-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.xf-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.xf-input {
+  width: 88px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.xf-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ---------- E5 失败行重试 ---------- */
+
+.xf-retry {
+  margin-top: 10px;
+  /* 按钮基础形态跟随 styles.css 的全局 button 规则，这里只补语义色 */
+  border-color: var(--border-strong);
+}
+
+/* ─────── 树（C1 图标 / C5 收藏星标） ─────── */
+/**
+ * 树 UX 扩展样式（C5 收藏星标 / C6 键盘焦点）
+ *
+ * ⚠️ 集成时由主控合并回 styles.css；选择器全部 .tree- 前缀，
+ * 只用既有 token（--r-sm/--text-dim/--accent/--on-accent），禁紫色系。
+ */
+
+/* 收藏星标（C5）：hover 显形，已收藏常显实心；margin-left:auto 推到行尾 */
+.tree-fav {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease;
+}
+.tree-row:hover .tree-fav,
+.tree-fav.on {
+  opacity: 1;
+}
+.tree-fav:hover {
+  color: var(--accent);
+  background: var(--row-hover);
+}
+/* 已收藏：暖色实心星（跟主题 warn token，不用紫色系） */
+.tree-fav.on {
+  color: var(--warn);
+}
+/* 选中行（蓝底白字）：星标跟白，避免蓝底上灰星看不清 */
+.tree-row.active .tree-fav {
+  color: rgba(255, 255, 255, 0.9);
+}
+.tree-row.active .tree-fav:hover {
+  color: var(--on-accent);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* C6：树容器可聚焦（F2/Delete），聚焦不画 ring（滚动容器的 ring 是噪音） */
+.tree:focus,
+.tree:focus-visible {
+  outline: none;
+}
+
+/* ─────── 应用壳（F7 空态 / D1 断线横幅） ─────── */
+/**
+ * F7 空态引导样式（.es- 前缀）。
+ *
+ * 视觉口径（AGENTS.md §六：Apple 原生精修）：居中、灰调、克制，
+ * 无连接形态只有一个主按钮；快捷入口 hover 灰底浮起，不做彩色渐变。
+ * 集成时由主控合并回 styles.css。
+ */
+
+.es-root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 200px;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.es-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  background: var(--bg-alt);
+  color: var(--text-dim);
+}
+
+.es-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.es-desc {
+  margin: 0 0 14px;
+  font-size: 12px;
+}
+
+.es-footnote {
+  margin: 12px 0 0;
+  font-size: 11px;
+  max-width: 360px;
+}
+
+/* 唯一的主按钮（无连接形态） */
+.es-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 14px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.es-primary:hover {
+  filter: brightness(1.08);
+}
+
+.es-primary:active {
+  filter: brightness(0.96);
+}
+
+/* 快捷入口三卡 */
+.es-cards {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.es-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 116px;
+  padding: 14px 10px 12px;
+  font: inherit;
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/* 静态提示卡不可点：去掉手型与浮起 */
+.es-card-static {
+  cursor: default;
+}
+
+button.es-card:hover {
+  background: var(--bg-alt);
+  transform: translateY(-1px);
+}
+
+.es-card-static:hover {
+  background: var(--bg-panel);
+  transform: none;
+}
+
+.es-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+}
+
+.es-card-name {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.es-card-key {
+  font-size: 10px;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+/**
+ * D1 断线横幅样式（.cb- 前缀）。
+ *
+ * 与 .banner 同层级的一条横幅：红/黄按严重度区分（failed=红，掉线=黄），
+ * 颜色全部来自既有 token（--error-bar / --warn / --error-bg），禁紫色。
+ * 集成时由主控合并回 styles.css。
+ */
+
+.cb-root {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 握手失败（红色）：与只读横幅同口径的左缘红条 */
+.cb-root.cb-error {
+  background: var(--error-bg);
+  box-shadow: inset 3px 0 0 0 var(--error-bar);
+  color: var(--text);
+}
+
+/* 意外掉线（黄色，warn token 淡底） */
+.cb-root.cb-warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  box-shadow: inset 3px 0 0 0 var(--warn);
+  color: var(--text);
+}
+
+.cb-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.cb-error .cb-icon {
+  color: var(--error-bar);
+}
+
+.cb-warn .cb-icon {
+  color: var(--warn);
+}
+
+.cb-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.cb-reconnect {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.cb-reconnect:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.cb-reconnect:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.cb-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.cb-close:hover {
+  background: var(--bg-alt);
+  color: var(--text);
+}
+
+/* ========================================================================
+ * P1-B 网格编辑深度（V8-V13，2026-09-29）
+ *
+ * 视觉基调延续「Apple 原生精修」：12px 控件、灰底浮起 hover、蓝色柔光 focus、
+ * 禁 emoji 图标（全部来自 ui/icons.tsx，颜色跟 currentColor）、禁紫色系。
+ *
+ * 🔴 红线 9：这些外壳样式必须**首屏就位** —— 转置视图/批量条虽然是交互后才出现，
+ *    但它们不是 lazy chunk（就在 DataGrid 里），样式缺失会让布局在首帧塌陷。
+ * ======================================================================== */
+
+/* ---------- V8 冻结列（sticky 左钉 + 实色底） ---------- */
+/**
+ * 🔴 实色底的做法（红线 11）：
+ *    --dirty-bg / --sel-bg / --row-hover / --error-bg 全是半透明 token，
+ *    直接当 background 会**透出横滚经过的数据列**，看起来像两层数据叠在一起。
+ *    所以冻结格拆成两层，都在元素自身合成：
+ *      background-color = 不透明基色（--bg / --bg-alt / --row-sel-solid）
+ *      background-image = linear-gradient(半透明高亮, 同一色)  ← 单层纯色渐变
+ *    这套与 .gd-rowno（A19 行号列）已验证的方案完全一致，不新发明机制。
+ *
+ * sticky 层级：普通单元格 < 冻结单元格(2) < 表头(3) < 行号头(4) < 冻结表头(5)
+ * （冻结表头要同时压过普通表头与行号头之外的滚动内容）
+ */
+.grid-cell.gd-frozen {
+  position: sticky;
+  z-index: 2;
+  background-color: var(--bg);
+}
+
+.grid-header-cell.gd-frozen {
+  position: sticky;
+  z-index: 5;
+  background-color: var(--bg-alt);
+}
+
+.grid-row.alt .grid-cell.gd-frozen { background-color: var(--bg-alt); }
+.grid-row:hover .grid-cell.gd-frozen {
+  background-image: linear-gradient(var(--row-hover), var(--row-hover));
+}
+
+/* 半透明高亮态：改成 background-image 叠加，基色保持不透明 */
+.grid-cell.gd-frozen.dirty {
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--dirty-bg), var(--dirty-bg));
+}
+.grid-row.alt .grid-cell.gd-frozen.dirty { background-color: var(--bg-alt); }
+.grid-cell.gd-frozen.invalid {
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--error-bg), var(--error-bg));
+}
+.grid-row.alt .grid-cell.gd-frozen.invalid { background-color: var(--bg-alt); }
+.grid-cell.gd-frozen.gd-cell-match {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--warn) 22%, transparent),
+    color-mix(in srgb, var(--warn) 22%, transparent)
+  );
+}
+.grid-cell.gd-frozen.gd-cell-match-current {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--warn) 34%, transparent),
+    color-mix(in srgb, var(--warn) 34%, transparent)
+  );
+}
+.grid-cell.gd-frozen.gd-drag {
+  background-image: linear-gradient(var(--sel-bg), var(--sel-bg));
+}
+
+/* 选中行里的冻结格：用实色 token（与行号列同款），高亮层清空 */
+.grid-row.selected .grid-cell.gd-frozen {
+  background-color: var(--row-sel-solid);
+  background-image: none;
+}
+
+/* 冻结块右缘的分隔线：让用户看清「钉住的到哪里为止」 */
+.grid-cell.gd-frozen-last { box-shadow: 1px 0 0 0 var(--border-strong); }
+.grid-cell.gd-frozen-last.dirty {
+  /* 脏格的左侧色条与冻结分隔线并存：inset 画左条，外阴影画右分隔 */
+  box-shadow: inset 3px 0 0 0 var(--dirty-bar), 1px 0 0 0 var(--border-strong);
+}
+.grid-header-cell.gd-frozen-last { box-shadow: 1px 0 0 0 var(--border-strong); }
+
+/* 工具栏的冻结状态徽标（宽表下用户需要知道左边钉住了几列） */
+.gd-frozen-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  margin-left: 4px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font: 500 10px/1 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ---------- V9 外键导航 ---------- */
+
+/* 列头的 FK 徽标（与 .pk-badge 同族，尺寸更小以免撑高表头） */
+.fk-badge {
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+  font: 600 8.5px/1.2 'SF Mono', Menlo, monospace;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* 外键值：可点击的链接观感（不改成蓝色下划线 —— 网格里的数据色不该被装饰抢走，
+   只用图标 + hover 底色提示「这里能跳」） */
+.grid-cell.gd-fk { cursor: pointer; }
+.gd-fk-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gd-fk-value .ic { margin-right: 0; color: var(--ok); flex-shrink: 0; }
+.grid-cell.gd-fk:hover .gd-fk-value { text-decoration: underline; text-decoration-color: var(--ok); }
+
+/* 候选值下拉（fixed 浮层；与右键菜单同族样式） */
+.gd-fk-picker {
+  position: fixed;
+  z-index: 62;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.gd-fk-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px 5px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.gd-fk-title {
+  font: 600 10.5px/1.3 'SF Mono', Menlo, monospace;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gd-fk-filter {
+  margin: 6px 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 400 11.5px/1.3 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  outline: none;
+}
+.gd-fk-filter:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.gd-fk-filter::placeholder { color: var(--text-dim); }
+
+.gd-fk-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0 4px 4px;
+}
+
+.gd-fk-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: 400 11.5px/1.5 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.gd-fk-item.gd-on { background: var(--sel-bg); }
+.gd-fk-value {
+  font: 500 11.5px/1.5 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.gd-fk-label {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gd-fk-empty,
+.gd-fk-error {
+  padding: 10px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+/* 拿不到候选值必须显式说原因（V1-V7 的教训：静默失效比没有更伤） */
+.gd-fk-error { color: var(--error-bar); }
+
+.gd-fk-foot {
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--warn);
+}
+.gd-fk-foot-dim { color: var(--text-dim); }
+
+/* ---------- V10 SQL 表达式模式 ---------- */
+
+/* 编辑态容器：fx 开关 + 输入框 + 下拉入口横排（单元格 overflow:hidden 会裁掉浮层，
+   所以报错文案走 .gd-expr-hint 挂在 grid 根部，见下方） */
+.gd-editor-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+}
+
+.gd-expr-toggle,
+.gd-fk-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gd-expr-toggle:hover,
+.gd-fk-toggle:hover { background: var(--bg-alt); color: var(--text); }
+/* 表达式模式开启：与 .gd-tool-btn.gd-on 同款淡蓝底（开关态的统一语言） */
+.gd-expr-toggle.gd-on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+
+/* 表达式模式的输入框：等宽字体 + 主题色底 —— 用户必须一眼看出
+   「我写的这段会被当成 SQL 执行，不是字符串」 */
+.grid-cell-editor.gd-expr-input {
+  font: 500 11.5px/1.4 'SF Mono', Menlo, monospace;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  color: var(--accent);
+}
+
+/* 脏的表达式格：fx 角标（与普通脏格的橙色区分，避免"我明明填了值怎么还是橙的"） */
+/**
+ * 🔴 `position: relative` 只能挂在 `.gd-expr` 上，**绝不能写成 `.grid-cell` 全局**。
+ *    踩过一次：全局 relative 在文件里位于 `.gd-rowno` 之后，同 specificity 下
+ *    后者胜出 → 行号列的 `position: sticky` 被覆盖成 relative，
+ *    横滚 800px 后行号跟着滚走（e2e 断言「偏差 66px」抓到）。
+ *    fx 角标的定位基准只需要脏表达式格自己。
+ *    注：冻结的表达式格是 sticky —— sticky 元素同样是绝对定位后代的包含块，
+ *    所以 `::after` 在两种情况下都定位正确，不需要额外分支。
+ */
+.grid-cell.gd-expr:not(.gd-frozen) {
+  position: relative;
+}
+.grid-cell.gd-expr {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+.grid-cell.gd-expr::after {
+  content: 'fx';
+  position: absolute;
+  right: 2px;
+  top: 1px;
+  font: 600 8px/1.2 'SF Mono', Menlo, monospace;
+  color: var(--accent);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* 表达式校验报错：挂 grid 根部（单元格 overflow:hidden 会裁掉内联报错）。
+   top:60px = 让开工具栏(26) 与批量条/查找条(26~56) —— 三者都可能在同一时刻出现，
+   叠在一起会变成一条读不全的红字。 */
+.gd-expr-hint {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  max-width: 70%;
+  padding: 5px 10px;
+  background: var(--error-bg);
+  border: 1px solid var(--error-bar);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+  color: var(--error-bar);
+  font: 500 11px/1.4 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 保存预演里的表达式语句：fx 标签 + 主题色左边条 */
+.preview-sql { position: relative; }
+.preview-sql.has-expr pre {
+  border-left: 3px solid var(--accent);
+  padding-left: 7px;
+}
+.preview-expr-tag {
+  position: absolute;
+  right: 6px;
+  top: 4px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font: 600 9px/1.4 'SF Mono', Menlo, monospace;
+}
+
+/* ---------- V12 转置视图 ---------- */
+
+.gd-transpose {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.gd-transpose-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0 6px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.gd-transpose-title {
+  font: 600 11px/1 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  color: var(--text);
+  flex-shrink: 0;
+}
+/* 语义明示（PRD 要求）：转置是只读查看，复制按数据行 */
+.gd-transpose-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gd-transpose-count {
+  font: 500 10px/1 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.gd-transpose-viewport {
+  flex: 1 1 auto;
+  overflow: auto;
+  outline: none;
+  position: relative;
+}
+
+/* 表头行：字段名列 sticky 左钉 + 数据行序号 */
+.gd-tp-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border-strong);
+}
+/* 横向滚动时表头单元格靠 translateX 跟随（与 .grid-rows 的 translateY 同一套思路） */
+.gd-tp-head-scroll,
+.gd-tp-row-scroll {
+  display: flex;
+  flex: 0 0 auto;
+  will-change: transform;
+}
+
+.gd-tp-field {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 8px;
+  background-color: var(--bg-alt);
+  border-right: 1px solid var(--border-strong);
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+}
+.gd-tp-field-name {
+  font: 600 11px/1.2 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gd-tp-field-type {
+  font: 400 9px/1.2 'SF Mono', Menlo, monospace;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gd-tp-head-field {
+  font: 600 10px/1 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  color: var(--text-dim);
+  flex-direction: row;
+  align-items: center;
+  cursor: default;
+  z-index: 4;
+}
+
+.gd-tp-row { display: flex; }
+.gd-tp-row:nth-child(odd) .gd-tp-field { background-color: var(--bg); }
+
+.gd-tp-cell {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background-color: var(--bg);
+  font: 400 11.5px/1.4 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: cell;
+}
+.gd-tp-head-cell {
+  justify-content: center;
+  background-color: var(--bg-alt);
+  font: 500 10px/1 'SF Mono', Menlo, monospace;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gd-tp-cell.null { color: var(--null-text); font-style: italic; }
+.gd-tp-cell.numeric { justify-content: flex-end; }
+.gd-tp-cell.dirty {
+  background-color: var(--dirty-bg);
+  box-shadow: inset 3px 0 0 0 var(--dirty-bar);
+}
+.gd-tp-cell.focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 转置的选区高亮：实色底（这里的单元格本来就有不透明 background-color，
+   半透明叠加会盖不住 —— 与冻结列同理） */
+.gd-tp-cell.gd-tp-sel,
+.gd-tp-head-cell.gd-tp-sel {
+  background-color: var(--row-sel-solid);
+}
+.gd-tp-field.gd-tp-sel { background-color: var(--row-sel-solid); }
+
+/* ---------- V13 批量编辑条 ---------- */
+
+.gd-batch-bar {
+  position: absolute;
+  top: 26px;
+  left: 0;
+  right: 0;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  user-select: none;
+}
+
+/* 批量条打开时给 viewport 让位（否则第一行被盖住） */
+.grid:has(.gd-batch-bar) > .grid-viewport { top: 56px; }
+
+.gd-batch-label {
+  font: 500 11px/1 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.gd-batch-label strong { font-weight: 600; color: var(--accent); }
+
+.gd-batch-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font: 600 10px/1 'SF Mono', Menlo, monospace;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.gd-batch-kind:hover { background: var(--bg-alt); color: var(--text); }
+.gd-batch-kind.gd-on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+
+.gd-batch-input {
+  flex: 1 1 auto;
+  min-width: 80px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 11.5px/1 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  outline: none;
+}
+.gd-batch-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.gd-batch-input::placeholder { color: var(--text-dim); }
+
+.gd-batch-error {
+  font-size: 10px;
+  color: var(--error-bar);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+  flex-shrink: 1;
+}
+
+.gd-batch-btn {
+  height: 20px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: 500 11px/1 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.gd-batch-btn:hover { background: var(--bg-alt); }
+.gd-batch-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.gd-batch-btn.primary:hover { filter: brightness(1.06); }
+
+/* 右键菜单里的补充说明（V9 跳转目标 / V10 键位） */
+.gd-ctx-hint {
+  margin-left: auto;
+  padding-left: 8px;
+  font: 400 9.5px/1.4 'SF Mono', Menlo, monospace;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+/* ==========================================================================
+   v1.2 P1-C / P2 / S 板块新增样式（2026-09-29）
+   收口原则：所有新组件的视觉都写在这里，不许散进组件内联样式 ——
+   主题 token 是唯一权威，散出去就守不住深/浅双主题一致性。
+   ========================================================================== */
+
+/* ---------- V19 分组行条纹（按列值交替着色） ----------
+   🔴 顺序要点：必须排在 .grid-row:hover / .selected 之后的文件末尾，
+      同时**显式补 hover/selected 的覆盖规则** —— 否则同特异性下后来者胜，
+      条纹会把 hover 与选中态吃掉（用户点哪一行都看不出来）。 */
+.grid-row.grp-a { background: var(--bg); }
+.grid-row.grp-b {
+  /* 用 accent 的极淡混色而不是新引入一个色号：条纹只是"分组提示"，
+     不该跟选中态（--sel-bg）抢注意力。 */
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+}
+.grid-row.grp-a:hover,
+.grid-row.grp-b:hover { background: var(--row-hover); }
+.grid-row.grp-a.selected,
+.grid-row.grp-b.selected { background: var(--sel-bg); }
+/* 冻结列与行号列是实色底（sticky 需要不透明），不跟着条纹走会出现断层 */
+.grid-row.grp-b > .gd-rowno,
+.grid-row.grp-b .grid-cell.gd-frozen {
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+}
+.grid-row.grp-b:hover > .gd-rowno,
+.grid-row.grp-b:hover .grid-cell.gd-frozen,
+.grid-row.grp-b.selected > .gd-rowno,
+.grid-row.grp-b.selected .grid-cell.gd-frozen {
+  background: var(--row-hover);
+}
+.grid-row.grp-b.selected > .gd-rowno,
+.grid-row.grp-b.selected .grid-cell.gd-frozen { background: var(--row-sel-solid); }
+
+/* ---------- V15 JOIN 结果列头的来源表名 tooltip ----------
+   overflow: visible 只加在【有来源表】的列头上：列头默认是 hidden（长列名要省略号），
+   一放浮层就会被裁掉；无来源表的列保持原样，不影响既有观感。 */
+.grid-header-cell.gd-has-src { overflow: visible; }
+.gd-src-tip {
+  position: absolute;
+  top: 100%;
+  left: 6px;
+  z-index: 5;
+  display: none;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+  pointer-events: none; /* 纯提示，不许挡住列头点击（排序/右键菜单） */
+}
+.grid-header-cell.gd-has-src:hover .gd-src-tip { display: block; }
+
+/* ---------- V22「加载更多」/ 大表行数警告 ---------- */
+.gd-load-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-alt);
+  font-size: 11px;
+  color: var(--text);
+}
+.gd-load-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gd-load-dim { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.gd-load-warn { color: var(--warn); }
+.gd-load-btn {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.gd-load-btn:hover:not(:disabled) { background: var(--bg-alt); }
+.gd-load-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* ---------- 右键菜单勾选态（V14 显示列类型 / V19 分组着色） ---------- */
+.gd-ctx-ico.gd-on { color: var(--accent); }
+
+/* ---------- S 板块：SQL 编辑器诊断下划线（V16） ---------- */
+.cm-sql-diag-error {
+  text-decoration: underline wavy var(--error-bar);
+  text-underline-offset: 3px;
+}
+.cm-sql-diag-warning {
+  text-decoration: underline dashed var(--warn);
+  text-underline-offset: 3px;
+}
+
+/* ---------- S 板块：hover 属性表（S3 表信息 / S4 字段属性 / V16 诊断文案） ---------- */
+.cm-sql-hover { max-width: 320px; padding: 6px 8px; font-size: 11px; color: var(--text); }
+.cm-sql-hover-title { font-weight: 600; margin-bottom: 2px; }
+.cm-sql-hover-sub { color: var(--text-dim); font-size: 10px; margin-bottom: 4px; }
+.cm-sql-hover-row { display: flex; gap: 8px; }
+.cm-sql-hover-key { flex: 0 0 64px; color: var(--text-dim); }
+.cm-sql-hover-val { flex: 1 1 auto; word-break: break-all; }
+.cm-sql-hover-diag.is-error { color: var(--error-bar); }
+.cm-sql-hover-diag.is-warning { color: var(--warn); }
+
+/* ---------- V17 编辑器内联执行耗时 ----------
+   绝对定位：挂 .sql-host 右下角，不占布局高度 ——
+   占高度会让 CodeMirror 在每次执行后重算视口，出现一次可见的跳动。 */
+.sql-elapsed {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 2;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* SQL 语法高亮色板（S2）：改色只动这里，深浅两套必须同时改 */
+:root {
+  --sql-kw: #0b57d0;
+  --sql-fn: #0e7c6b;
+  --sql-str: #a5352b;
+  --sql-num: #b2500a;
+  --sql-com: #6e6e73;
+  --sql-ident: #1d1d1f;
+  --sql-op: #5a5a5f;
+  --sql-punct: #6e6e73;
+  --sql-type: #0b6e99;
+}
+[data-theme='dark'] {
+  --sql-kw: #7fb3ff;
+  --sql-fn: #56d4b8;
+  --sql-str: #ff9f95;
+  --sql-num: #ffb27a;
+  --sql-com: #8a8a8e;
+  --sql-ident: #f5f5f7;
+  --sql-op: #b0b0b6;
+  --sql-punct: #98989d;
+  --sql-type: #5eb0e0;
+}
+/* 媒体查询兜底块（JS 写 data-theme 失效时）：两处深色调色板必须保持一致 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --sql-kw: #7fb3ff;
+    --sql-fn: #56d4b8;
+    --sql-str: #ff9f95;
+    --sql-num: #ffb27a;
+    --sql-com: #8a8a8e;
+    --sql-ident: #f5f5f7;
+    --sql-op: #b0b0b6;
+    --sql-punct: #98989d;
+    --sql-type: #5eb0e0;
+  }
+}
+
+/* ---------- V20 列列表快速定位 ⌘F12 ----------
+   复用 .modal-mask + .palette 的既有观感，只收窄宽度（列清单不需要 640px）。 */
+.palette.cqf { width: 460px; }
+.cqf-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.cqf-list { max-height: 320px; overflow-y: auto; padding: 4px 0; }
+.cqf-empty { padding: 16px 12px; color: var(--text-dim); font-size: 12px; text-align: center; }
+.palette.cqf .palette-item { padding: 5px 12px; }
+.cqf-hit { color: var(--accent); font-weight: 600; }
+.cqf-mark { background: color-mix(in srgb, var(--accent) 28%, transparent); border-radius: 2px; }
+
+/* ---------- V18 已保存的筛选方案 ---------- */
+.sf-block { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.sf-title { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--text-dim); }
+.sf-title .spacer { flex: 1 1 auto; }
+.sf-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+.sf-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 4px;
+}
+.sf-name:hover { background: var(--bg-alt); }
+.sf-btn {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.sf-btn:hover { background: var(--bg-alt); color: var(--text); }
+.sf-btn.danger:hover { color: var(--error-bar); }
+.sf-empty { padding: 6px 0; color: var(--text-dim); font-size: 11px; }
+.sf-row input { flex: 1 1 auto; min-width: 0; }
