@@ -4,6 +4,7 @@ DB Studio 的全部文档资产。**日常开发只需要看 `AGENTS.md` + 本�
 
 ```
 docs/
+├── RELEASES.md     版本发布记录与门禁基线（发版后追加；GitHub Release 说明从这里摘）
 ├── product/       产品需求（PRD 与需求增量）—— 改功能前先查这里
 ├── engineering/   技术评审、Spike 实测报告、专项决策实测
 ├── research/      竞品调研与功能路线图（唯一维护版本）
@@ -22,7 +23,15 @@ docs/
 | [`product/PRD-v1.1-功能增量.md`](product/PRD-v1.1-功能增量.md) | R1 竞品对齐轮的功能增量（按 §6.1~§6.7 模块组织） | ✅ 已交付 |
 | [`product/PRD-v1.2-功能增量.md`](product/PRD-v1.2-功能增量.md) | v1.2 六大板块（P1-A/P1-B/P1-C/P2/S/W）+ 明确不做 + 红线复核清单 + 度量口径 | ✅ 已交付 |
 | [`product/REQ-v1.2-SQL编辑器增强.md`](product/REQ-v1.2-SQL编辑器增强.md) | S0~S4 需求（EARS 表述）：格式化决策门、SQL 专属高亮、表名提示、字段属性提示 | ✅ 已交付 |
-| [`product/REQ-v1.2-窗口原生控件.md`](product/REQ-v1.2-窗口原生控件.md) | W 板块需求：原生交通灯让位（含「明确不做自绘按钮」） | ✅ 已交付 |
+| [`product/REQ-v1.2-窗口原生控件.md`](product/REQ-v1.2-窗口原生控件.md) | W 板块需求：原生交通灯让位（含「明确不做自绘按钮」）。⚠️ **§一「灯已存在」的结论已被 v1.3 证伪**，见文首更正 | ⚠️ 部分作废 |
+| [`product/REQ-v1.3-缺陷清理.md`](product/REQ-v1.3-缺陷清理.md) | 2026-09-29 用户真机反馈的 6 项缺陷：逐项根因、修复方案、验收口径与状态。含**推翻 v1.2 窗口结论的探针对照表** | ✅ 已交付（**v0.5.0 已发布**；剩 2 项人工终验） |
+
+## 发布记录
+
+| 文档 | 说明 |
+|---|---|
+| [`RELEASES.md`](RELEASES.md) | **版本发布记录**：0.1.0~0.5.0 每版主题、门禁基线、分发方式、遗留项。**打包发版后追加一条**，GitHub Release 的说明从这里摘 |
+
 
 ## engineering/ — 技术决策与实测
 
@@ -53,6 +62,7 @@ docs/
 | [`devlog/DEV-PROGRESS-2026-09-27-grid-row-gutter.md`](devlog/DEV-PROGRESS-2026-09-27-grid-row-gutter.md) | 网格 C 轮：行号列与整行操作（A19~A22） |
 | [`devlog/DEV-PROGRESS-2026-09-29.md`](devlog/DEV-PROGRESS-2026-09-29.md) | v1.2 P1-A：补断层 V1~V7、构建链环境适配 |
 | [`devlog/DEV-PROGRESS-2026-09-29-p1b.md`](devlog/DEV-PROGRESS-2026-09-29-p1b.md) | v1.2 P1-B：网格编辑深度 V8~V13 |
+| [`devlog/DEV-PROGRESS-2026-09-29-v1.3-defects.md`](devlog/DEV-PROGRESS-2026-09-29-v1.3-defects.md) | **v1.3 缺陷清理**（6 项真机反馈）。含「系统 API 静默无效」的探针定位过程、假绿断言自查、门禁脚本自身写错的教训；收尾轮把缺陷 1 的「真机等 10 分钟」压成秒级自动化，并修掉「陈旧会话快照恢复出指向已删连接的标签」（跨运行污染现场）。**§九为 v0.5.0 打包全流程与 CDP 冷启动窗口** |
 
 ## design-mockups/ — 设计资产
 

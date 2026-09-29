@@ -126,6 +126,51 @@ describe('restorePlan：损坏数据返回空', () => {
   });
 });
 
+/**
+ * 🔴 快照里的 connId 可能已经不存在（连接被删 / 换机器 / 换 userData）。
+ *
+ * 现场：真机 e2e 互相污染时抓到 —— 上次退出留下的快照被恢复成一个指向已删连接的
+ * query 标签，状态栏显示「连接：未知」，执行按钮只判 `!connId` 所以照样可点，
+ * 一点必然 NOT_CONNECTED。**"能点但必然失败"比"不恢复"更糟。**
+ */
+describe('restorePlan：指向已删除连接的标签不得恢复', () => {
+  const known = (ids: string[]) => (connId: string) => ids.includes(connId);
+
+  it('query / table 两条都指向已删连接 → 全部丢弃', () => {
+    const snap = {
+      version: 1,
+      tabs: [
+        { kind: 'query', connId: 'ghost-conn', database: null, initialSql: 'SELECT 1' },
+        { kind: 'table', connId: 'ghost-conn', database: 'shop', tableName: 'users' },
+      ],
+    };
+    expect(restorePlan(snap, known(['conn-1']))).toEqual([]);
+  });
+
+  it('只丢已删的那条，其余照常恢复（别把好的一起丢掉）', () => {
+    const snap = {
+      version: 1,
+      tabs: [
+        { kind: 'table', connId: 'conn-1', database: 'shop', tableName: 'users' },
+        { kind: 'query', connId: 'ghost-conn', database: null, initialSql: 'SELECT 1' },
+      ],
+    };
+    expect(restorePlan(snap, known(['conn-1']))).toEqual([
+      { kind: 'table', connId: 'conn-1', database: 'shop', tableName: 'users' },
+    ]);
+  });
+
+  it('未绑定连接的 query 标签（connId=null）不受过滤影响 —— 它本就要靠当前上下文兜底', () => {
+    const snap = { version: 1, tabs: [{ kind: 'query', connId: null, database: null, initialSql: 'SELECT 1' }] };
+    expect(restorePlan(snap, known(['conn-1']))).toHaveLength(1);
+  });
+
+  it('不传判据 = 不过滤（既有调用方行为不变）', () => {
+    const snap = { version: 1, tabs: [{ kind: 'table', connId: 'ghost-conn', database: 'd', tableName: 't' }] };
+    expect(restorePlan(snap)).toHaveLength(1);
+  });
+});
+
 // ---- localStorage 持久化 ----
 
 function stubStorage(): Map<string, string> {

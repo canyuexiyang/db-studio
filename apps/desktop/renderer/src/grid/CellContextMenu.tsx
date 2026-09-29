@@ -63,7 +63,7 @@ export interface CellContextMenuProps {
   batchLabel: string | null;
   onClose: () => void;
   onCopyCell: () => void;
-  onCopySelection: (format: CopyFormat) => void;
+  onCopySelection: (format: CopyFormat, includeHeader?: boolean) => void;
   /** A20：复制整行为 SQL（行勾选优先，否则右键所在行；全部可见列） */
   onCopyRows: (format: 'insert' | 'update') => void;
   /** A22：快速筛选（value 为 null 时宿主映射 isNull） */
@@ -86,6 +86,17 @@ const COPY_SUB_ITEMS: { format: CopyFormat; label: string }[] = [
   { format: 'csv', label: 'CSV' },
   { format: 'json', label: 'JSON 数组' },
   { format: 'markdown', label: 'Markdown 表格' },
+];
+
+/**
+ * 「含列名」的逃生口（2026-09-29）：默认复制**只带值**（用户明确要求），
+ * 但把值粘进空表、或要给别人一份自解释的数据时仍需要表头。
+ * 只给 TSV/CSV 两种 —— JSON/Markdown/SQL 的列名本就是结构的一部分，
+ * 给一个"含列名的 JSON"是伪选项（点了跟不点一样，比不给更让人困惑）。
+ */
+const COPY_HEADER_ITEMS: { format: CopyFormat; label: string }[] = [
+  { format: 'tsv', label: 'TSV（含列名）' },
+  { format: 'csv', label: 'CSV（含列名）' },
 ];
 
 const SQL_ITEMS: { format: 'insert' | 'update'; label: string; hint: string }[] = [
@@ -241,6 +252,20 @@ export function CellContextMenu({
           role="menuitem"
           disabled={!hasSelection}
           onClick={() => onCopySelection(it.format)}
+        >
+          <span className="gd-ctx-ico" />
+          <span className="gd-ctx-label">{it.label}</span>
+        </button>
+      ))}
+      {COPY_HEADER_ITEMS.map((it) => (
+        <button
+          key={`${it.format}-header`}
+          type="button"
+          className="gd-ctx-item gd-ctx-sub"
+          role="menuitem"
+          disabled={!hasSelection}
+          title="首行输出列名（粘进空表或交付给他人时用）"
+          onClick={() => onCopySelection(it.format, true)}
         >
           <span className="gd-ctx-ico" />
           <span className="gd-ctx-label">{it.label}</span>

@@ -12,7 +12,7 @@
  *   VERIFY_SKIP_DELETE=1     收尾不删除测试连接（保留给用户肉眼复核）
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -82,7 +82,38 @@ const wsUrl = await new Promise((resolve, reject) => {
   });
 });
 
-const browser = await chromium.connectOverCDP(wsUrl, { timeout: 30_000 });
+/**
+ * 🔴 冷启动窗口：拿到 ws 地址 ≠ 握手可用。
+ *
+ * 现场（2026-09-29，0.5.0 刚覆盖安装完的**第一次**跑）：stderr 已打印 DevTools 地址、
+ * HTTP `/json/version` 也返回 200，但 `connectOverCDP` 卡在 `<ws connecting>` 直到 30s 超时；
+ * 同一份脚本、同一个包，**第二次**跑就 22/22 全绿。
+ *
+ * 也就是说「HTTP 端点 200」和「ws 握手成功」之间有一个冷启动窗口（首次启动要建
+ * userData、初始化窗口/玻璃效果，主线程没空完成握手）。不加固的后果很坏：
+ * 每次装完新包第一次验收都会红一次，而它长得完全像「新包有缺陷」。
+ *
+ * 对策：先轮询 HTTP 端点探活，再带重试地 connectOverCDP（每次失败都重新建连）。
+ */
+const httpEndpoint = wsUrl.replace(/^ws:\/\//, 'http://').replace(/\/devtools\/browser\/.*$/, '');
+let browser = null;
+for (let attempt = 1; attempt <= 3 && !browser; attempt++) {
+  // 探活：端点能答 200 才开始握手
+  for (let i = 0; i < 40; i++) {
+    const alive = await fetch(`${httpEndpoint}/json/version`)
+      .then((r) => r.ok)
+      .catch(() => false);
+    if (alive) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  try {
+    browser = await chromium.connectOverCDP(wsUrl, { timeout: 20_000 });
+  } catch (e) {
+    console.log(`[cdp] 第 ${attempt} 次连接失败：${String(e.message).split('\n')[0]}`);
+    if (attempt === 3) throw e;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
 const context = browser.contexts()[0] ?? (await browser.newContext());
 let page = context.pages()[0] ?? null;
 for (let i = 0; i < 50 && !page; i++) {
@@ -95,6 +126,30 @@ page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text(
 page.on('pageerror', (e) => consoleErrors.push(String(e)));
 // 本脚本只会遇到 window.confirm（删除确认）—— 全局统一接受，避免 once 处理器重复 accept
 page.on('dialog', (d) => void d.accept().catch(() => {}));
+
+// ---------- 0. 版本号一致性：装进 /Applications 的版本必须等于根 package.json ----------
+/**
+ * 🔴 版本号只有一个来源：根 `package.json` 的 `version`（electron-builder 把它写进
+ *    Info.plist 的 CFBundleShortVersionString）。升了版本号却没重打包 / 没覆盖安装，
+ *    界面上完全看不出来 —— 只能靠这条断言第一个红。
+ *    放在最前面：版本不对时后面的行为断言都不必看。
+ */
+try {
+  const { execFileSync } = await import('node:child_process');
+  const installed = execFileSync(
+    'defaults',
+    ['read', join(APP, 'Contents/Info.plist'), 'CFBundleShortVersionString'],
+    { encoding: 'utf8' },
+  ).trim();
+  const declared = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+  ok(
+    '🔴 已安装版本 = package.json 版本（版本号升级已进包）',
+    installed === declared,
+    `installed=${installed} declared=${declared}`,
+  );
+} catch (e) {
+  ok('🔴 已安装版本 = package.json 版本（版本号升级已进包）', false, String(e?.message ?? e));
+}
 
 try {
   await page.waitForLoadState('domcontentloaded');

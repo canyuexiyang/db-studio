@@ -157,6 +157,15 @@ export interface DataGridProps {
   onCellEdited: (row: number, col: number, value: string | null, valueKind?: 'literal' | 'sql-expr') => void;
   onCellActivated?: (row: number, col: number) => void;
   /**
+   * 缺陷 5：右键「查看完整值」→ 宿主弹出 CellValueModal。
+   *
+   * 🔴 此前这个动作只是调 onCellActivated（把值送进右侧详情面板的「单元格完整值」块）。
+   *    那块被换成「表结构语句」之后，若还走 onCellActivated，用户点「查看完整值」
+   *    将**什么也不会发生** —— 一个点了没反应的菜单项比没有这个菜单项更糟。
+   *    所以另开一条回调：宿主接了才画菜单项，没接就退化为原来的 onCellActivated。
+   */
+  onInspectCell?: (row: number, col: number) => void;
+  /**
    * A2：本格脏改动被清除（⌘0 幂等清除 / 右键「清除本格改动」）后回调，
    * 宿主用它刷新 dirtyCount 角标。设 NULL 本身走 onCellEdited(row, col, null)。
    */
@@ -312,6 +321,7 @@ export function DataGrid(props: DataGridProps) {
     onDeleteRows,
     onCellEdited,
     onCellActivated,
+    onInspectCell,
     onCellCleared,
     onDuplicateRow,
     database,
@@ -1022,9 +1032,12 @@ export function DataGrid(props: DataGridProps) {
    * 就是明确要复制那几整行。单次上限 COPY_CELL_LIMIT（2 万格）防 ⌘A
    * 十万行全量解码卡死渲染进程。
    * INSERT/UPDATE 格式需要 database/tableName 限定名，缺省返回空串 = 不可复制。
+   *
+   * @param includeHeader TSV/CSV 是否在首行输出列名。**默认 false**（2026-09-29
+   *        用户反馈：复制只要值）。⌘C 走默认（纯值），右键菜单另给「含列名」两项。
    */
   const copySelection = useCallback(
-    (format: CopyFormat): boolean => {
+    (format: CopyFormat, includeHeader = false): boolean => {
       const res = rowsFromSelection({
         ranges: selection.ranges,
         focusRow: selection.focus.row,
@@ -1043,6 +1056,7 @@ export function DataGrid(props: DataGridProps) {
         database,
         table: tableName,
         locateColumns,
+        includeHeader,
       });
       if (!text) return false;
       void navigator.clipboard?.writeText(text).catch(() => undefined);
@@ -2290,8 +2304,8 @@ export function DataGrid(props: DataGridProps) {
             void navigator.clipboard?.writeText(cellToDisplay(v)).catch(() => undefined);
             closeCtxAndFocus();
           }}
-          onCopySelection={(format) => {
-            copySelection(format);
+          onCopySelection={(format, includeHeader) => {
+            copySelection(format, includeHeader);
             closeCtxAndFocus();
           }}
           onCopyRows={(format) => {
@@ -2331,7 +2345,10 @@ export function DataGrid(props: DataGridProps) {
             closeCtxAndFocus();
           }}
           onViewFullValue={() => {
-            onCellActivated?.(ctxMenu.row, ctxMenu.col);
+            // 缺陷 5：宿主接了弹窗回调就走弹窗；没接则退化为激活单元格
+            // （详情面板旧版会显示完整值 —— 保持向后兼容，不出现"点了没反应"）
+            if (onInspectCell) onInspectCell(ctxMenu.row, ctxMenu.col);
+            else onCellActivated?.(ctxMenu.row, ctxMenu.col);
             closeCtxAndFocus();
           }}
         />

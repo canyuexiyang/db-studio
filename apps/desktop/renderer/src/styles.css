@@ -824,11 +824,13 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
   /**
    * 🔴 W1：左侧 78px 是 macOS 原生交通灯的安全区，不许放任何内容。
    *
-   * 真机实测（2026-09-29，dist 产物 + Electron 44.x）：
-   *   setWindowButtonPosition({x:16,y:14}) → 三个按钮占 x ∈ [10, 62]，直径 12px。
+   * 真机实测（2026-09-29 缺陷 6 修复后，dist 产物 + Electron 44.x +
+   * `titleBarStyle:'hidden'` + `trafficLightPosition:{x:16,y:14}`）：
+   *   三灯直径 14px、中心 css (20,20.5) / (43,20.5) / (66,20.5) → 占 x ∈ [13, 73]。
+   *   ⚠️ 旧口径（setWindowButtonPosition 时代）记的是「x ∈ [10,62]、直径 12px」——
+   *   换构造参数后灯的几何变了，安全区必须按新实测收口（78 = 73 右缘 + 5 呼吸）。
    *   W-P0 命中测试确认：这个矩形下面压着的是 **.sidebar-head 的「连接」标题**
    *   （不是此前推测的工具栏 —— 工具栏在 x=240 之后，压根不重叠）。
-   *   78 = 62（按钮右缘）+ 16（与首个内容的呼吸间距）。
    *
    * 全屏态刻意**不**回收这段留白：全屏下 macOS 把交通灯叠在内容区上方，
    * 回收了就会重新出现标题被压住的问题。宁可空 78px 也不要文字被盖。
@@ -844,13 +846,21 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
  * 标成 drag，按钮区会被拖拽吞掉 hover —— macOS 的「hover 显示 ✕ ─ ＋ 符号」
  * 就失效了。这一层显式声明 no-drag，把原生按钮的鼠标事件让回去。
  * 纯透明、不参与布局（absolute），不影响任何可见观感。
+ *
+ * 🔴 宽度 78px（2026-09-29 缺陷 6 修复后重新实测）：
+ *    改用 `trafficLightPosition` 构造参数后，灯的几何与旧 `setWindowButtonPosition`
+ *    口径**不同** —— 真机像素测量：三灯直径 14px、中心 css y=20.5、
+ *    中心 x 分别 20 / 43 / 66 → 整体占据 css x ∈ [13, 73]。
+ *    旧口径记的是「x ∈ [10,62]、直径 12px」，若沿用 72px 宽的安全区，
+ *    绿灯右缘会露出 1px 在 no-drag 层之外 —— 恰好是最难发现的边界漏让位。
+ *    78px 与 .sidebar-head 的 padding-left 同值，一处口径两处一致。
  */
 .traffic-light-safe {
   position: absolute;
   left: 0;
   top: 0;
-  width: 72px;
-  height: 30px;
+  width: 78px;
+  height: 34px;
   -webkit-app-region: no-drag;
   pointer-events: auto;
 }
@@ -1297,21 +1307,109 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .detail-kv dt { color: var(--text-dim); }
 .detail-kv dd { margin: 0; word-break: break-all; }
 
-.detail-cols { max-height: 300px; overflow: auto; }
+/**
+ * 字段列表的高度分配（缺陷 5 改版后需要重新配平）。
+ *
+ * 三块内容抢同一个 280px 宽的竖向空间：表信息（固定 ~150px）、字段（每字段
+ * 现在占两行 ≈30px）、表结构语句（要能读到完整 DDL）。
+ *
+ * 做法：字段区 `flex: 0 1 auto` + max-height 上限 —— 字段少时自然收缩（不浪费
+ * 空间），字段多时最多占 40%，剩下的全部留给 DDL（`flex: 1 1 auto`）。
+ * 写死 300px 的老做法在 36 字段的表上会把 DDL 区挤到只剩一两行。
+ */
+.detail-section.detail-cols-section { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.detail-cols { flex: 1 1 auto; min-height: 0; max-height: 40vh; overflow: auto; }
 
+/**
+ * 字段行（缺陷 5 改版）：两行结构。
+ * 第一行 = 名称 + 约束徽标；第二行 = 类型 + 注释。
+ *
+ * 🔴 注释必须常驻显示，不能塞回 title 悬浮 —— 用户反馈「字段信息显示内容不够」，
+ *    悬浮提示等于没有（要逐个 hover，且截图/录屏里根本看不见）。
+ */
 .detail-col {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 3px 8px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   cursor: default;
+  min-width: 0; /* 让子元素的 ellipsis 生效（flex 项默认 min-width:auto 会撑破容器） */
 }
 
 .detail-col:hover { background: var(--bg); }
-.detail-col .name { font-weight: 600; }
-.detail-col .type { color: var(--text-dim); font-size: 10px; }
-.detail-col .flags { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+
+.dc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.detail-col .name {
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.dc-head .flags {
+  margin-left: auto;
+  display: flex;
+  gap: 3px;
+  flex: 0 0 auto; /* 徽标永不收缩：挤掉徽标比挤掉列名更难读 */
+}
+
+/**
+ * 约束徽标：沿用 PK/UQ/AI/NOT NULL 语义，但改成小色块（原来是 `PK · UQ · NULL`
+ * 一串灰字，扫读时分不清哪个是哪个）。字体 9px + 圆角 3px，与网格列头的
+ * .pk-badge 同族但更小（侧栏宽度只有 280px）。
+ */
+.dc-tag {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+/* 主键：蓝（与网格 .pk-badge 同色系，用户已建立的认知） */
+.dc-tag.pk { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+/* 唯一键：绿 */
+.dc-tag.uq { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+/* 自增：黄 */
+.dc-tag.ai { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+/* NOT NULL：中性灰底（它是"约束"不是"警告"，不该抢视觉） */
+.dc-tag.nn { background: var(--bg-alt); color: var(--text-dim); }
+
+.dc-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.detail-col .type {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-family: "SF Mono", Menlo, ui-monospace, monospace;
+  flex: 0 0 auto;
+}
+
+/* 注释：主体信息，占满剩余宽度并 ellipsis（全文进 title 悬浮） */
+.dc-comment {
+  color: var(--text);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  opacity: 0.78;
+}
 
 .detail-value {
   padding: 6px 8px;
@@ -1320,6 +1418,109 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
   word-break: break-all;
   max-height: 260px;
   overflow: auto;
+}
+
+/* ---------- 详情面板：表结构语句（缺陷 5 第三块） ---------- */
+
+/**
+ * h4 里带复制按钮：标题行改成 flex，按钮右靠。
+ * 🔴 只作用于 .detail-ddl-section 的 h4，不动其他区块标题（.detail-section > h4
+ *    是共享选择器，直接改会把「表信息」「字段」的标题也一起变成 flex）。
+ */
+.detail-ddl-section > h4 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.detail-ddl-section > h4 .spacer { flex: 1 1 auto; }
+
+.detail-ddl-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.detail-ddl-copy:hover:not(:disabled) { background: var(--bg-alt); color: var(--text); }
+.detail-ddl-copy:disabled { opacity: 0.4; cursor: default; }
+.detail-ddl-copy:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+
+/* DDL 正文：等宽 + 不换行横滚（SQL 缩进结构靠换行表达，wrap 会毁掉可读性） */
+pre.detail-ddl {
+  margin: 0;
+  padding: 6px 8px 10px;
+  flex: 1 1 auto;
+  /*
+   * 🔴 min-height 是必须的，不能用 flex 撑：`.detail-panel` 自身是
+   * `overflow-y: auto`（整列可滚），父容器的高度由内容决定 —— 在这种父级里
+   * `flex: 1 1 auto` 的子元素**不会被拉伸**（没有确定高度可分）。
+   * 结果就是 DDL 区高度塌成一行。给一个显式下限，配合整列滚动，
+   * 用户既能读到完整语句，窄窗口下也不会出现"区块高度为 0"的塌陷。
+   */
+  min-height: 180px;
+  max-height: 46vh;
+  overflow: auto;
+  font: 10.5px/1.55 "SF Mono", Menlo, ui-monospace, monospace;
+  white-space: pre;
+  color: var(--text);
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  tab-size: 2;
+}
+
+/* 空态/加载态/失败原因（三态共用一套排版，避免视觉跳动） */
+.detail-empty {
+  padding: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ---------- 单元格完整值弹窗（缺陷 5 配套，能力从详情面板搬迁而来） ---------- */
+
+.modal.cell-modal { width: min(720px, 92vw); }
+
+.cell-modal .body { padding: 10px 14px 14px; }
+
+/* header 里同时放列名与定位信息：定位信息弱化成 dim，不与主标题抢 */
+.cell-modal-loc {
+  margin-left: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.cell-modal-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.cell-modal-x:hover { background: var(--bg-alt); color: var(--text); }
+.cell-modal-x:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+
+/* 弹窗里的值区比侧栏宽得多，放宽 max-height 让长文本一次看够 */
+.cell-modal-value {
+  max-height: 56vh;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
 }
 
 /* ---------- 筛选器（§6.3.3） ---------- */
@@ -1355,48 +1556,304 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
   flex: 1 1 auto;
 }
 
-.filter-modal .body { max-height: 60vh; }
+.filter-modal { width: min(680px, 92vw); }
+.filter-modal .body { max-height: 64vh; }
 
 .filter-group {
   margin-bottom: 10px;
-  padding: 8px;
+  padding: 8px 8px 6px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
+  background: var(--bg-alt);
 }
+.filter-group:last-of-type { margin-bottom: 8px; }
 
+/**
+ * 🔴 缺陷 4 的核心：条件行用 Grid 固定列轨，取代旧的 flex + wrap。
+ *
+ * 旧写法 `.filter-cond { display:flex; flex-wrap:wrap }` 的后果是：
+ * 每行的控件宽度由内容决定（值框 flex:1 1 110px 会随窗口宽度伸缩），
+ * 且 wrap 之后第二行的控件从最左边重新开始 —— 多条件时纵向完全不对齐，
+ * 用户视线要左右扫才能对上「哪个框配哪个字段」，这就是"布局很乱"的来源。
+ *
+ * 现在：六条固定列轨，所有条件行的同类控件严格纵向对齐，视线只需上下扫。
+ * 第 5 轨（状态）平时空着，只有「未填完」时出现；第 6 轨是删除。
+ * 🔴 状态列与删除列都用 grid-column 显式钉位 —— 否则某行没有「未填完」标记时，
+ *    删除按钮会被 auto-placement 顺移到第 5 轨，导致与有标记的行错位。
+ * `align-items:center` 保证不同高度的控件（select / input / chip）基线一致。
+ */
 .filter-cond {
-  display: flex;
+  display: grid;
+  grid-template-columns: 58px minmax(96px, 1fr) 106px minmax(96px, 1.5fr) 40px 24px;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin-bottom: 5px;
-  flex-wrap: wrap;
 }
 
-.filter-cond select,
-.filter-cond input {
-  padding: 2px 6px;
+/* 列头与条件行共用同一套列轨 —— 表头才能与下面的控件对齐 */
+.fb-head {
+  display: grid;
+  grid-template-columns: 58px minmax(96px, 1fr) 106px minmax(96px, 1.5fr) 40px 24px;
+  gap: 6px;
+  padding: 0 1px 4px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.fb-head-cell {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* 「未填完」标记占的是值列右侧的余量，这里给它留出视觉位置 */
+.fb-head-logic { visibility: hidden; }
+.fb-head-del { visibility: hidden; }
+
+/* 未填完的行：整行极淡的暖色底，扫一眼就能找到还差哪条（不用读小字） */
+.filter-cond.incomplete {
+  background: color-mix(in srgb, var(--warn) 5%, transparent);
+  border-radius: var(--r-sm);
+  padding: 2px 3px;
+  margin-left: -3px;
+  margin-right: -3px;
+}
+
+/* ---- 控件统一外观（缺陷 4「按钮很丑」：去掉浏览器默认样式）---- */
+.fb-select,
+.fb-input {
+  height: 26px;
+  padding: 0 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: var(--bg);
   color: var(--text);
   font: inherit;
+  font-size: 12px;
+  min-width: 0; /* grid 项必须允许收缩，否则会撑破列轨 */
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.fb-select { cursor: pointer; }
+.fb-select:hover:not(:disabled),
+.fb-input:hover:not(:disabled) { border-color: var(--text-dim); }
+.fb-select:focus-visible,
+.fb-input:focus-visible,
+.fb-select:focus,
+.fb-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.filter-cond .col { min-width: 130px; }
-.filter-cond .op { min-width: 96px; }
-.filter-cond input { flex: 1 1 110px; min-width: 80px; }
+/* ENUM 多选：高度放开，选中项用主题色 */
+.fb-multi { height: auto; min-height: 52px; padding: 3px; }
+.fb-multi option { padding: 1px 5px; border-radius: 3px; }
 
-.filter-cond .del {
-  padding: 1px 6px;
+/* 值格：内部 flex（区间的「起始 至 结束」要在同一格里排开） */
+.fb-value {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.fb-value .fb-input { flex: 1 1 0; }
+.fb-range-sep { color: var(--text-dim); font-size: 11px; flex: 0 0 auto; }
+.fb-value-none { color: var(--text-dim); font-size: 11px; font-style: normal; }
+
+/* ---- AND/OR chip（缺陷 4：一次点击切换，取代三步的 select）---- */
+.fb-logic {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  padding: 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-alt);
+}
+.fb-logic button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 22px;
+  padding: 0 5px;
   border: none;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-dim);
-  cursor: default;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.fb-logic button:hover:not(.on) { color: var(--text); }
+/* 选中态：与 .gd-tool-btn.gd-on 同款淡蓝底 —— 全项目「开关态」的统一语言 */
+.fb-logic button.on {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+.fb-logic button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+
+/* 第一条条件的占位：没有前置逻辑，但要撑住网格第一轨 */
+.fb-logic-pad { display: block; height: 22px; }
+
+/* ---- 删除按钮：降噪（hover 行时加深）---- */
+.fb-del {
+  grid-column: 6; /* 🔴 显式钉位，见 .filter-cond 注释 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.filter-cond:hover .fb-del { opacity: 1; }
+.fb-del:hover { background: color-mix(in srgb, var(--error-bar) 12%, transparent); color: var(--error-bar); }
+.fb-del:focus-visible { outline: none; opacity: 1; box-shadow: 0 0 0 2px var(--focus-ring); }
+
+/* 未填完标记：暖色小字，钉在第 5 轨（状态列），右对齐不挤值框 */
+.fb-warn {
+  grid-column: 5;
+  justify-self: end;
+  font-size: 10px;
+  color: var(--warn);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
-.filter-cond .del:hover { color: var(--error-bar); }
-.filter-logic { min-width: 54px; }
-.filter-incomplete { color: var(--text-dim); font-size: 10px; }
+/* ---- 组头 / 组间连接 ---- */
+.fb-group-join {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 7px;
+}
+.fb-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.fb-group-label { font-size: 11px; color: var(--text-dim); }
+.fb-group-index {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+
+/* 空组：给一句引导 + 就地按钮，而不是只留一个孤零零的「+ 条件」 */
+.fb-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* 组内「添加条件」：整宽虚线按钮，点击区大且位置固定 */
+.fb-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 3px;
+  padding: 5px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.fb-add:hover {
+  background: var(--bg);
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+.fb-add:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+
+/* ---- 底部动作行与 WHERE 预览 ---- */
+.fb-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.fb-actions .spacer { flex: 1 1 auto; }
+
+/**
+ * 按钮统一（缺陷 4「按钮很丑」）：12px + 灰底 hover 浮起 + focus ring，
+ * 与 .toolbar button / .gd-tool-btn 同一族。`.sm` 是密集区（方案列表）的小号变体。
+ */
+.fb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.fb-btn:hover:not(:disabled) { background: var(--bg-alt); }
+.fb-btn:disabled { opacity: 0.4; cursor: default; }
+.fb-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+.fb-btn.sm { padding: 2px 7px; font-size: 11px; }
+.fb-btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error-bar) 10%, transparent);
+  border-color: color-mix(in srgb, var(--error-bar) 40%, transparent);
+  color: var(--error-bar);
+}
+
+.fb-preview {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  overflow: hidden;
+}
+.fb-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.fb-preview-count { margin-left: auto; font-weight: 400; }
+.filter-preview {
+  margin: 0;
+  padding: 7px 8px;
+  max-height: 96px;
+  overflow: auto;
+  font: 11px/1.5 "SF Mono", Menlo, ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
 
 /* ---------- 连接编辑器（§6.1） ----------
    注意：这个弹窗与 SQL 编辑器一样走 lazy()，外壳样式必须先在首屏就位，
@@ -4071,18 +4528,6 @@ button.es-card:hover {
   padding: 2px 4px;
 }
 .sf-name:hover { background: var(--bg-alt); }
-.sf-btn {
-  flex: 0 0 auto;
-  padding: 1px 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  background: var(--bg);
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 10px;
-  cursor: pointer;
-}
-.sf-btn:hover { background: var(--bg-alt); color: var(--text); }
-.sf-btn.danger:hover { color: var(--error-bar); }
+/* 缺陷 4：方案行的操作按钮统一用 .fb-btn.sm（见「筛选器」段），不再单列 .sf-btn */
 .sf-empty { padding: 6px 0; color: var(--text-dim); font-size: 11px; }
 .sf-row input { flex: 1 1 auto; min-width: 0; }

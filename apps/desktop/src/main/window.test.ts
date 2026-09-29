@@ -12,6 +12,9 @@ vi.mock('electron', () => ({
   BrowserWindow: class {
     setWindowButtonPosition() {}
     setWindowButtonVisibility() {}
+    isClosable() { return true; }
+    isMinimizable() { return true; }
+    isFullScreenable() { return true; }
     loadFile() { return Promise.resolve(); }
     loadURL() { return Promise.resolve(); }
   },
@@ -124,6 +127,68 @@ describe('GlassProvider 降级路径（强制要求，绝不能崩）', () => {
     mockEnv('darwin', '27.0.0');
     const w = await import('./window.js');
     await expect(w.applyGlass(undefined as any)).resolves.toBeDefined();
+  });
+});
+
+describe('applyTrafficLights（缺陷 6：交通灯必须真实可见，不接受静默无效）', () => {
+  it('setWindowButtonVisibility 存在时调用成功，三态能力如实回报', async () => {
+    mockEnv('darwin', '27.0.0');
+    const { applyTrafficLights } = await import('./window.js');
+    const calls: string[] = [];
+    const fakeWin = {
+      setWindowButtonVisibility(v: boolean) { calls.push(`vis:${v}`); },
+      isClosable: () => true,
+      isMinimizable: () => true,
+      isFullScreenable: () => true,
+    } as any;
+    const st = applyTrafficLights(fakeWin);
+    expect(calls).toEqual(['vis:true']);
+    expect(st.visibilityApplied).toBe(true);
+    expect(st.closable).toBe(true);
+    expect(st.minimizable).toBe(true);
+    expect(st.fullscreenable).toBe(true);
+  });
+
+  it('API 缺失（非 darwin / Electron 变体）→ visibilityApplied=false，不抛异常', async () => {
+    mockEnv('darwin', '27.0.0');
+    const { applyTrafficLights } = await import('./window.js');
+    const st = applyTrafficLights({} as any);
+    expect(st.visibilityApplied).toBe(false);
+    // 能力探测失败时回退 true（宁可报乐观也不让状态误报成"窗口关不掉"）
+    expect(st.closable).toBe(true);
+  });
+
+  it('setWindowButtonVisibility 抛异常 → 静默降级，不冒泡', async () => {
+    mockEnv('darwin', '27.0.0');
+    const { applyTrafficLights } = await import('./window.js');
+    const st = applyTrafficLights({
+      setWindowButtonVisibility() { throw new Error('boom'); },
+      isClosable: () => { throw new Error('boom2'); },
+    } as any);
+    expect(st.visibilityApplied).toBe(false);
+    expect(st.closable).toBe(true);
+  });
+
+  it('TRAFFIC_LIGHT_POSITION 与渲染层安全区口径一致（真机实测：三灯右缘 76 ≤ 78）', async () => {
+    const { TRAFFIC_LIGHT_POSITION, TRAFFIC_LIGHT_MEASURED } = await import('./window.js');
+    expect(TRAFFIC_LIGHT_POSITION).toEqual({ x: 16, y: 14 });
+    /**
+     * 🔴 几何数字来自 2026-09-29 真机像素测量（`npm run verify:traffic-lights`，
+     *    dist 产物 + screencapture + Chromium 解码连通域分析）：
+     *    三灯中心 css (23,21)/(46,21)/(69,21)，直径 14px、间距 23px → 占 x ∈ [16,76]。
+     *
+     * ⚠️ 不要再用旧口径（setWindowButtonPosition 时代的「直径12、间距8、x∈[10,62]」）
+     *    做几何推算：换 trafficLightPosition 构造参数后 macOS 的实际渲染变了，
+     *    照旧数字算会让安全区少 14px，绿灯右缘落进 drag 区（边界漏让位）。
+     *
+     * 这条断言的价值：渲染层 .traffic-light-safe 宽度是 CSS 里的字面量，
+     * 主进程这边的常量是 TS 里的字面量 —— 两处必然漂移。断言把关系钉住：
+     * 实测右缘 ≤ 安全区宽度，且安全区与渲染层当前值一致。
+     */
+    expect(TRAFFIC_LIGHT_MEASURED.right).toBeLessThanOrEqual(TRAFFIC_LIGHT_MEASURED.safeAreaMinWidth);
+    // 几何自洽：右缘 = 左缘 + 2×间距 + 直径
+    expect(TRAFFIC_LIGHT_MEASURED.left + 2 * TRAFFIC_LIGHT_MEASURED.pitch + TRAFFIC_LIGHT_MEASURED.diameter)
+      .toBe(TRAFFIC_LIGHT_MEASURED.right);
   });
 });
 

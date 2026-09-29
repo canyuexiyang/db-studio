@@ -64,20 +64,34 @@ describe('复制序列化', () => {
     [3, null, ''],
   ];
 
-  it('TSV：含制表符的字段被转义，可直接粘进 Excel', () => {
+  it('TSV 默认不带列名表头（2026-09-29 用户反馈：只要值），含制表符字段仍被转义', () => {
     const t = serializeCopy({ format: 'tsv', columns, rows });
-    expect(t.split('\n')[0]).toBe('id\tname\tnote');
-    expect(t.split('\n')[2]).toBe('2\t"含\t制表符"\tb,c');
+    // 首行就是第一条数据，不是列名
+    expect(t.split('\n')[0]).toBe('1\t张三\ta');
+    expect(t.split('\n')[1]).toBe('2\t"含\t制表符"\tb,c');
   });
 
-  it('CSV：含逗号的字段加引号', () => {
+  it('TSV includeHeader:true → 首行是列名（保留带表头的能力）', () => {
+    const t = serializeCopy({ format: 'tsv', columns, rows, includeHeader: true });
+    expect(t.split('\n')[0]).toBe('id\tname\tnote');
+    expect(t.split('\n')[1]).toBe('1\t张三\ta');
+  });
+
+  it('CSV：含逗号的字段加引号（默认无表头，行下标从数据起算）', () => {
     const t = serializeCopy({ format: 'csv', columns, rows });
+    expect(t.split('\n')[1]).toBe('2,含\t制表符,"b,c"');
+  });
+
+  it('CSV includeHeader:true → 首行列名，数据顺延', () => {
+    const t = serializeCopy({ format: 'csv', columns, rows, includeHeader: true });
+    expect(t.split('\n')[0]).toBe('id,name,note');
     expect(t.split('\n')[2]).toBe('2,含\t制表符,"b,c"');
   });
 
   it('引号内部翻倍', () => {
     const t = serializeCopy({ format: 'csv', columns: ['a'], rows: [['他说"你好"']] });
-    expect(t.split('\n')[1]).toBe('"他说""你好"""');
+    // 默认无表头：唯一一行就是数据
+    expect(t.split('\n')[0]).toBe('"他说""你好"""');
   });
 
   it('JSON：值为 null 序列化为 null', () => {
@@ -132,7 +146,7 @@ describe('复制序列化', () => {
 
   it('行长度不足按 NULL 补齐，不抛异常', () => {
     const t = serializeCopy({ format: 'tsv', columns: ['a', 'b', 'c'], rows: [[1]] });
-    expect(t.split('\n')[1]).toBe('1\tNULL\tNULL');
+    expect(t.split('\n')[0]).toBe('1\tNULL\tNULL');
   });
 
   it('六种格式齐备（A17 加入 markdown）', () => {

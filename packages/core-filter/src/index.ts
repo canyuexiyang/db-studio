@@ -208,6 +208,24 @@ export function conditionCount(model: FilterModel): number {
   return (model?.groups ?? []).reduce((n, g) => n + (g.conditions?.length ?? 0), 0);
 }
 
+/**
+ * 🔴 **会真正进 WHERE 的条件数** —— 与 `conditionCount` 刻意分开。
+ *
+ * 为什么必须分开：`conditionCount` 数的是**所有**条件（含未选字段、未填值的半截行），
+ * 而 `buildWhere()` 的生效判据是 `isConditionComplete(c)`（内部已含 `!c.column → false`）。
+ * 用前者去显示「筛选 (N) 条」会**虚报** —— 用户加了一行还没填完，工具栏就宣称
+ * 已有筛选，而查询结果一行没变。这类"UI 说的和数据不一致"最难自查。
+ *
+ * ⚠️ 改 `buildWhere` 的跳过判据时，**必须同步改这里** —— 两处口径漂移的表现是
+ *    徽标数与 WHERE 预览里的条件数对不上（单测 `生效条件数与 buildWhere 一致` 会红）。
+ */
+export function effectiveConditionCount(model: FilterModel): number {
+  return (model?.groups ?? []).reduce(
+    (n, g) => n + (g.conditions ?? []).filter((c) => isConditionComplete(c)).length,
+    0,
+  );
+}
+
 /** 给新条件/新分组发 id（避免 UI 自己造 key 造重复） */
 export function nextId(prefix: string, existing: string[]): string {
   const set = new Set(existing);

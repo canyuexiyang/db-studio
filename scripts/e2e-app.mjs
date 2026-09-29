@@ -169,7 +169,20 @@ delete childEnv.ELECTRON_RUN_AS_NODE;
  * 「IPC 接线 + 列式载荷跨进程 + 只读拦截」，不依赖沙箱，可以接受。
  * 真机人工验收（不跑本脚本时）仍是带沙箱的，两者不冲突。
  */
-const LAUNCH_ARGS = ['--no-sandbox'];
+/**
+ * 🔴 `--user-data-dir` 必须一起给，否则两次运行之间会互相污染。
+ *
+ * 主进程侧的文件（connections.json / schema 缓存 / 历史库）已经被
+ * `DB_STUDIO_E2E_USER_DATA` 接管，但**渲染层的 localStorage 不适用那个变量** ——
+ * 它走 Chromium 的 user data 目录，也就是真实 userData。
+ * 于是上一次跑留下的 `dbstudio.session.v1`（会话快照）会在下一次跑时被恢复出来：
+ * 一个指向**已被删掉的连接**的 query 标签 → 状态栏显示「连接：未知」、
+ * 执行按钮变成可点（因为它只判 `!connId`）→ 「无连接时执行按钮被禁用」这条断言
+ * 上一轮还是绿的、下一轮就红了。**同一份代码、同一个脚本，结果靠运行历史决定。**
+ *
+ * 隔离之后每次跑都是真正的冷启动，断言才有基线可言。
+ */
+const LAUNCH_ARGS = ['--no-sandbox', `--user-data-dir=${userData}`];
 
 const electronApp = await electron.launch({
   executablePath: electronPath,
@@ -466,26 +479,53 @@ try {
            * 预热已在首屏后跑完），编辑器可见时间只作参考记录。
            */
           const t0 = performance.now();
-          const obs = new MutationObserver(() => {
-            if (document.querySelector('.cm-editor')) {
-              obs.disconnect();
-              resolve({ visibleMs: +(performance.now() - t0).toFixed(1), warmed });
-            }
-          });
-          obs.observe(document.body, { childList: true, subtree: true });
+
+          /**
+           * 🔴 这里刻意**不用 MutationObserver**，改用轮询「存在性」。
+           *
+           * 旧实现是 observe 一个 `.cm-editor` 的新增 mutation —— 它有个致命竞态：
+           * MutationObserver 只在**注册之后**发生的 DOM 变更才回调。若 `.cm-editor`
+           * 在本段执行前就已挂载（会话恢复出 query 标签、或上一段交互已建过编辑器），
+           * 点击「查询」只是 `ws.activate()` 切到既有标签，**不会新增节点** →
+           * observer 永不回调 → 20s 后报 `visibleMs: -1`，但紧随其后的
+           * `waitForSelector('.cm-editor')` 又立刻通过（元素一直在）。
+           * 这个「自相矛盾」的组合就是竞态的铁证（2026-09-29 缺陷清理时抓到）。
+           *
+           * 轮询存在性是确定性的：无论编辑器是「点击后新挂载」还是「本就在」，
+           * 只要它渲染出来了就 resolve；真没渲染出来则照样超时失败（不假绿）。
+           * `alreadyThere` 字段如实记录点击前是否已存在，供判读时区分两种情形。
+           */
+          const alreadyThere = !!document.querySelector('.cm-editor');
+          const tabCountBefore = document.querySelectorAll('.ws-tab').length;
           // P0-4 多标签改造后不再有 .mode-switch（数据/查询二态切换）：
           // 查询入口 = 工具栏「查询 ⌘T」按钮（新建 query tab）
           const btn =
             document.querySelector('[data-testid="btn-new-query"]') ??
             [...document.querySelectorAll('.toolbar button')].find((b) => b.textContent.includes('查询'));
           btn?.click();
+          const poll = setInterval(() => {
+            if (document.querySelector('.cm-editor')) {
+              clearInterval(poll);
+              resolve({
+                visibleMs: +(performance.now() - t0).toFixed(1),
+                warmed,
+                alreadyThere,
+                tabCountBefore,
+                tabCountAfter: document.querySelectorAll('.ws-tab').length,
+              });
+            }
+          }, 16);
           setTimeout(() => {
-            obs.disconnect();
-            resolve({ visibleMs: -1, warmed });
+            clearInterval(poll);
+            resolve({ visibleMs: -1, warmed, alreadyThere, tabCountBefore, tabCountAfter: -1 });
           }, 20_000);
         }),
     );
-    ok('编辑器从生产产物加载并渲染', inPage.visibleMs >= 0, `点击 → 编辑器可见 ${inPage.visibleMs}ms`);
+    ok(
+      '编辑器从生产产物加载并渲染',
+      inPage.visibleMs >= 0,
+      `点击 → 编辑器可见 ${inPage.visibleMs}ms（点击前已存在=${inPage.alreadyThere}，标签 ${inPage.tabCountBefore}→${inPage.tabCountAfter}）`,
+    );
     ok('预热在点击前已完成（E3 优化生效）', inPage.warmed === true, `预热=${inPage.warmed}`);
 
     /**
@@ -545,13 +585,18 @@ try {
 
   // ---------- 9.5 W 板块：窗口左上角原生控件 ----------
   /**
-   * 🔴 这一组断言的坐标口径来自 W-P0 真机实测（2026-09-29，dist 产物）：
-   *   交通灯 setWindowButtonPosition({x:16,y:14}) → 占 x ∈ [10,62]、直径 12px。
+   * 🔴 这一组断言的坐标口径来自 W-P0 真机实测（2026-09-29，dist 产物，换
+   *   `titleBarStyle:'hidden'` 之后重新量过）：
+   *   交通灯 `trafficLightPosition({x:16,y:14})` → 直径 **14**、间距 **23**、占 x ∈ **[16,76]**
+   *   → 安全区必须 **78px**（常量 `TRAFFIC_LIGHT_MEASURED`，主进程 TS、渲染层 CSS、
+   *      这里的断言三处共用同一份数字，不许各自写死）。
+   *   ⚠️ 旧口径是 直径 12 / x∈[10,62] / 安全区 72px —— 那是 `setWindowButtonPosition`
+   *      时代的几何，换 API 后已作废（沿用会留 4px 灯体在 drag 区里）。
    *
    * 特别记一笔：早前的勘察结论写的是「工具栏首按钮从 x=10 开始、与交通灯重叠」，
    *   **真机测量证明它是错的** —— 工具栏在侧栏（240px）之后，首按钮实际在 x=250，
    *   压根不重叠；真正被交通灯压住的是 .sidebar-head 的「连接」标题（x=8 起）。
-   *   若照错误结论写断言（断言工具栏 ≥72px），那是个**不改代码也恒真**的假绿断言。
+   *   若照错误结论写断言（断言工具栏 ≥78px），那是个**不改代码也恒真**的假绿断言。
    */
   console.log('\n【9.5】W 板块：交通灯安全区与关闭拦截');
   const wLayout = await page.evaluate(() => {
@@ -566,18 +611,18 @@ try {
     return {
       titleLeft: title ? title.getBoundingClientRect().left : -1,
       safeRect: safe ? (({ x, y, width, height }) => ({ x, y, width, height }))(safe.getBoundingClientRect()) : null,
-      // 交通灯矩形内的命中：只能是安全区本身
-      hits: [hit(16, 16), hit(36, 16), hit(56, 16)],
+      // 交通灯矩形内的命中：只能是安全区本身（x∈[16,76]，取三点覆盖三盏灯）
+      hits: [hit(16, 16), hit(36, 16), hit(60, 16)],
       hasReplyApi: typeof window.dbStudio.replyBeforeClose === 'function',
     };
   });
-  ok('侧栏标题为交通灯让位（left ≥72px）', !!wLayout && wLayout.titleLeft >= 72,
+  ok('侧栏标题为交通灯让位（left ≥78px）', !!wLayout && wLayout.titleLeft >= 78,
     wLayout ? `「连接」left=${wLayout.titleLeft}px` : '未找到 .sidebar-head');
   ok('交通灯矩形内只有安全区（无内容被压住）',
     !!wLayout && wLayout.hits.every((h) => typeof h === 'string' && h.includes('traffic-light-safe')),
     wLayout ? `命中=${JSON.stringify(wLayout.hits)}` : '');
-  ok('安全区覆盖交通灯（x∈[10,62] 全在 72px 内）',
-    !!wLayout?.safeRect && wLayout.safeRect.x === 0 && wLayout.safeRect.width >= 62,
+  ok('安全区覆盖交通灯（x∈[13,73] 全在 78px 内）',
+    !!wLayout?.safeRect && wLayout.safeRect.x === 0 && wLayout.safeRect.width >= 73,
     wLayout?.safeRect ? `${wLayout.safeRect.width}px` : '');
   ok('渲染层已暴露关闭答复 API', wLayout?.hasReplyApi === true);
 

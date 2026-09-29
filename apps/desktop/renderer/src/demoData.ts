@@ -34,14 +34,19 @@ export const DEMO_TABLE_META: TableMeta = {
   estimatedRows: 12_450_000,
   engine: 'InnoDB',
   collation: 'utf8mb4_general_ci',
+  /**
+   * 🔴 每列都带 comment（缺陷 5 的验证靶子）：详情面板的字段区现在把注释
+   * 常驻显示在第二行。demo 数据不带注释的话，e2e:ui 与浏览器 dev 模式下
+   * 这块永远是空的 —— 改了样式却看不出效果，等于没验证。
+   */
   columns: [
-    col('id', { dataType: 'bigint', isPrimaryKey: true, autoIncrement: true, nullable: false }),
-    col('order_no', { dataType: 'varchar(32)', nullable: false }),
-    col('user_id', { dataType: 'bigint', nullable: false }),
-    col('amount', { dataType: 'decimal(12,2)', nullable: false }),
-    col('status', { dataType: "enum('paid','unpaid','refunded')", nullable: false }),
-    col('created_at', { dataType: 'datetime', nullable: false }),
-    col('remark', { dataType: 'varchar(255)' }),
+    col('id', { dataType: 'bigint', isPrimaryKey: true, autoIncrement: true, nullable: false, comment: '订单主键，自增' }),
+    col('order_no', { dataType: 'varchar(32)', nullable: false, comment: '业务订单号，全局唯一' }),
+    col('user_id', { dataType: 'bigint', nullable: false, comment: '下单用户 ID（关联 user.id）' }),
+    col('amount', { dataType: 'decimal(12,2)', nullable: false, comment: '订单金额（元，含税）' }),
+    col('status', { dataType: "enum('paid','unpaid','refunded')", nullable: false, comment: '支付状态：已付/未付/已退款' }),
+    col('created_at', { dataType: 'datetime', nullable: false, comment: '下单时间' }),
+    col('remark', { dataType: 'varchar(255)', comment: '买家备注，可为空' }),
   ],
 };
 

@@ -313,6 +313,13 @@ export class SessionRegistry {
    * 带【观测】的时钟：runtime 内部定时器（自动重连 / 空闲超时）到点引发的迁移
    * 外部本来观测不到 —— 包一层，迁移后补推送；若这是"重连计时器到点"
    * （disconnected → connecting），真正的建连由 registry 接手执行（PRD §6.1.4）。
+   *
+   * 🔴 空闲超时（connected → closed）必须**真的释放驱动与隧道**（2026-09-29 修复）。
+   *    runtime 的 idle 定时器只推状态机，不碰资源 —— 于是要么留着一条空闲 socket
+   *    白占服务端连接数，要么（更糟）用户下一次操作触发重连时，connect() 直接
+   *    新建隧道 + 新建驱动，旧的成了**孤儿**（违反 AGENTS.md §四.7 隧道孤儿红线，
+   *    SSH 场景下就是留一个 ssh 子进程在机器上）。
+   *    在这里释放是唯一的收口点：idle 迁移只可能由这个定时器引发。
    */
   private observedClock(connId: string): Clock {
     return {
@@ -323,6 +330,10 @@ export class SessionRegistry {
           fn();
           const s = this.sessions.get(connId);
           if (!s || s.runtime.state === before) return;
+          // 空闲超时：释放资源（异步，失败只记日志 —— 状态迁移已经完成，不能回滚）
+          if (before === 'connected' && s.runtime.state === 'closed') {
+            void this.releaseIdleSession(connId);
+          }
           this.emitState(connId);
           if (before === 'disconnected' && s.runtime.state === 'connecting') {
             void this.autoReconnect(connId);
@@ -330,6 +341,37 @@ export class SessionRegistry {
         }, ms),
       clearTimeout: systemClock.clearTimeout,
     };
+  }
+
+  /**
+   * 空闲超时后的资源释放。与 disconnect() 的区别：**不碰状态机**
+   * （状态已经是 closed，再调 runtime.disconnect() 会多推一次无意义的迁移）。
+   *
+   * 释放顺序照抄 disconnect()：先取消在跑查询 → 关驱动（隧道挂在驱动上一并释放）
+   * → 兜底再关一次隧道 → 清引用与 schema 缓存引用。
+   * 任何一步失败都只记日志：此时会话已经是 closed，用户下一次操作会重新握手，
+   * 失败不该冒泡到定时器回调里（那会变成未处理的 Promise 拒绝）。
+   */
+  private async releaseIdleSession(connId: string): Promise<void> {
+    const s = this.sessions.get(connId);
+    if (!s) return;
+    // 作废在途建连/自动重连的结果（与 disconnect 同口径）
+    s.gen++;
+    try {
+      await this.cancelAll(connId);
+      await s.driver?.close();
+    } catch {
+      // 空闲断开时驱动可能早已被服务端踢掉，close 失败是常态而非异常
+    }
+    try {
+      await this.closeTunnel(s.tunnel);
+    } catch {
+      // 隧道关不掉不掩盖主流程（closeTunnel 内部已吞错，这里只是双保险）
+    }
+    s.driver = null;
+    s.tunnel = null;
+    // schema 保留：树仍要基于它渲染，下次 getSchema 会优先内存命中；
+    // 真要回源刷新时（force）会走 introspect —— 那时会话已重新连上。
   }
 
   /**

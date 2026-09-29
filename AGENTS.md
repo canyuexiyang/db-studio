@@ -71,7 +71,7 @@ docs/                      文档资产(索引见 docs/README.md,改功能前先
 9. **CodeMirror 首屏 0 字节**(E2):编辑器/方言/补全作为单个 lazy chunk(≤150KB gzip);lazy 组件(`lazy()` 加载的 SQL 编辑器、连接编辑器、导入导出、表设计器)的**外壳样式必须在 styles.css 首屏就位**,否则懒加载间隙布局塌陷。
 10. **首屏 bundle ≤ 1.5MB 未压缩**(S2),`npm run check:bundle` 是门卫,特征串断言(cm-editor/autocompletion/GROUP_CONCAT 等禁入首屏)。
 11. 渲染层内容区**必须不透明**(方案 A:玻璃只在 Electron 侧 + 侧栏/浮层的 CSS 毛玻璃降级)。
-12. 窗口:`transparent: true`,**⛔ 不开 vibrancy**(与 transparent 冲突导致模糊错乱),不用 titleBarStyle。
+12. **窗口:原生交通灯的唯一可用组合是 `transparent: true` + `titleBarStyle: 'hidden'` + `trafficLightPosition`**(几何常量 `TRAFFIC_LIGHT_MEASURED`:直径 14/间距 23/x∈[16,76] → 安全区 **78px**)。🔴 `frame:false` 下 Chromium **根本不创建**窗口按钮视图,`setWindowButtonVisibility(true)` 静默无效;再叠加 `roundedCorners:false` 灯直接消失 —— v1.2「灯已存在、只需让位」的结论**已被 v1.3 证伪**,探针对照表见 `docs/product/REQ-v1.3-缺陷清理.md`。**⛔ 不许自绘按钮**;⛔ 仍不开 vibrancy(与 transparent 冲突导致模糊错乱)。改窗口参数后必须跑 `npm run verify:traffic-lights`(像素级门禁;Playwright/DOM 穿不透 darwin 窗口 API)。
 13. SSH 隧道/驱动层的资源释放语义不许改弱:取消 = 真取消(KILL QUERY / kill utilityProcess)。
 
 ## 五、⛔ 禁止操作
@@ -113,17 +113,41 @@ npm run typecheck        # 根 + renderer 两套 tsconfig
 npm test                 # vitest 全部单测(含包间集成 @dbstudio/integration)
 npm run check:bundle     # 体积预算门卫(会自动先 build:renderer)
 npm run e2e:ui           # 真浏览器 UI 回归(起 vite dev,用 demo 后端)
+npm run e2e:idle         # 空闲断开自动重连(真驱动 + 真 MySQL,只把 idleTimeoutMs 压到秒级)
+npm run e2e:idle:ui      # 状态栏如实显示「已断开」(真 Electron,渲染层订阅那一半)
 npm run verify           # 全量:typecheck + test + check:bundle + e2e 全家桶
+npm run verify:installed # 已安装 .app 的真机验收(22 项,含版本一致性断言)
+npm run verify:traffic-lights # 原生交通灯像素级门禁(6 项)
 npm run start            # build + 起真实 Electron 应用
-npm run dist             # 打包 mac arm64
+npm run dist             # 打包 mac arm64(.dmg + .app)
+npm run dist:dir         # 只打 .app + ad-hoc 外层重签 + 签名自检(本机安装用)
 ```
 
+- `npm run verify` 的链条:typecheck → test → check:bundle → e2e → e2e:transfer → e2e:ssh → e2e:grid → **e2e:idle → e2e:idle:ui** → e2e:ui → e2e:app。`verify:installed` / `verify:traffic-lights` **不在链里**(前者需要已安装的 .app,后者要像素比对),改对应代码后单独跑。
 - e2e 脚本(playwright-core)复用本机 Chromium:`~/Library/Caches/ms-playwright/`,缺失时设 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`。
-- e2e:smoke / e2e:app 需要本地 MySQL fixture;纯 UI 改动跑 `e2e:ui` 即可,数据层改动跑对应专项。
+- e2e:smoke / e2e:app / e2e:idle 需要本地 MySQL fixture;纯 UI 改动跑 `e2e:ui` 即可,数据层改动跑对应专项。
 
-## 八、工作习惯约定
+### 版本号与发版
 
-- **文档索引在 `docs/README.md`**。改功能前先查 `docs/product/PRD-v1.0.md` 对应小节(§6.x 与界面一一对应)与 `docs/devlog/DEV-PROGRESS-*.md` 开发日志——大量决策(E1~E4、D1~D5、R 系)有实测依据,别凭直觉推翻,**推翻决策要给实测数据**。
+- **版本号唯一来源是根 `package.json` 的 `version`**(electron-builder 写入 `Info.plist`;子包 `apps/desktop/package.json` 不参与,不要跟着改)。
+- 覆盖安装前先把旧 `.app` `mv` 到 `apps/desktop/release/.prev-installed-<旧版本>.app` 留回滚,再 `ditto` 新包 + `xattr -dr com.apple.quarantine`。
+- 发版后在 **`docs/RELEASES.md`** 追加一条(主题 + 门禁基线 + 遗留项),GitHub Release 说明从这里摘。
+
+## 八、🔁 易复发坑（真机踩过，别再犯）
+
+细节与探针过程在 `docs/devlog/`,这里只放**结论**:
+
+- **渲染层必须订阅主进程状态推送**:`connStates` 只在启动读一次 → 连接 idle 断开后仍以为 connected → `ensureConnection` 跳过重连 → 表格空白却报「可编辑:是」。数据拉取统一在 `loadTable` 内 ensure(唯一通道);idle 断开要真释放驱动 + 隧道(`releaseIdleSession`)。
+- **筛选真值只有 `tab.filter` 一处**:弹窗编辑 `filterDraft`,徽标/状态栏/导出全从 `openTab.filter` 派生;生效计数用 `effectiveConditionCount()`(判据与 `buildWhere` 一致,否则「N 条未填完已跳过」永不显示)。
+- **会话恢复要过滤已删连接**:`restorePlan(snapshot, isKnown)`,否则恢复出「连接:未知」的标签 —— 执行按钮可点却必失败,**比不恢复更糟**。
+- **真机 e2e 必须 `--user-data-dir` 隔离**:`DB_STUDIO_E2E_USER_DATA` 只接管主进程文件,**不管渲染层 localStorage**(它走 Chromium user data)→ 上一跑的会话快照被恢复 → **代码没改却上一轮绿、这一轮红**。时红时绿先找**跨运行共享状态**,不是调断言。
+- **装完新包首次跑 `verify-installed` 会撞 CDP 冷启动窗口**:DevTools 地址已打印、`/json/version` 已 200,但 ws 握手还没就绪(主线程忙)。脚本已加固(探活 + 重试 3 次);**别误判成新包有缺陷**,用旧包做基线对照定性。
+- **⛔ 未提交的工作区里 `git checkout <file>` = 回到初始提交**,不是「撤销我的改动」—— 曾一次性丢掉整个 v1.3 的 e2e-app 改动。要撤自己的改动只能手工反向编辑。
+- **写断言前先问「此刻基线是什么」**:恒真断言与**前提不成立**是同一坏习惯的两面 → 断**口径**(不变量/相对变化/双向蕴含)而非具体值;**造不出前置条件的断言宁可不写**(会变成不改代码也通过的假绿);新断言要在**错误输入**上确认它会红。
+
+## 九、工作习惯约定
+
+- **文档索引在 `docs/README.md`**;**发版记录在 `docs/RELEASES.md`**。改功能前先查 `docs/product/PRD-v1.0.md` 对应小节(§6.x 与界面一一对应)与 `docs/devlog/DEV-PROGRESS-*.md` 开发日志——大量决策(E1~E4、D1~D5、R 系)有实测依据,别凭直觉推翻,**推翻决策要给实测数据**。
 - 新增功能前先过 `docs/research/竞品调研与功能路线图.md` §3.5「明确不抄」清单与 PRD §三 非目标——**两份清单是范围红线**,想做的事落在里面要先给实测理由推翻。
 - `docs/archive/` 下的文档**已被取代,不要据此实现功能**(每份顶部有归档声明指向现行版本)。
 - 代码注释是中文,密度高且多为「为什么」;改动时保持既有注释风格,删代码连注释一起删。

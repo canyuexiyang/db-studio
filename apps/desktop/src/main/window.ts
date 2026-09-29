@@ -5,15 +5,44 @@
  *   S1 四组对照 P50 均为 120.5 FPS、掉帧率 0% → B1 冲突不成立 → 采用方案 A，D4 达成
  *
  * 关键约束（每条都有实测依据，改之前先看 S1 报告）：
- *  1. transparent:true + backgroundColor:'#00000000' + roundedCorners:false
+ *  1. transparent:true + backgroundColor:'#00000000'
  *  2. 【不能同时开 vibrancy】—— 会冲突导致模糊错乱
- *  3. 圆角由 glass 的 cornerRadius 提供，渲染层不自己画窗口级圆角
- *  4. 交通灯用 setWindowButtonPosition + setWindowButtonVisibility
- *     （titleBarStyle 仅 frame:true 可用，与玻璃形态冲突，S1/S4 实测确认）
+ *  3. 圆角交给系统（titleBarStyle:'hidden' 保留原生圆角）；
+ *     ⛔ 不要加 roundedCorners:false —— 它会把交通灯一起弄没（见第 4 条实测）
+ *  4. 交通灯形态：titleBarStyle:'hidden' + trafficLightPosition + setWindowButtonVisibility
  *  5. sandbox:true 时 preload 必须是 CommonJS
  *  6. 系统版本判断用 os.release()（Darwin 内核主版本 >= 26）
  *     ⚠️ S4 实测更正：本机 os.release() 返回 27.0.0（Darwin 27），不是文档原称的 26。
  *        原文把 build 号 26A428 误当成了内核版本号。阈值 >= 26 仍然安全。
+ *
+ * 🔴 第 4 条【推翻了 S1/S4 的旧结论】—— 推翻依据是 2026-09-29 真机探针（AGENTS.md §八
+ *    要求「推翻决策要给实测数据」）。旧写法是 `frame:false` + `setWindowButtonPosition`，
+ *    文档与代码注释都声称"frame:false 下唯一可用且不抛异常"。
+ *    「不抛异常」是真的，「交通灯可见」是假的 —— 用户真机反馈窗口无法关闭/缩小/放大，
+ *    截图左上角确实一片空白。
+ *
+ *    探针方法：每个窗口形态一个独立 Electron 进程 → screencapture 抓窗口矩形 →
+ *    像素检测 macOS 交通灯三色（红 255,95,86 / 黄 254,188,46 / 绿 40,200,64）。
+ *    环境：Electron 44.4.3、Darwin 27.0.0、本机 M5 Pro。结果（✅=三灯可见）：
+ *
+ *    | 形态 | 配置 | 交通灯 |
+ *    |---|---|---|
+ *    | A（旧） | frame:false + transparent + roundedCorners:false | ❌ 无 |
+ *    | B      | frame:false + transparent                       | ❌ 无 |
+ *    | D      | frame:false + 不透明                             | ✅ 有 |
+ *    | P2     | titleBarStyle:'hidden' + roundedCorners:false    | ❌ 无 |
+ *    | P5     | titleBarStyle:'hidden' + transparent + 玻璃 + trafficLightPosition | ✅ 有 |
+ *
+ *    两条结论：
+ *     ① `transparent:true` 必须配 `titleBarStyle:'hidden'` 才有原生交通灯 ——
+ *        frame:false 下 Chromium 根本不创建标准窗口按钮视图，setWindowButtonVisibility
+ *        调了也不抛异常，属于「静默无效」（最难查的一类）。
+ *     ② `roundedCorners:false` 单独就能把灯弄没（P2 vs P1 对照）—— 所以玻璃形态下
+ *        不能再用它压圆角，圆角交给系统原生（P5 实测圆角正常、玻璃 applied 成功）。
+ *
+ *    连带影响：`titleBarStyle:'hidden'` 会保留窗口顶部一条系统拖拽带，
+ *    渲染层 `.toolbar` 的 `-webkit-app-region: drag` 与 `.traffic-light-safe`
+ *    的 no-drag 让位逻辑照旧生效（见 styles.css W1/W4 注释），不需要额外改动。
  */
 
 import { BrowserWindow } from 'electron';
@@ -84,6 +113,13 @@ export async function applyGlass(win: BrowserWindow): Promise<GlassState> {
     // ⚠️ electron-window-glass 是 ESM-only：exports 只声明 import。
     // 用 require 会抛 ERR_PACKAGE_PATH_NOT_EXPORTED（S1 与 S4 各自独立复现）。
     const mod = await import('electron-window-glass');
+    /**
+     * cornerRadius 刻意用库默认值（20），不显式传：
+     * `titleBarStyle:'hidden'` 自带原生窗口圆角（实测 css ≈10px），系统会把子视图
+     * 裁切到圆角内 —— 玻璃圆角 ≥ 原生圆角即安全（超出部分被裁掉）。
+     * 传一个比原生更小的值反而会在四角露出直角玻璃边。
+     * 探针 G/P5 变体（hidden + transparent + 默认玻璃）实测圆角正常、三灯齐全。
+     */
     mod.createWindowGlass(win, { kind: 'glass' });
     glassState = { mode: 'native', reason: null };
   } catch (e: any) {
@@ -117,6 +153,45 @@ export interface CreateWindowOptions {
   title?: string;
 }
 
+/**
+ * 交通灯位置（css px）。与渲染层 `.sidebar-head` 的 78px 安全区同源。
+ *
+ * 🔴 实测几何（2026-09-29，`npm run verify:traffic-lights` 逐像素量出）：
+ *    三灯中心 css (23, 21) / (46, 21) / (69, 21)，**直径 14px、间距 23px**
+ *    → 整体占据 css x ∈ [16, 76]、y ∈ [14, 28]。
+ *    左缘 16 与本常量 x 逐像素吻合（说明构造参数生效，不是系统默认位置）。
+ *
+ * ⚠️ 不要再用旧口径推算：`setWindowButtonPosition` 时代量的是「直径 12px、
+ *    间距 8px、x ∈ [10, 62]」。换成 `trafficLightPosition` 构造参数后 macOS 的
+ *    实际渲染尺寸与间距**都变了**，照旧数字算会让安全区少 14px
+ *    （76 > 62），绿灯右缘就落在 drag 区里 —— 边界漏让位，最难发现。
+ *
+ * 🔴 必须走 `trafficLightPosition` **构造参数**，不要用 `setWindowButtonPosition()`：
+ *    构造参数在首帧前生效，不会出现「灯先出现在默认位置、再跳到 16,14」的闪动。
+ */
+export const TRAFFIC_LIGHT_POSITION = { x: 16, y: 14 } as const;
+
+/**
+ * 交通灯实测几何（css px）。
+ *
+ * 存在的意义：让「安全区够不够宽」这件事**有数字可断言**，而不是靠人记。
+ * `verify-traffic-lights.mjs` 门禁与 `window.test.ts` 都引用它 ——
+ * 渲染层 `.traffic-light-safe` / `.sidebar-head` 的宽度若小于 RIGHT_EDGE，
+ * 就会有灯落在 drag 区（拖拽吞掉 hover，macOS 的 ✕ ─ ＋ 符号失效）。
+ */
+export const TRAFFIC_LIGHT_MEASURED = {
+  /** 单灯直径 */
+  diameter: 14,
+  /** 相邻灯中心间距 */
+  pitch: 23,
+  /** 三灯整体左缘 */
+  left: 16,
+  /** 三灯整体右缘 */
+  right: 76,
+  /** 渲染层安全区必须 ≥ 此值（styles.css .traffic-light-safe width） */
+  safeAreaMinWidth: 78,
+} as const;
+
 export async function createMainWindow(opts: CreateWindowOptions = {}): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: opts.width ?? 1280,
@@ -124,13 +199,18 @@ export async function createMainWindow(opts: CreateWindowOptions = {}): Promise<
     minWidth: 900,
     minHeight: 600,
     // ---- 方案 A 的窗口形态（S1 实测已验证 FPS 无损失）----
-    frame: false,
+    /**
+     * 🔴 titleBarStyle:'hidden'（不是 frame:false）—— 唯一能让「原生玻璃 + 原生交通灯」
+     *    同时成立的组合，实测依据见文件头第 4 条的探针对照表。
+     *    hidden 的语义是「隐藏标题栏内容但保留窗口控件」，正是我们要的形态。
+     */
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { ...TRAFFIC_LIGHT_POSITION },
     transparent: true,
     backgroundColor: '#00000000',
-    roundedCorners: false,
+    // ⛔ 不要加 roundedCorners:false —— 它会把交通灯一起弄没（探针 P2 无灯）
     // ⚠️ 不要加 vibrancy：与 transparent 冲突会模糊错乱（PRD §8.1 / 评审 §3.2）
     vibrancy: undefined,
-    titleBarStyle: undefined, // 仅 frame:true 可用，这里刻意不用
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -144,17 +224,15 @@ export async function createMainWindow(opts: CreateWindowOptions = {}): Promise<
     },
   });
 
-  // 交通灯：frame:false 下唯一可用且不抛异常的组合（S1 实测）
-  try {
-    if (typeof (win as any).setWindowButtonPosition === 'function') {
-      (win as any).setWindowButtonPosition({ x: 16, y: 14 });
-    }
-    if (typeof (win as any).setWindowButtonVisibility === 'function') {
-      (win as any).setWindowButtonVisibility(true);
-    }
-  } catch {
-    // 交通灯不可用不影响主流程，静默降级
-  }
+  /**
+   * 交通灯显式置为可见。
+   *
+   * titleBarStyle:'hidden' 下默认就是可见的，这里再调一次是**防御**：
+   * 全屏切换 / 系统偏好「自动隐藏」等路径可能把它藏起来，而窗口关不掉是
+   * 用户级事故（本次缺陷 6 的直接后果）。setWindowButtonVisibility 只读不抛，
+   * typeof 判空 + try/catch 保留 —— 它是 Electron 的 darwin 专属 API。
+   */
+  applyTrafficLights(win);
 
   // 玻璃在窗口创建后应用（try/catch 已内置）
   await applyGlass(win);
@@ -169,10 +247,52 @@ export async function createMainWindow(opts: CreateWindowOptions = {}): Promise<
 }
 
 /**
+ * 让原生交通灯可见（红=关闭 / 黄=最小化 / 绿=全屏，⌥+点击绿=Zoom）。
+ *
+ * 返回实际结果供启动日志与 e2e 断言 —— 「调了没抛异常」不等于「灯真的在」，
+ * 这正是缺陷 6 藏了这么久的原因（旧代码只做了 typeof 判空就以为成了）。
+ */
+export interface TrafficLightState {
+  /** 可见性调用是否执行成功 */
+  visibilityApplied: boolean;
+  /** 窗口三态能力（绿=全屏取决于 fullscreenable） */
+  closable: boolean;
+  minimizable: boolean;
+  fullscreenable: boolean;
+}
+
+export function applyTrafficLights(win: BrowserWindow): TrafficLightState {
+  let visibilityApplied = false;
+  try {
+    if (typeof (win as any).setWindowButtonVisibility === 'function') {
+      (win as any).setWindowButtonVisibility(true);
+      visibilityApplied = true;
+    }
+  } catch {
+    // 交通灯不可用不影响主流程，静默降级（渲染层仍可 ⌘W/⌘M 走菜单）
+  }
+  return {
+    visibilityApplied,
+    closable: safeBool(() => win.isClosable(), true),
+    minimizable: safeBool(() => win.isMinimizable(), true),
+    fullscreenable: safeBool(() => win.isFullScreenable(), true),
+  };
+}
+
+function safeBool(fn: () => boolean, fallback: boolean): boolean {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * 关闭拦截（W 板块 W2）—— 让 macOS **原生**红按钮也走「未保存改动」确认。
  *
- * 🔴 为什么必须写这段：frame:false 窗口的红/黄/绿按钮是系统原生控件，
- *    点击**不产生任何 DOM 事件**，渲染层的 requestCloseTab 根本收不到。
+ * 🔴 为什么必须写这段：原生红/黄/绿按钮是系统控件（titleBarStyle:'hidden' 下由
+ *    trafficLightPosition 定位），点击**不产生任何 DOM 事件**，渲染层的
+ *    requestCloseTab 根本收不到。
  *    不加拦截时的后果是「有脏改动的标签被静默丢弃」，直接违反保存预演红线
  *    （AGENTS.md §四.1）。这是本板块唯一真正需要写代码的地方 —— W1 是留白、
  *    W3（绿按钮 = 全屏，⌥+点击 = Zoom）由 macOS 提供、W4 是 CSS 让位。

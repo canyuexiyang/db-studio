@@ -35,6 +35,14 @@ export interface TablePaneHandlers {
   onSave: (tabId: string, source: GridDataSource) => void;
   onCellActivated: (tabId: string, row: number, col: number) => void;
   /**
+   * 缺陷 5：右键「查看完整值」/ 双击长文本或 BLOB 单元格 → 弹出 CellValueModal。
+   *
+   * 🔴 宿主必须传 table（该 tab 的 TableMeta）—— 弹窗靠它反查列类型来判定
+   *    二进制（resolveBinary），也用于文件名。value 传**原始值**（source.raw），
+   *    不是脏叠加值：用户要核对的是库里到底存了什么。
+   */
+  onInspectCell?: (tabId: string, row: number, col: number, value: unknown) => void;
+  /**
    * A2：本格脏改动被清除（⌘0 幂等清除 / 右键「清除本格改动」）。
    * App 侧刷新 dirtyCount 角标（source.clearCell 已由网格执行）。
    */
@@ -232,6 +240,15 @@ export function TablePane({
     [handlers, tab.id],
   );
 
+  // 缺陷 5：查看完整值 → 弹窗（值取原始值，与详情面板搬迁前口径一致）
+  const handleInspect = useCallback(
+    (row: number, col: number) => {
+      if (!source) return;
+      handlers.onInspectCell?.(tab.id, row, col, source.raw(row, col));
+    },
+    [handlers, source, tab.id],
+  );
+
   // F5：选中统计回报。只激活 tab 回报 —— 所有 pane 常挂 DOM，全回报会互相覆盖
   const handleSelectionSummary = useCallback(
     (summary: { rows: number; cells: number } | null) => {
@@ -331,6 +348,7 @@ export function TablePane({
           onDeleteRows={handleDeleteRows}
           onCellEdited={handleEdit}
           onCellActivated={handleActivate}
+          onInspectCell={handlers.onInspectCell ? handleInspect : undefined}
           onCellCleared={handleCellCleared}
           onDuplicateRow={handleDuplicateRow}
           // A17：INSERT/UPDATE 复制格式的限定名上下文

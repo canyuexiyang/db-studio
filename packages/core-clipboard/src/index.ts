@@ -105,6 +105,23 @@ export interface CopyOptions {
   table?: string;
   /** UPDATE 的定位列（主键/唯一键） */
   locateColumns?: string[];
+  /**
+   * TSV/CSV 是否在首行输出列名表头。**默认 false**（2026-09-29 用户反馈）。
+   *
+   * 为什么默认关：复制的用途绝大多数是「把这几格的值带走」（粘进聊天窗、
+   * 粘进另一张表、喂给脚本），带上列名会让粘贴结果整体错位一行 ——
+   * 用户得手工删掉首行，比不给更麻烦。对齐 DataGrip 的 ⌘C 语义
+   * （Copy → 值；Copy with Headers → 才是带表头的独立动作）。
+   *
+   * ⚠️ 只对 tsv/csv 生效。markdown **永远带表头**（少了表头与分隔行就不是
+   * 合法 Markdown 表格，粘出去是散的文本）；json/insert/update 的列名是
+   * 结构的一部分，无法省略。
+   *
+   * 与粘贴（⌘V）的往返关系：planPasteFromText 按纯值解析，本来就不认表头行，
+   * 所以「复制 → 粘贴回网格」在默认口径下反而**更**正确（旧行为会把列名当成
+   * 第一行数据粘进去，是一处真实的往返不一致）。
+   */
+  includeHeader?: boolean;
 }
 
 /**
@@ -136,7 +153,14 @@ export function serializeCopy(o: CopyOptions): string {
     case 'tsv':
     case 'csv': {
       const d = o.format === 'tsv' ? '\t' : ',';
-      const lines = [cols.map((c) => escapeDelimited(c, d)).join(d)];
+      /**
+       * 默认不带表头（见 CopyOptions.includeHeader 的取舍说明）。
+       * 首行直接是数据 —— 复制出去粘进 Excel/聊天窗就是纯值。
+       */
+      const lines: string[] = [];
+      if (o.includeHeader === true) {
+        lines.push(cols.map((c) => escapeDelimited(c, d)).join(d));
+      }
       for (const r of norm) lines.push(r.map((v) => escapeDelimited(cellToDisplay(v), d)).join(d));
       return lines.join('\n');
     }

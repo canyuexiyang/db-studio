@@ -330,6 +330,61 @@ try {
 
     // A20：行右键 → 复制为 INSERT / UPDATE（带真实值，行勾选优先）
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+
+    /**
+     * 🔴 缺陷 2 回归（2026-09-29 用户反馈：复制只要值，不要列名 key）。
+     *
+     * 这条断言的存在价值：TSV 表头是"顺手加上"的东西，将来很容易被人
+     * 悄悄加回去（而且加回去不会让任何一条既有断言变红）。
+     *
+     * 🔴 口径断言而非值断言：右键**单个单元格**时选区只有一列，首行就是那一列的
+     *    列名 —— 断言"首行含 id/status"是错的（那是整行语义）。这里改成结构性契约：
+     *      · 默认复制：行数 === 选中行数（1 行 = 1 行，没有多出来的表头）；
+     *      · 含列名：恰好比默认多一行，且从第二行起与默认完全一致。
+     *    这样不依赖具体列名/值，也不会因虚拟滚动位置而假红。
+     */
+    {
+      // 先按行号勾选整行（行勾选优先于矩形选区参与复制 → 全部可见列）
+      await page.locator('.grid-row').nth(0).locator('.gd-rowno').click();
+      await page.waitForTimeout(200);
+      await page.locator('.grid-row').nth(0).locator('.grid-cell').nth(1).click({ button: 'right' });
+      await page.waitForSelector('.gd-ctx-menu', { timeout: 5_000 });
+      await page.locator('.gd-ctx-item', { hasText: 'TSV（粘进 Excel）' }).click();
+      await page.waitForTimeout(250);
+      const tsvDefault = await page.evaluate(() => navigator.clipboard.readText());
+      const defaultLines = tsvDefault.split('\n');
+      ok('🔴 复制 TSV 默认不带列名表头（1 行选中 = 1 行输出）',
+        defaultLines.length === 1 && defaultLines[0].length > 0,
+        `行数=${defaultLines.length} 首行=${defaultLines[0].slice(0, 50)}`);
+
+      // 「含列名」逃生口必须真的多给一行表头，且其余内容与默认逐字一致
+      await page.locator('.grid-row').nth(0).locator('.gd-rowno').click();
+      await page.waitForTimeout(150);
+      await page.locator('.grid-row').nth(0).locator('.grid-cell').nth(1).click({ button: 'right' });
+      await page.waitForSelector('.gd-ctx-menu', { timeout: 5_000 });
+      await page.locator('.gd-ctx-item', { hasText: 'TSV（含列名）' }).click();
+      await page.waitForTimeout(250);
+      const tsvHeader = await page.evaluate(() => navigator.clipboard.readText());
+      const headerLines = tsvHeader.split('\n');
+      ok('右键「TSV（含列名）」恰好多一行表头，其余与默认一致',
+        headerLines.length === defaultLines.length + 1 &&
+          headerLines.slice(1).join('\n') === tsvDefault &&
+          headerLines[0] !== defaultLines[0],
+        `默认 ${defaultLines.length} 行 / 含列名 ${headerLines.length} 行，表头=${headerLines[0]?.slice(0, 50)}`);
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(150);
+
+      /**
+       * 🔴 恢复行勾选：上面点单元格会走 selection.clearRows()（普通左键点击
+       * 回到"单元格模式"，既有语义），而紧接着的 A20 断言依赖「已选 4 行」。
+       * 不恢复的话 A20 会从"已选 4 行"退化成"第 N 行"，断言假红。
+       */
+      await page.locator('.grid-row').nth(0).locator('.gd-rowno').click();
+      await page.locator('.grid-row').nth(1).locator('.gd-rowno').click({ modifiers: ['Meta'] });
+      await page.locator('.grid-row').nth(4).locator('.gd-rowno').click({ modifiers: ['Shift'] });
+      await page.waitForTimeout(200);
+    }
+
     await page.locator('.grid-row').nth(2).locator('.gd-rowno').click({ button: 'right' });
     await page.waitForTimeout(200);
     const menuTitle = await page.locator('.gd-ctx-menu .gd-ctx-title').textContent().catch(() => '');
@@ -406,15 +461,71 @@ try {
     `${fps.count} 帧, P50 ${fps.p50}ms (${(1000 / fps.p50).toFixed(1)} FPS), P95 ${fps.p95}ms, 掉帧率 ${fps.droppedPct}%`,
   );
 
-  // 8. 右侧详情面板（§6.7）
+  // 8. 右侧详情面板（§6.7，2026-09-29 缺陷 3 + 5 改版）
   ok('详情面板已渲染', (await page.locator('.detail-panel').count()) === 1);
-  // 点一个单元格 → 面板显示完整值
-  await page.locator('.grid-row').nth(2).locator('.grid-cell').nth(1).click();
-  await page.waitForTimeout(300);
   const detailText = await page.locator('.detail-panel').innerText().catch(() => '');
-  ok('点单元格后详情面板显示列与行', /列/.test(detailText) && /行/.test(detailText),
-    detailText.split('\n').slice(-3).join(' | ').slice(0, 60));
   ok('详情面板显示表信息（引擎）', /引擎/.test(detailText));
+
+  /**
+   * 🔴 缺陷 5：字段区必须常驻显示注释（不是塞在 title 悬浮里）。
+   * 断言落在 innerText 上 —— 悬浮 title 的内容不会出现在 innerText 里，
+   * 所以这条能真正区分「常驻显示」与「改回 title」。
+   * demo 数据的 order 表每列都带 comment（见 demoData.ts）。
+   */
+  ok('详情面板字段区常驻显示注释（缺陷 5）',
+    /订单主键/.test(detailText) && /支付状态/.test(detailText),
+    detailText.split('\n').filter((l) => /订单主键|支付状态/.test(l)).join(' | ').slice(0, 70));
+  ok('字段区同时显示类型', /decimal\(12,2\)|bigint/.test(detailText));
+
+  // 🔴 缺陷 5：第三块从「单元格完整值」换成「表结构语句」
+  ok('详情面板第三块是「表结构语句」', /表结构语句/.test(detailText));
+  ok('详情面板不再有「单元格完整值」区块', !/单元格完整值/.test(detailText));
+  ok('建表语句区已渲染（demo 后端给占位 DDL）',
+    (await page.locator('[data-testid="detail-ddl"]').count()) === 1);
+  const ddlText = await page.locator('[data-testid="detail-ddl"]').innerText().catch(() => '');
+  ok('建表语句含 SHOW CREATE 语义文本', ddlText.length > 10, ddlText.slice(0, 60));
+  ok('建表语句有复制按钮', (await page.locator('[data-testid="btn-copy-ddl"]').count()) === 1);
+
+  // 🔴 缺陷 3：树里单击表节点 → 详情面板联动（不必先把表打开成标签）
+  {
+    // 先切到另一张表（wide_metrics），确认详情面板跟着变
+    const wideRow = page.locator('.tree-row').filter({ hasText: 'wide_metrics' }).first();
+    if ((await wideRow.count()) > 0) {
+      await wideRow.click(); // 单击 = 选中（不打开标签）
+      await page.waitForTimeout(400);
+      const linked = await page.locator('.detail-panel').innerText().catch(() => '');
+      ok('缺陷 3：树中单击表节点，详情面板联动显示该表',
+        /wide_metrics/.test(linked) && /宽表指标列/.test(linked),
+        linked.split('\n').slice(0, 3).join(' | ').slice(0, 70));
+      // 回到 order 标签，避免影响后续断言
+      await page.locator('.ws-tab').first().click();
+      await page.waitForTimeout(300);
+    }
+  }
+
+  // 🔴 缺陷 5 配套：单元格完整值改为弹窗（右键「查看完整值」）
+  {
+    await page.locator('.grid-row').nth(2).locator('.grid-cell').nth(1).click({ button: 'right' });
+    await page.waitForSelector('.gd-ctx-menu', { timeout: 5_000 });
+    await page.locator('.gd-ctx-item', { hasText: '查看完整值' }).click();
+    await page.waitForSelector('[data-testid="cell-value-modal"]', { timeout: 5_000 });
+    ok('缺陷 5：右键「查看完整值」弹出单元格完整值弹窗',
+      (await page.locator('[data-testid="cell-value-modal"]').count()) === 1);
+    const modalText = await page.locator('[data-testid="cell-value-modal"]').innerText().catch(() => '');
+    /**
+     * 🔴 口径断言：只查结构，不查具体列名/行号。
+     * · 列名：右键的是 .grid-cell.nth(1)（nth0 是行号 gutter）= 第一个数据列，
+     *   到底是 id 还是别的取决于列顺序，写死必假红 —— 只断言"标题里有列名"。
+     * · 行号：虚拟滚动下的**全局行号**（可能几百几千），写死「第 3 行」必假红。
+     * 断言三段结构齐全即可：标题「单元格完整值 — <列名>」、库.表 order_db.order、"第 N 行"。
+     */
+    ok('弹窗显示列名与行号定位',
+      /单元格完整值 — \S/.test(modalText) && /order_db\.order/.test(modalText) && /第\s*\d+\s*行/.test(modalText),
+      modalText.split('\n')[0]?.slice(0, 80) ?? '');
+    await page.locator('[data-testid="cell-modal-close"]').click();
+    await page.waitForTimeout(250);
+    ok('弹窗可关闭', (await page.locator('[data-testid="cell-value-modal"]').count()) === 0);
+  }
 
   // 详情面板折叠
   await page.locator('.detail-head button').first().click();
@@ -424,38 +535,220 @@ try {
   await page.waitForTimeout(250);
   ok('详情面板可展开', (await page.locator('.detail-panel.collapsed').count()) === 0);
 
-  // 9. 筛选器（§6.3.3，逻辑已就绪，这里测 UI）
+  // 9. 筛选器（§6.3.3，逻辑已就绪，这里测 UI；缺陷 4 改版后类名为 .fb-*）
   await page.locator('.toolbar button', { hasText: '筛选' }).click();
   await page.waitForTimeout(400);
   ok('筛选弹窗打开', (await page.locator('.filter-modal').count()) === 1);
-  ok('筛选器有列下拉', (await page.locator('.filter-cond select.col').count()) >= 1);
+  ok('筛选器有列下拉', (await page.locator('.filter-cond select.fb-col').count()) >= 1);
 
   /**
    * 🔴 数值列不该有「包含」操作符 —— 这是真机验证过的行为，
    *    给数值列 LIKE 会静默返回空结果，用户完全看不出哪里错了。
-   *    这里选一个数值列（amount / decimal）来验。
+   *
+   * 选 amount（decimal 数值列）来验。
+   * ⚠️ 缺陷 4 改版后，字段下拉的 option 文本改成「名称 — 注释」优先
+   *    （没有注释才退回「名称（类型）」），所以不能再靠 option 文本里的
+   *    `decimal` 认数值列 —— 改为按字段名 amount 精确选，断言才可靠、不会被静默跳过。
    */
-  const colSelect = page.locator('.filter-cond select.col').first();
-  const colOptions = await colSelect.locator('option').allTextContents();
-  const numericOpt = colOptions.find((o) => /decimal|int|bigint/i.test(o));
-  if (numericOpt) {
-    await colSelect.selectOption({ label: numericOpt });
+  const colSelect = page.locator('.filter-cond select.fb-col').first();
+  // 用 value（= 字段名）精确选中，不依赖 option 显示文本（文本会随注释变化）
+  await colSelect.selectOption('amount').catch(() => {});
+  const selectedVal = await colSelect.inputValue().catch(() => '');
+  if (selectedVal === 'amount') {
     await page.waitForTimeout(250);
-    const opTexts = await page.locator('.filter-cond select.op').first().locator('option').allTextContents();
+    const opTexts = await page.locator('.filter-cond select.fb-op').first().locator('option').allTextContents();
     ok('数值列不含「包含」操作符', !opTexts.includes('包含'), `操作符：${opTexts.join('/')}`);
   } else {
-    ok('数值列不含「包含」操作符', true, '（demo 无数值列，跳过）');
+    ok('数值列不含「包含」操作符', true, `（demo 无 amount 列，selectedVal=${selectedVal}，跳过）`);
   }
 
   // 预览区应显示参数化后的可读条件，且值不拼进 SQL
-  await page.locator('.filter-cond select.col').first().selectOption({ index: 1 });
+  await page.locator('.filter-cond select.fb-col').first().selectOption({ index: 1 });
   await page.waitForTimeout(200);
   const previewBefore = await page.locator('.filter-preview').innerText().catch(() => '');
-  ok('筛选预览显示「无有效条件」占位或真实条件', previewBefore.length >= 0, previewBefore.slice(0, 50));
+  /**
+   * 🔴 原来是 `previewBefore.length >= 0` —— 恒真断言（字符串长度不可能为负），
+   *    预览区改成什么都不会红。换成真的口径：必须是参数化 WHERE 原文
+   *    （带反引号标识符，值以 `?` 参数形式存在、不拼进文本）。
+   */
+  ok('筛选预览：选中字段后显示参数化 WHERE（含反引号标识符）',
+    /^WHERE/.test(previewBefore.trim()) && previewBefore.includes('`'),
+    previewBefore.trim().slice(0, 60));
+  /**
+   * 🔴 口径断言：**有效条数 + 未填完条数 = 条件行总数**。
+   *    不写死「1 条」—— 这段之前 A22 快速筛选已经应用过一个条件，弹窗打开时
+   *    草稿是从 `tab.filter` 取种子的（这正是修复后的正确行为），所以草稿里
+   *    天生就带着那条。写死具体数字的断言在这里必然假红。
+   */
+  {
+    const parts = await page.evaluate(() => {
+      const t = document.querySelector('[data-testid="fb-preview-count"]')?.textContent ?? '';
+      return {
+        total: document.querySelectorAll('.filter-cond').length,
+        effective: Number(t.match(/(\d+)\s*条有效条件/)?.[1] ?? 0),
+        skipped: Number(t.match(/(\d+)\s*条未填完/)?.[1] ?? 0),
+        raw: t.trim(),
+      };
+    });
+    ok('筛选预览：有效数 + 未填完数 = 条件行总数（计数口径自洽）',
+      parts.effective + parts.skipped === parts.total && parts.total > 0,
+      `${parts.effective} 有效 + ${parts.skipped} 未填完 vs ${parts.total} 行；标签「${parts.raw}」`);
+  }
 
-  await page.locator('.filter-modal footer button', { hasText: '取消' }).click();
-  await page.waitForTimeout(250);
-  ok('筛选弹窗可关闭', (await page.locator('.filter-modal').count()) === 0);
+  /**
+   * 🔴 缺陷 4 回归（2026-09-29：布局乱 / 点击多 / 按钮丑）。
+   * 三条断言分别钉住三处结构性改动 —— 它们都是"改坏了不会有任何既有测试变红"
+   * 的那类（纯视觉/交互），必须显式看着。
+   */
+  {
+    // ① AND/OR 是 chip 且一次点击即切换（治「点击过多」，不再是 select）
+    // 先加第二条条件，chip 才会出现在条件行上（单条时 AND/OR 无意义，被刻意隐藏）
+    await page.locator('.fb-add').first().click();
+    await page.waitForTimeout(300);
+    const rowCount = await page.locator('.filter-cond').count();
+    ok('缺陷 4：「添加条件」就地新增一行', rowCount >= 2, `条件行数=${rowCount}`);
+    const chipCount = await page.locator('.filter-cond .fb-logic button').count();
+    ok('缺陷 4：多条件时出现 AND/OR chip（一步切换，非下拉）', chipCount >= 2, `chip 数=${chipCount}`);
+    ok('缺陷 4：条件行里不再有 AND/OR 下拉（select.filter-logic 已废弃）',
+      (await page.locator('.filter-cond select.filter-logic').count()) === 0);
+    if (chipCount >= 2) {
+      await page.locator('.filter-cond .fb-logic button', { hasText: 'OR' }).first().click();
+      await page.waitForTimeout(200);
+      const orOn = await page.locator('.filter-cond .fb-logic button.on', { hasText: 'OR' }).count();
+      ok('缺陷 4：点击 OR chip 一次即生效（无需展开下拉）', orOn >= 1, `OR 选中态=${orOn}`);
+    }
+
+    /**
+     * ② 严格网格对齐（治「布局很乱」）。
+     * 🔴 必须在**多行**状态下量：只有 1 行时 max-min 恒为 0，那是个
+     *    不改代码也恒真的假绿断言（项目方法论：断言要能失败才有价值）。
+     */
+    const align = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.filter-cond')];
+      if (rows.length < 2) return null;
+      const display = getComputedStyle(rows[0]).display;
+      const leftsOf = (sel) => rows.map((r) => {
+        const el = r.querySelector(sel);
+        return el ? Math.round(el.getBoundingClientRect().left) : -1;
+      });
+      const colLefts = leftsOf('select.fb-col');
+      const opLefts = leftsOf('select.fb-op');
+      const delLefts = leftsOf('.fb-del');
+      const spread = (a) => Math.max(...a) - Math.min(...a);
+      return {
+        n: rows.length,
+        display,
+        spreadCol: spread(colLefts),
+        spreadOp: spread(opLefts),
+        spreadDel: spread(delLefts),
+      };
+    });
+    ok('缺陷 4：条件行用 grid 布局（不是 flex-wrap）', align?.display === 'grid', `display=${align?.display}`);
+    ok('缺陷 4：≥2 行时同类控件纵向严格对齐（差值 0）',
+      !!align && align.spreadCol === 0 && align.spreadOp === 0 && align.spreadDel === 0,
+      align ? `字段差=${align.spreadCol}px 条件差=${align.spreadOp}px 删除差=${align.spreadDel}px（${align.n} 行）` : '行数不足，未量');
+
+    // ③ 删除按钮把行数收回去（chip/删除都在网格内，验它不串位）
+    await page.locator('.filter-cond .fb-del').last().click();
+    await page.waitForTimeout(250);
+    ok('缺陷 4：删除按钮移除该条件行', (await page.locator('.filter-cond').count()) === rowCount - 1,
+      `${rowCount} → ${await page.locator('.filter-cond').count()}`);
+  }
+
+  /**
+   * 🔴 缺陷 4 连带修复的回归：**「取消」必须丢弃草稿**。
+   *
+   * 修之前的行为：FilterBuilder 的 onChange 直接写全局 `filterModel`，而「已应用」的
+   * 真值是 `tab.filter`。于是加完条件点「取消」→ 草稿留在全局态 →
+   * 工具栏「筛选 (2)」、状态栏「筛选：2 条」照显示，**数据却没筛**；
+   * 下次点「应用」还会把用户以为已丢弃的条件用上。取消等于空按钮。
+   *
+   * ⚠️ 必须先「清除」建立**零基线**：这段之前的 A22 快速筛选已经应用过 1 个条件，
+   *    徽标本来就是「筛选(1)」。第一版断言直接要求徽标不含数字 → 6 条全假红，
+   *    而实现其实是对的（徽标显示的正是真值）。
+   */
+  {
+    const badge = async () =>
+      (await page.locator('[data-testid="btn-filter"]').innerText()).replace(/\s+/g, '');
+    const hasBadge = async () => /\(\d/.test(await badge());
+
+    // 零基线：「清除」是立即生效的动作（关弹窗 + 重载数据），顺带验它自己
+    await page.locator('.filter-modal footer button', { hasText: '清除' }).click();
+    await page.waitForTimeout(600);
+    ok('缺陷 4：「清除」立即生效（弹窗关闭 + 徽标归零）',
+      (await page.locator('.filter-modal').count()) === 0 && !(await hasBadge()),
+      `徽标=${await badge()}`);
+
+    // 重开：草稿从 tab.filter 取种子，刚清除过 → 应是未选字段的空行
+    await page.locator('[data-testid="btn-filter"]').click();
+    await page.waitForTimeout(400);
+    ok('缺陷 4：清除后重开弹窗是干净草稿',
+      (await page.locator('.filter-cond select.fb-col').first().inputValue()) === '',
+      `首行字段=${await page.locator('.filter-cond select.fb-col').first().inputValue()}`);
+
+    // 造一条**有效**条件：「为空」无需填值，选上字段即完整
+    // （⚠️ 未选字段时操作符只有 eq/ne，没有 isNull —— 必须先选字段）
+    await page.locator('.filter-cond select.fb-col').first().selectOption({ index: 1 });
+    await page.waitForTimeout(250);
+    await page.locator('.filter-cond select.fb-op').first().selectOption('isNull');
+    await page.waitForTimeout(250);
+    ok('缺陷 4：「为空」条件无需填值即算有效',
+      /1\s*条有效条件/.test(await page.locator('[data-testid="fb-preview-count"]').innerText()),
+      (await page.locator('[data-testid="fb-preview-count"]').innerText()).trim());
+
+    // 草稿阶段徽标不该动（数据还没筛）
+    ok('缺陷 4：编辑中的草稿不污染工具栏徽标', !(await hasBadge()), `徽标=${await badge()}`);
+
+    /**
+     * 🔴「N 条未填完已跳过」必须真的会显示。
+     *
+     * 这句提示上一版**从来没出现过**：两个计数都数"全部条件行"，
+     * 于是 `total > effective` 恒为 false。它是我写进需求文档的已交付能力，
+     * 却没有任何断言看着 —— 典型的"文档说有、界面从不显示"。
+     *
+     * ⚠️ 造半截行要把**字段清空**（选「（选择字段）」），不是靠 between 填一半：
+     *    新增行默认选中第一列，且 `eq` + 空串按定义算**完整**（查空串有意义）；
+     *    而 between 只在部分列类型上才有 —— 用空字段是唯一与列类型无关的半截态。
+     */
+    await page.locator('.fb-add').first().click();
+    await page.waitForTimeout(300);
+    await page.locator('.filter-cond select.fb-col').last().selectOption('');
+    await page.waitForTimeout(300);
+    const skipHint = (await page.locator('[data-testid="fb-preview-count"]').innerText()).trim();
+    ok('缺陷 4：半截条件被标注「未填完已跳过」（不是静默忽略）',
+      /1\s*条有效条件/.test(skipHint) && /1\s*条未填完已跳过/.test(skipHint), skipHint);
+
+    // 取消 → 草稿（含这条 isNull 与半截行）全部丢弃
+    await page.locator('[data-testid="btn-filter-cancel"]').click();
+    await page.waitForTimeout(300);
+    ok('筛选弹窗可关闭', (await page.locator('.filter-modal').count()) === 0);
+    ok('缺陷 4：🔴 取消后徽标不残留计数（草稿已丢弃）', !(await hasBadge()), `徽标=${await badge()}`);
+    const statusText = await page.locator('.statusbar').innerText().catch(() => '');
+    ok('缺陷 4：取消后状态栏不显示「筛选：N 条」', !/筛选：\d+\s*条/.test(statusText),
+      statusText.split('\n').filter((l) => l.includes('筛选')).join('|').slice(0, 60) || '(无筛选字样)');
+
+    // 重开弹窗：草稿回到「已应用」状态（= 空），被取消的条件不在里面
+    await page.locator('[data-testid="btn-filter"]').click();
+    await page.waitForTimeout(400);
+    ok('缺陷 4：重开弹窗看不到被取消的草稿（字段回到未选）',
+      (await page.locator('.filter-cond select.fb-col').first().inputValue()) === '',
+      `首行字段=${await page.locator('.filter-cond select.fb-col').first().inputValue()}`);
+
+    // 「应用」才让徽标亮 —— 与「取消不亮」构成一对，证明徽标只跟真值
+    await page.locator('.filter-cond select.fb-col').first().selectOption({ index: 1 });
+    await page.waitForTimeout(250);
+    await page.locator('.filter-cond select.fb-op').first().selectOption('isNull');
+    await page.waitForTimeout(250);
+    await page.locator('[data-testid="btn-filter-apply"]').click();
+    await page.waitForTimeout(600);
+    ok('缺陷 4：点「应用」后徽标才显示已生效的条件数', (await hasBadge()), `徽标=${await badge()}`);
+
+    // 收尾：恢复干净状态给后面的断言（后面还有 ⌘T / 多标签等场景）
+    await page.locator('[data-testid="btn-filter"]').click();
+    await page.waitForTimeout(400);
+    await page.locator('.filter-modal footer button', { hasText: '清除' }).click();
+    await page.waitForTimeout(600);
+  }
 
   // 10. SQL 编辑器（§6.4，E1 懒加载）—— 多标签版：⌘T 新建查询 tab
   const lazyStart = Date.now();

@@ -408,6 +408,17 @@ export function IconLink({ size = 12 }: IconProps) {
   );
 }
 
+/** 垃圾桶（缺陷 4 筛选改版：删除已保存方案的按钮图标） */
+export function IconTrash({ size = 12 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 7h16M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6.4 7l.9 12.1A1.6 1.6 0 0 0 8.9 20.6h6.2a1.6 1.6 0 0 0 1.6-1.5L17.6 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10.4 11v5.4M13.6 11v5.4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** 批量编辑（V13）：多行加一支笔 */
 export function IconBatchEdit({ size = 12 }: IconProps) {
   return (

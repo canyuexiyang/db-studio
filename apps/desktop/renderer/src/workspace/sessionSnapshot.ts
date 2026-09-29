@@ -107,8 +107,18 @@ function parseTab(raw: unknown): RestoredTab | null {
 /**
  * 从任意输入（通常是 JSON.parse 的结果）算恢复计划。
  * 任何一层损坏（非对象 / 版本不符 / tabs 不是数组 / 任何一条不合法）→ 空数组。
+ *
+ * @param isKnown 连接"还在不在"的判据（由调用方拿当前连接列表回答）。
+ *   🔴 快照是**上次退出时**的，里面的 connId 可能已经被删了（或换过机器/userData）。
+ *     恢复出一个指向不存在连接的标签，状态栏会显示「连接：未知」
+ *     （`connStates` 里没有它），而执行按钮只判 `!connId` 所以照样可点 ——
+ *     一点必然 NOT_CONNECTED。**比不恢复更糟**：用户看到的是"能点但必然失败"。
+ *     所以恢复前先核一遍连接还在不在，不传判据 = 不过滤（兼容既有单测）。
  */
-export function restorePlan(snapshot: unknown): RestoredTab[] {
+export function restorePlan(
+  snapshot: unknown,
+  isKnown: (connId: string) => boolean = () => true,
+): RestoredTab[] {
   if (typeof snapshot !== 'object' || snapshot === null) return [];
   const s = snapshot as Record<string, unknown>;
   if (s.version !== 1) return [];
@@ -117,18 +127,19 @@ export function restorePlan(snapshot: unknown): RestoredTab[] {
   for (const raw of s.tabs) {
     const tab = parseTab(raw);
     if (!tab) return []; // 一条损坏即整体放弃：半份恢复计划比不恢复更让人困惑
+    if (tab.connId !== null && !isKnown(tab.connId)) continue;
     out.push(tab);
   }
   return out.slice(0, SESSION_MAX_TABS);
 }
 
 /** 读取持久化的会话快照；没有/损坏返回 null */
-export function loadSessionSnapshot(): SessionSnapshot | null {
+export function loadSessionSnapshot(isKnown?: (connId: string) => boolean): SessionSnapshot | null {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    const plan = restorePlan(parsed);
+    const plan = restorePlan(parsed, isKnown);
     if (plan.length === 0) return null;
     const savedAt =
       typeof parsed === 'object' && parsed !== null && typeof (parsed as Record<string, unknown>).savedAt === 'number'

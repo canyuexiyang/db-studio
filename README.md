@@ -9,7 +9,8 @@ MySQL 优先、单机自用、macOS 原生观感 —— 对标 Navicat Premium�
 
 Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · 虚拟滚动
 
-[![tests](https://img.shields.io/badge/tests-1548_passed-brightgreen)](#验证)
+[![version](https://img.shields.io/badge/version-0.5.0-blue)](docs/RELEASES.md)
+[![tests](https://img.shields.io/badge/tests-1563_passed-brightgreen)](#验证)
 [![platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue)](#系统与环境限制)
 [![arch](https://img.shields.io/badge/arch-Apple%20Silicon%20%C2%B7%20Intel-orange)](#适配芯片)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
@@ -86,8 +87,8 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 - 三态排序（服务端执行）+ Shift 多列；15 种操作符的参数化筛选构建器 + 已保存筛选方案
 - 单元格 SQL 表达式模式（填 `NOW()`/`UUID()` 原样嵌入）、批量编辑条（多行同列 Apply/Discard）
 - 外键值导航与下拉、鼠标拖选矩形选区、⌥↑ 递进选区、⌘F 结果集内查找、⌘F12 列快速定位
-- 复制 6 格式（TSV/CSV/JSON/Markdown/INSERT/UPDATE 带真实值）、选中区聚合统计
-- JSON 高亮预览、BLOB/图片/HEX 预览与存盘
+- 复制 6 格式（TSV/CSV/JSON/Markdown/INSERT/UPDATE 带真实值）；**默认只复制值、不带列名表头**（需要列名走复制菜单的「含列名」，Markdown 永远带表头）
+- 选中区聚合统计；单元格完整值弹窗（JSON 高亮 / BLOB 预览与存盘）
 
 </details>
 
@@ -117,6 +118,7 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 <summary><b>对象浏览 · 导入导出 · 应用壳</b></summary>
 
 - 5 层库表树（6 类对象：表/视图/存储过程/函数/触发器/事件）、字段名反查搜索、树展开记忆
+- 详情面板三区块：表信息 / 字段（**注释常驻显示**）/ 建表语句 DDL；单元格完整值在弹窗里看
 - 可视化表设计器（字段/索引/外键三 Tab + 差异 ALTER + DDL 预览）
 - 导入 4 格式（csv/tsv/xlsx/json）向导；导出 5 格式（xlsx/csv/json/sql/markdown）+ 整库备份
 - 全部导入导出跑在 **utilityProcess**（可 kill = 真取消，崩溃不拖垮主进程）
@@ -254,14 +256,23 @@ npm run dist:dir        # 构建 + 只打 .app 目录 + ad-hoc 重签 + 自检�
 
 产物输出到 `apps/desktop/release/`（已被 `.gitignore` 排除）。
 
+### 版本号
+
+**唯一来源是根 `package.json` 的 `version`**（electron-builder 写入 `Info.plist`，子包版本不参与）。改版本号只改这一处。发布记录见 [`docs/RELEASES.md`](docs/RELEASES.md)。
+
 ### 安装到本机
 
 ```bash
 npm run dist:dir
+# 🔴 覆盖安装前先把旧包挪走留回滚（下面这步别省）
+mv "/Applications/DB Studio.app" "apps/desktop/release/.prev-installed-<旧版本>.app"
 ditto "apps/desktop/release/mac-arm64/DB Studio.app" "/Applications/DB Studio.app"
 xattr -dr com.apple.quarantine "/Applications/DB Studio.app"   # 去掉隔离属性（ad-hoc 签名）
-node scripts/verify-installed.mjs                              # 21 项安装后真机验收
+node scripts/verify-installed.mjs                              # 22 项安装后真机验收（含版本一致性断言）
 ```
+
+> ⚠️ 装完新包**第一次**跑 `verify-installed` 可能撞上 CDP 的冷启动窗口（端点已打印、`/json/version` 已 200，但 ws 握手还没就绪）。
+> 脚本已加固（探活 + 重试 3 次）；若仍失败，重跑一次即可 —— **别误判成新包有缺陷**。
 
 ### 打包关键点（`electron-builder.yml`）
 
@@ -337,19 +348,24 @@ npm run typecheck       # 两套 tsconfig，0 error
 npm test                # vitest 全部单测
 npm run check:bundle    # 体积预算门卫（首屏 ≤1.5MB、编辑器 lazy chunk ≤150KB gzip）
 npm run verify          # 全量门禁：typecheck + test + check:bundle + e2e 全家桶
+npm run verify:installed # 已安装 .app 的真机验收（22 项，含版本一致性断言）
+npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染层之外验证）
 ```
 
-**当前基线（v1.2 收官）**：
+**当前基线（v1.3 收官 · v0.5.0 已发布）**：
 
 | 门禁 | 结果 |
 |---|---|
-| 单元测试 | **1548 passed / 47 文件** |
-| `check:bundle` | 9/9 体积断言通过（首屏 421.6KB / 预算 1465KB） |
-| e2e:ui（真浏览器 UI 回归） | 190 |
+| 单元测试 | **1563 passed / 47 文件** |
+| `check:bundle` | 9/9 体积断言通过（首屏 442.5KB / 预算 1465KB；编辑器 lazy 133.0/150KB gzip） |
+| e2e:ui（真浏览器 UI 回归） | 219 |
 | e2e:app（Electron 真机） | 45 |
+| e2e:idle / e2e:idle:ui（空闲断开自动重连） | 16 / 4 |
 | 真库冒烟（e2e:smoke） | 74 |
 | 导入导出（e2e:transfer） | 28 |
 | SSH 真机（e2e:ssh） | 18 |
+| verify:installed（装好的 .app） | 22 |
+| verify:traffic-lights（像素） | 6 |
 
 > 🔴 **不跑 `npm run verify` 不许宣告完成**（AGENTS.md §五）。
 
@@ -359,6 +375,7 @@ npm run verify          # 全量门禁：typecheck + test + check:bundle + e2e �
 
 | 目录 | 内容 |
 |---|---|
+| [`docs/RELEASES.md`](docs/RELEASES.md) | **版本发布记录与门禁基线**（发版后追加；GitHub Release 说明从这里摘） |
 | [`docs/product/`](docs/product/) | PRD v1.0 定稿 + v1.1/v1.2 增量 + REQ 需求文档（**改功能前先查**） |
 | [`docs/engineering/`](docs/engineering/) | 技术评审 / Spike 实测报告 / 专项决策实测（代码注释按 §章节号引用） |
 | [`docs/research/`](docs/research/) | 竞品调研与功能路线图（唯一维护版本） |

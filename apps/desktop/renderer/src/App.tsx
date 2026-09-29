@@ -18,7 +18,8 @@ import { GridDataSource } from './grid/useGridData';
 import { SavePreviewModal } from './grid/SavePreviewModal';
 import { TreeView } from './tree/TreeView';
 import { CommandPalette } from './palette/CommandPalette';
-import { DetailPanel, type CellSelection } from './detail/DetailPanel';
+import { DetailPanel } from './detail/DetailPanel';
+import { CellValueModal, type CellSelection } from './detail/CellValueModal';
 import { FilterBuilder } from './filter/FilterBuilder';
 import { pickBackend, hasIpc, type Backend } from './backend';
 import { useWorkspaceTabs, type TableTabState, type WorkspaceTab } from './workspace/useWorkspaceTabs';
@@ -34,7 +35,7 @@ import {
   emptyFilter,
   filterableColumns,
   toOpenTableFilter,
-  conditionCount,
+  effectiveConditionCount,
   filterByCellValue,
   nextId,
   type FilterCondition,
@@ -595,9 +596,29 @@ export function App() {
   // ---- 右侧详情面板（§6.7） ----
   const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [cell, setCell] = useState<CellSelection | null>(null);
+  /**
+   * 缺陷 5：单元格完整值弹窗（原详情面板第三块搬过来的能力）。
+   * null = 关闭。table/database 一并存下来 —— 弹窗要按列类型判定二进制、
+   * 拼保存文件名，而这些在关闭前都不该随「用户又点了别的表」而变化。
+   */
+  const [cellModal, setCellModal] = useState<
+    (CellSelection & { table: TableMeta | null; database: string | null }) | null
+  >(null);
 
   // ---- 筛选器（§6.3.3） ----
-  const [filterModel, setFilterModel] = useState<FilterModel>(() => emptyFilter());
+  /**
+   * 🔴 弹窗编辑的是 **草稿**（`filterDraft`），不是已应用的筛选。
+   *
+   * 旧写法把 FilterBuilder 的 onChange 直接接 `setFilterModel`，而「已应用」的
+   * 真值是 `tab.filter`（loadTable 会写回）。后果有两处，都不是理论问题：
+   *   ① 加了条件再点「取消」→ 草稿留在了全局态里 → 工具栏「筛选 (2)」、
+   *      状态栏「筛选：2 条」照显示，而数据根本没筛；下次点「应用」还会把
+   *      用户以为已丢弃的条件用上。**「取消」变成了空按钮。**
+   *   ② 全局镜像**切表不同步** → 从 A 表切到 B 表，徽标仍显示 A 表的条件数。
+   * 现在：徽标/导出/状态栏一律从 `openTab.filter` 派生（唯一真值），
+   *       草稿只在弹窗生命周期内存在，取消即丢弃。
+   */
+  const [filterDraft, setFilterDraft] = useState<FilterModel | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
 
   /** 编辑器用的连接上下文：当前打开的 tab 所属连接，否则第一个连接 */
@@ -684,6 +705,34 @@ export function App() {
     };
   }, []);
 
+  /**
+   * 🔴 订阅主进程的连接状态推送（2026-09-29 缺陷 1 的接线补全）。
+   *
+   * 此前 App 只在启动时 `connList()` 读一次 connStates，之后**再也不更新** ——
+   * 只有 ConnStateBanner 自己订阅了推送。后果是：连接空闲 10 分钟被主进程
+   * 自动断开（idle → closed）后，App 的 connStates 仍停在 `connected`：
+   *   · 状态栏显示「已连接」（假象）；
+   *   · `ensureConnection` 读到 `connected` 直接返回 'ready' → 跳过重连 →
+   *     loadTable 照样撞上「连接当前状态 closed」→ 表格空白且无法编辑。
+   *
+   * 这条订阅是缺陷 1 修复能生效的前提：状态必须先在渲染层同步，
+   * ensureConnection 才能识别出「该重连了」。
+   *
+   * 幂等：推送只带 {id, state, lastError}，按 id 覆盖即可；重复推送同一状态
+   * 也只是写回同值（React 会跳过无变化渲染）。demo 后端的 onConnState 是空订阅，
+   * 浏览器 dev 下这段天然不触发，不需要额外分支。
+   */
+  useEffect(() => {
+    const unsub = backend.onConnState((ev) => {
+      if (!ev || typeof ev.id !== 'string') return;
+      const state = typeof ev.state === 'string' ? ev.state : '';
+      if (!state) return;
+      const lastError = typeof ev.lastError === 'string' ? ev.lastError : null;
+      setConnStates((prev) => ({ ...prev, [ev.id]: { state, lastError } }));
+    });
+    return unsub;
+  }, []);
+
   // ---------- 树 ----------
   const treeRoots: TreeNode[] = useMemo(() => {
     if (connections.length === 0) return [];
@@ -692,6 +741,39 @@ export function App() {
 
   // Q2：字段名 → 含该字段的表。搜索框输入字段名时反查表（内存 Map，schema 变化才重建）
   const columnIndex = useMemo(() => buildColumnIndex(schemas), [schemas]);
+
+  /**
+   * 缺陷 3：详情面板的数据来源 —— **优先左树当前选中的表节点**，无选中时回退激活标签。
+   *
+   * 此前 DetailPanel 只吃 `openTab?.table`（激活的表标签），意味着「在树里单击一张表」
+   * 不会更新右侧详情，必须双击把表打开成标签才行。用户反馈的正是这一点。
+   *
+   * 单击选中（onSelectNode → setActiveKey）本就携带了 object 节点的 TableMeta，
+   * 这里按 activeKey 在 treeRoots 里定位到节点，把 {table, database, connId} 交给详情面板。
+   * 找对象节点用递归（树最深 4 层，且只在 activeKey/schemas 变化时重算，不在热路径）。
+   */
+  const detailContext = useMemo<{ table: TableMeta; database: string; connId: string | null } | null>(() => {
+    if (!activeKey || treeRoots.length === 0) return null;
+    let found: { table: TableMeta; database: string; connId: string | null } | null = null;
+    const walk = (nodes: TreeNode[]): boolean => {
+      for (const n of nodes) {
+        if (n.key === activeKey && n.kind === 'object' && n.table && n.database) {
+          // obj:<connId>:<db>:<table> → 连接 id 取第 2 段（与 onOpenObject 同口径）
+          found = { table: n.table, database: n.database, connId: n.key.split(':')[1] ?? null };
+          return true;
+        }
+        if (n.children && walk(n.children)) return true;
+      }
+      return false;
+    };
+    walk(treeRoots);
+    return found;
+  }, [activeKey, treeRoots]);
+
+  /** 详情面板最终展示的表：树选中优先，其次激活的表标签 */
+  const detailTable = detailContext?.table ?? openTab?.table ?? null;
+  const detailDatabase = detailContext?.database ?? openTab?.database ?? null;
+  const detailConnId = detailContext?.connId ?? openTab?.connId ?? null;
 
   // D1：首帧不再用 defaultExpanded，改为【恢复持久化的展开记忆】
   //（记忆缺失/版本不符时 restoreExpansion 自己会退回 defaultExpanded）。
@@ -754,6 +836,41 @@ export function App() {
       ctx: { connId: string; database: string; tableName: string; table: TableMeta },
       opts: { keepSort?: boolean; sorts?: SortSpec[]; filter?: FilterModel | null; limit?: number } = {},
     ) => {
+      /**
+       * 🔴 查询前必须确保会话可用（2026-09-29 真机缺陷：表格空白、"无法编辑"）。
+       *
+       * 完整现象链条：连接空闲 10 分钟被 core-connection 的 idle 定时器自动断开
+       * → runtime 进入 `closed` → 此时**表结构照常显示**（schemaGetTable 走内存/
+       * 磁盘快照，不需要活会话），但 queryOpenTable 在 runQuery 的 beginQueryTracked
+       * 处被拒（`连接当前状态 closed，无法执行查询`）→ 网格只剩列头、一行数据都没有
+       * → 用户报的「表格查询结果无法直接编辑、编辑按钮点不动」，实质是「压根没有
+       * 格子可以编辑」。编辑链路本身没坏（isEditable / beginEdit 均正常）。
+       *
+       * 为什么修在 loadTable 而不是各个入口：它是**唯一**的数据拉取通道 ——
+       * 首开表 / 会话恢复 / 排序 / 筛选 / 右键快速筛选 / 刷新 / 加载更多 /
+       * 外键跳转全部经它。此前只有 openTableTab 做了 ensureConnection，
+       * 漏掉的恰好是「用户已经在看表、连接却悄悄断了」的高频路径。
+       *
+       * 经 ref 桥接而不是直接写进依赖：ensureConnection 定义在本函数之后
+       * （useCallback 的依赖数组在声明处即求值 → 直接引用会 TDZ 抛错），
+       * 而它内部只读 ref 与 setState，是稳定引用，桥接不会造成语义漂移。
+       */
+      const ensure = await ensureConnectionRef.current?.(ctx.connId);
+      if (ensure === 'need-password') {
+        // 没有存储密码 → 弹密码框；输完由 pendingAfterConnectRef 重放本次拉取
+        const cfg = connectionsRef.current.find((c) => c.id === ctx.connId);
+        if (cfg) setPwdPrompt(cfg);
+        pendingAfterConnectRef.current = () => void loadTableRef.current?.(tabId, ctx, opts);
+        setToast('该连接要求手动输入密码，输入后将重新载入表格数据');
+        return null;
+      }
+      if (ensure === 'failed') {
+        // 失败原因已由 onConnectNode toast（带原始错误）。这里只把 loading 收掉，
+        // 否则标签会永久停在「加载中…」—— 一个转不停的假状态比错误提示更糟。
+        ws.patchTable(tabId, { loading: false });
+        return null;
+      }
+
       ws.patchTable(tabId, { loading: true });
       try {
         /**
@@ -803,6 +920,20 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ws],
   );
+
+  /**
+   * loadTable / ensureConnection / connections 的 ref 桥（缺陷 1 修复所需）。
+   *
+   * 三者的定义顺序是 loadTable → ensureConnection → onConnectNode，而 loadTable
+   * 需要调 ensureConnection —— 直接引用会在 useCallback 依赖求值时踩 TDZ。
+   * ref 桥让 loadTable 在**调用时**才取最新实现，声明顺序无关紧要。
+   */
+  const loadTableRef = useRef<typeof loadTable | null>(null);
+  loadTableRef.current = loadTable;
+  const connectionsRef = useRef(connections);
+  connectionsRef.current = connections;
+  /** ensureConnection 的 ref 桥（赋值在 ensureConnection 定义之后，见下方） */
+  const ensureConnectionRef = useRef<((connId: string) => Promise<'ready' | 'failed' | 'need-password'>) | null>(null);
 
   /**
    * V22：底部提示条的「加载更多」—— 把该 tab 的行上限加一页后重拉。
@@ -933,6 +1064,9 @@ export function App() {
     [connections, onConnectNode],
   );
 
+  // 把 ensureConnection 灌进 ref 桥（loadTable 通过它在调用时取最新实现）
+  ensureConnectionRef.current = ensureConnection;
+
   /** promptEveryTime 连接输完密码后要继续的动作（执行 SQL / 打开表） */
   const pendingAfterConnectRef = useRef<(() => void) | null>(null);
 
@@ -996,7 +1130,19 @@ export function App() {
       return;
     }
 
-    const snapshot = loadSessionSnapshot();
+    /**
+     * 🔴 恢复前先核一遍连接还在不在 —— 快照是**上次退出时**的，连接可能已经被删了
+     *    （或换过机器 / 换过 userData）。恢复出一个指向不存在连接的标签，
+     *    状态栏会显示「连接：未知」（`connStates` 里没有它），而执行按钮只判
+     *    `!connId` 所以照样可点 —— 一点就 NOT_CONNECTED。**比不恢复更糟**：
+     *    用户看到的是"能点但必然失败"，还看不出原因。宁可少恢复一个标签。
+     *
+     *    实测现场：真机 e2e 互相污染时，localStorage 里留下 `dbstudio.session.v1`，
+     *    下一次冷启动恢复出 connId 已失效的 query 标签 → 状态栏「连接：未知」。
+     *    过滤放在纯逻辑层 `restorePlan`（可单测），不藏在这个 effect 里。
+     */
+    const alive = (connId: string) => connections.some((c) => c.id === connId);
+    const snapshot = loadSessionSnapshot(alive);
     if (!snapshot) return;
     for (const t of snapshot.tabs) {
       if (t.kind === 'query') {
@@ -1230,8 +1376,12 @@ export function App() {
       const next: FilterModel = {
         groups: groups.map((g, i) => (i === 0 ? { ...g, conditions: [...g.conditions, cond] } : g)),
       };
-      // 同步 FilterBuilder 的编辑态，避免弹开筛选面板时看到旧条件
-      setFilterModel(next);
+      // 🔴 这里**不需要**再同步任何全局编辑态：`loadTable` 会把 filter 写回
+      //    `tab.filter`，而筛选弹窗打开时是从 `openTab.filter` 取种子的 ——
+      //    真值只有一处，弹开面板自然看到刚加的这条。
+      // 乐观写回：loadTable 要等查询返回才 patch，期间工具栏徽标/状态栏会显示
+      // 旧条件数（用户点了「筛选」却看不到计数变化 = 以为没生效）。
+      ws.patchTable(tabId, { filter: next });
       void loadTable(
         tabId,
         { connId: tab.connId, database: tab.database, tableName: tab.tableName, table: tab.table },
@@ -1729,6 +1879,26 @@ export function App() {
           value: s.raw(row, col),
         });
       },
+      /**
+       * 缺陷 5：查看完整值 → 弹窗。
+       *
+       * 🔴 按 tabId 取该 pane 自己的 source 与 table，**不能用 openTab**：
+       *    onCellActivated 用 openTab 是既有实现的历史包袱（激活 pane 才有意义），
+       *    但右键菜单可能落在非激活 pane 上（多标签常挂 DOM）。用错 tab 的表现是
+       *    「弹窗里显示的是另一张表的值」—— 比不弹更糟。
+       */
+      onInspectCell: (tabId, row, col, value) => {
+        const t = ws.getTable(tabId);
+        if (!t) return;
+        setCellModal({
+          row,
+          col,
+          column: t.table.columns[col]?.name ?? '',
+          value,
+          table: t.table,
+          database: t.database,
+        });
+      },
       // F5：选中统计 → 状态栏（仅激活 pane 回报，见 TablePane 侧实现）
       onSelectionSummary: (_tabId, summary) => setSelectionSummary(summary),
       // A2：网格就地清了脏标记，这里只刷角标
@@ -2180,28 +2350,49 @@ export function App() {
   const onCancelSql = useCallback((queryId: string) => backend.queryCancel(queryId), []);
 
   // ---- 应用筛选（预览文本由 TablePane 自己显示，这里只管过滤动作的触发） ----
-  const filterCount = conditionCount(filterModel);
+  /**
+   * 已应用的条件数：从 `openTab.filter` 派生（**唯一真值**），不读草稿。
+   * 这样徽标只会在「真的筛了数据」之后才亮，且切表自动跟随。
+   * 🔴 用 `effectiveConditionCount` 而不是 `conditionCount`：后者把「未选字段/未填值」
+   *    的半截行也数进去，会宣称「筛选 (2)」而 WHERE 里其实只有 1 条（甚至 0 条）。
+   */
+  const appliedFilter = openTab?.filter ?? null;
+  const filterCount = appliedFilter ? effectiveConditionCount(appliedFilter) : 0;
+
+  /** 打开弹窗：把草稿种子设为当前已应用的筛选（没有就空） */
+  const openFilter = useCallback(() => {
+    setFilterDraft(openTab?.filter ?? emptyFilter());
+    setFilterOpen(true);
+  }, [openTab]);
+
+  /** 关闭弹窗（取消 / 点遮罩 / Esc）：草稿直接丢弃 */
+  const closeFilter = useCallback(() => {
+    setFilterOpen(false);
+    setFilterDraft(null);
+  }, []);
 
   const applyFilter = useCallback(() => {
-    if (!openTab) return;
-    setFilterOpen(false);
+    if (!openTab || !filterDraft) return;
+    const next = filterDraft;
+    closeFilter();
     void loadTable(
       openTab.id,
       { connId: openTab.connId, database: openTab.database, tableName: openTab.tableName, table: openTab.table },
-      { keepSort: true, sorts: openTab.sorts, filter: filterModel },
+      { keepSort: true, sorts: openTab.sorts, filter: next },
     );
-  }, [openTab, filterModel, loadTable]);
+  }, [openTab, filterDraft, closeFilter, loadTable]);
 
   const clearFilter = useCallback(() => {
     const next = emptyFilter();
-    setFilterModel(next);
+    // 「清除」是立即生效的动作（不是草稿）：同时收掉弹窗并重载数据
+    closeFilter();
     if (openTab)
       void loadTable(
         openTab.id,
         { connId: openTab.connId, database: openTab.database, tableName: openTab.tableName, table: openTab.table },
         { keepSort: true, sorts: openTab.sorts, filter: next },
       );
-  }, [openTab, loadTable]);
+  }, [openTab, closeFilter, loadTable]);
 
   // ---- 全局快捷键（§9.2 键盘优先）----
   // 必须挂在 window 上：焦点可能在树、工具栏、弹窗里，
@@ -2502,7 +2693,7 @@ export function App() {
         case 'close-tab': if (ws.activeId) requestCloseTab(ws.activeId); break;
         case 'open-palette': setPaletteOpen(true); break;
         case 'save': if (openTab) { const s = sources.get(openTab.id); if (s) onRequestSave(openTab.id, s); } break;
-        case 'filter': setFilterOpen(true); break;
+        case 'filter': openFilter(); break;
         case 'export':
           if (openTab) setExportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table });
           break;
@@ -2525,7 +2716,7 @@ export function App() {
       }
     });
     return off;
-  }, [newQueryTab, requestCloseTab, ws, openTab, sources, onRequestSave, onRefreshSchemas, cycleTheme, zoomStep, checkUpdate, openCurrentInNewWindow]);
+  }, [newQueryTab, requestCloseTab, ws, openTab, sources, onRequestSave, onRefreshSchemas, cycleTheme, zoomStep, checkUpdate, openCurrentInNewWindow, openFilter]);
 
   /**
    * ---- W 板块：答复主进程的关闭询问（原生红按钮 / 菜单「关闭窗口」）----
@@ -2708,7 +2899,7 @@ export function App() {
                 <IconSave size={11} />
                 保存 ⌘S
               </button>
-              <button onClick={() => setFilterOpen(true)} data-testid="btn-filter">
+              <button onClick={openFilter} data-testid="btn-filter">
                 <IconFilter size={11} />
                 筛选{filterCount > 0 ? ` (${filterCount})` : ''}
               </button>
@@ -2914,13 +3105,23 @@ export function App() {
       ) : null}
 
       <DetailPanel
-        table={openTab?.table ?? null}
-        database={openTab?.database ?? null}
+        table={detailTable}
+        database={detailDatabase}
+        connId={detailConnId}
         collapsed={detailCollapsed}
         onToggle={() => setDetailCollapsed((v) => !v)}
-        cell={cell}
         onToast={setToast}
       />
+
+      {cellModal ? (
+        <CellValueModal
+          cell={cellModal}
+          table={cellModal.table}
+          database={cellModal.database}
+          onClose={() => setCellModal(null)}
+          onToast={setToast}
+        />
+      ) : null}
 
       {pwdPrompt ? (
         <PasswordPromptModal
@@ -2967,16 +3168,16 @@ export function App() {
         />
       ) : null}
 
-      {filterOpen && openTab ? (
-        <div className="modal-mask" onClick={() => setFilterOpen(false)}>
+      {filterOpen && openTab && filterDraft ? (
+        <div className="modal-mask" onClick={closeFilter}>
           <div className="modal filter-modal" onClick={(e) => e.stopPropagation()}>
             <header>
               筛选 — {openTab.database}.{openTab.tableName}
             </header>
             <div className="body">
               <FilterBuilder
-                model={filterModel}
-                onChange={setFilterModel}
+                model={filterDraft}
+                onChange={setFilterDraft}
                 columns={filterableColumns(openTab.table)}
                 // V18：方案按表持久化（三元组 → tableKey），保存失败的原因经 toast 出来
                 connId={openTab.connId}
@@ -2988,8 +3189,11 @@ export function App() {
             <footer>
               <button onClick={clearFilter}>清除</button>
               <span className="spacer" />
-              <button onClick={() => setFilterOpen(false)}>取消</button>
-              <button className="primary" onClick={applyFilter}>
+              {/* 🔴 「取消」必须丢弃草稿 —— 否则徽标会显示一个从未生效的筛选数 */}
+              <button onClick={closeFilter} data-testid="btn-filter-cancel">
+                取消
+              </button>
+              <button className="primary" onClick={applyFilter} data-testid="btn-filter-apply">
                 应用
               </button>
             </footer>
@@ -3073,7 +3277,7 @@ export function App() {
               openTab.database === exportTarget.database &&
               openTab.tableName === exportTarget.table.name &&
               filterCount > 0
-                ? filterModel
+                ? appliedFilter
                 : null
             }
             onClose={() => setExportTarget(null)}
