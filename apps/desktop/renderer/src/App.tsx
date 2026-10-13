@@ -69,6 +69,7 @@ import {
 import { TreeContextMenu, type TreeContextMenuState, type ContextMenuItem } from './tree/TreeContextMenu';
 // R1 集成：应用壳（F1 菜单/F2 缩放/F4 会话恢复/F7 空态/D1 断线横幅）
 import { EmptyState } from './workspace/EmptyState';
+import { ObjectBrowser } from './workspace/ObjectBrowser';
 import { ConnStateBanner } from './workspace/ConnStateBanner';
 import { nextZoom, loadFontZoom, saveFontZoom, applyFontZoom } from './workspace/fontZoom';
 import { serializeSession, loadSessionSnapshot, saveSessionSnapshot, clearSessionSnapshot } from './workspace/sessionSnapshot';
@@ -87,6 +88,21 @@ function parseTreeKeyContext(key: string): { connId: string; database: string | 
     return { connId: parts[1], database: parts[2] };
   }
   if (parts[0] === 'conn' && parts.length >= 2) return { connId: parts[1], database: null };
+  return null;
+}
+
+/**
+ * 按 key 在树里反查节点（深度优先）。
+ *
+ * v0.6.0：中间面板的对象清单点一项时要拿到完整 TreeNode 才能打开表。
+ * 树可能上千节点，但这只在**用户点击**时跑一次（冷路径），不参与渲染。
+ */
+function findTreeNode(roots: TreeNode[], key: string): TreeNode | null {
+  for (const n of roots) {
+    if (n.key === key) return n;
+    const hit = findTreeNode(n.children ?? [], key);
+    if (hit) return hit;
+  }
   return null;
 }
 
@@ -406,6 +422,13 @@ export function App() {
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  /**
+   * v0.6.0：树上被多选的对象节点 key（由 TreeView 经 onSelectionChange 回传）。
+   *
+   * 状态放在宿主而不是树内部：批量删除要在这里弹危险确认、走 mutationApply，
+   * 树组件不该、也不需要知道删除这件事。
+   */
+  const [treeSelection, setTreeSelection] = useState<Set<string>>(() => new Set());
 
   // ---- 多标签工作区（P0-4）：表/查询混排，切换保留状态 ----
   const ws = useWorkspaceTabs();
@@ -729,6 +752,28 @@ export function App() {
       if (!state) return;
       const lastError = typeof ev.lastError === 'string' ? ev.lastError : null;
       setConnStates((prev) => ({ ...prev, [ev.id]: { state, lastError } }));
+    });
+    return unsub;
+  }, []);
+
+  /**
+   * v0.6.0：订阅 schema 后台刷新结果。
+   *
+   * 有了它，「刷新失效」的第三处根因（磁盘快照喂完就return、再不回源）才真正闭环：
+   * 快照先让树秒出，后台回源拿到新结构后从这条推送回来，schemas 随之更新。
+   *
+   * ⚠️ 与 connStates 同一条纪律：推送是**唯一**让 schemas 跟上真库的路，
+   * 不能只在启动读一次 —— 否则后台刷新的结果没人接，等于没做。
+   */
+  useEffect(() => {
+    const unsub = backend.onSchema((ev) => {
+      if (!ev || typeof ev.id !== 'string' || !Array.isArray(ev.databases)) return;
+      setSchemas((prev) => {
+        const next = ev.databases as DatabaseMeta[];
+        // 引用相同就不写回，避免无谓的重渲染（树上千节点，重建代价不小）
+        if (prev[ev.id] === next) return prev;
+        return { ...prev, [ev.id]: next };
+      });
     });
     return unsub;
   }, []);
@@ -2106,9 +2151,121 @@ export function App() {
 
   /** 复制文本到剪贴板 + toast（树右键「复制库名/表名」） */
   const copyText = useCallback((text: string) => {
-    void navigator.clipboard?.writeText(text).catch(() => undefined);
+ void navigator.clipboard?.writeText(text).catch(() => undefined);
     setToast(`已复制 ${text}`);
   }, []);
+
+  /**
+   * v0.6.0：批量删除选中的表。
+   *
+   * 🔴 三条必须守住的纪律：
+   *  1. **按 (连接, 库) 分组执行** —— selection 是全局的，可能同时选中两个库甚至
+   *     两个连接的表。mutationApply 只吃一个 connId/database，不能混着发。
+   *  2. **确认弹窗展示全部 SQL 原文**（红线 1：写操作先展示可预览的原文）。
+   *     选了 30 张表就要列 30 条 —— 只写"确定删除 30 张表吗"等于没让用户看清要删什么。
+   *  3. **生产环境要输入表数量**（用户拍板）—— confirmDanger 的 requireText 传数量，
+   *     不是表名：一次删几十张时逐个输表名不现实，输"30"才是有效门槛。
+   *
+   * @param targets 已解析好的 { connId, database, table } 列表
+   */
+  const onDropTablesBatch = useCallback(
+    async (targets: { connId: string; database: string; table: TableMeta }[]) => {
+   if (targets.length === 0) return;
+
+      // 按连接分组，逐组独立执行 —— 某组失败不该让其它组的成功结果变成未知
+      const groups = new Map<string, { connId: string; database: string; tables: TableMeta[] }>();
+      for (const t of targets) {
+   const k = `${t.connId}\u0000${t.database}`;
+        const g = groups.get(k);
+        if (g) g.tables.push(t.table);
+     else groups.set(k, { connId: t.connId, database: t.database, tables: [t.table] });
+      }
+
+      const statements = targets.map(
+     (t) => `DROP TABLE ${quoteQualified([t.database, t.table.name])}`,
+      );
+      const anyProduction = targets.some(
+     (t) => connections.find((c) => c.id === t.connId)?.colorTag === 'red',
+      );
+    const confirmed = await confirmDanger({
+    title: anyProduction ? '生产环境危险操作' : '批量删除表',
+        statements,
+        reason: `将删除 ${targets.length} 张表（表结构与全部数据），无法自动恢复`,
+        // 生产环境要求输入表数量而非表名 —— 一次删几十张时逐个输表名不现实
+        requireText: anyProduction ? String(targets.length) : null,
+      });
+      if (!confirmed) {
+  setToast('已取消执行');
+   return;
+      }
+
+      let okCount = 0;
+      const failures: string[] = [];
+      for (const g of groups.values()) {
+        const stmts = g.tables.map((t) => ({
+          sql: `DROP TABLE ${quoteQualified([g.database, t.name])}`,
+          params: [],
+     }));
+        try {
+          await backend.mutationApply({ connId: g.connId, database: g.database, statements: stmts });
+     okCount += g.tables.length;
+          void onRefreshConnSchema(g.connId);
+        } catch (e) {
+          failures.push(`${g.database}：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      if (failures.length > 0) {
+    setToast(`已删除 ${okCount} 张，失败 ${failures.length} 组（${failures.join('；')}）`);
+      } else {
+        setToast(`已删除 ${okCount} 张表`);
+      }
+
+      // 关闭指向已删表的标签 —— 否则标签还在，点保存就会报"表不存在"
+      const dropped = new Set(targets.map((t) => `${t.connId}:${t.database}:${t.table.name}`));
+      for (const t of ws.tabs) {
+ if (t.kind === 'table' && dropped.has(`${t.connId}:${t.database}:${t.tableName}`)) ws.closeTab(t.id);
+      }
+    },
+    [connections, confirmDanger, ws, onRefreshConnSchema],
+  );
+
+  /**
+   * v0.6.0：把树上选中的 key 解析成可执行的删表目标。
+   *
+   * 从 treeRoots 反查而不是只信 selection 里的 key —— 表可能刚被别处删掉，
+   * 拿着陈旧 key 去 DROP 会报一堆无意义的 "doesn't exist"。
+   * 只收 kind === 'table'（视图不可批量删除，语义上也说不通）。
+   */
+  const resolveSelectedTables = useCallback((): { connId: string; database: string; table: TableMeta }[] => {
+    if (treeSelection.size === 0) return [];
+    const out: { connId: string; database: string; table: TableMeta }[] = [];
+    const walk = (nodes: TreeNode[]) => {
+      for (const n of nodes) {
+        if (n.kind === 'object' && n.table?.kind === 'table' && treeSelection.has(n.key) && n.database) {
+  const parts = n.key.split(':');
+   const connId = parts[0] === 'obj' && parts.length >= 3 ? parts[1] : '';
+      if (connId) out.push({ connId, database: n.database, table: n.table });
+     }
+        walk(n.children ?? []);
+      }
+ };
+    walk(treeRoots);
+    return out;
+  }, [treeSelection, treeRoots]);
+
+  /**
+   * 树右键「批量删除表…」。调用点只在多选了 ≥2 张表时才出现 ——
+   * 选中 1 张时菜单里的「删除表」已经够用，重复出一个入口只会让人多点一次。
+   */
+  const dropSelectedTables = useCallback(() => {
+    const targets = resolveSelectedTables();
+    if (targets.length === 0) {
+      setToast('选中的对象已不存在（可能刚被删除）');
+ return;
+    }
+    void onDropTablesBatch(targets).then(() => setTreeSelection(new Set()));
+  }, [resolveSelectedTables, onDropTablesBatch]);
 
   /**
    * 树右键「运行 SQL 脚本…」入口：先握手（磁盘快照节点上脚本没法跑），
@@ -2176,13 +2333,22 @@ export function App() {
     [ensureConnection, connections, schemas, openScriptModal],
   );
 
-  /** 脚本跑完（或中止）刷新该连接的 schema —— 树要跟上脚本建出来的新表 */
+  /**
+   * 脚本跑完（或中止）刷新该连接的 schema —— 树要跟上脚本建出来的新表。
+   *
+   * 🔴 v0.6.0：原来这里是 `.catch(() => undefined)` —— 刷新失败静默吞掉，
+   *   用户看到的就是"我明明建了表，刷新了它还是不存在"，且没有任何线索。
+   *   刷新失败必须**如实报错**，否则用户无从判断是脚本没建成功还是刷新没生效。
+   */
   const onScriptFinished = useCallback(
     (connId: string) => {
       void backend
         .schemaRefresh(connId)
         .then((dbs) => setSchemas((prev) => ({ ...prev, [connId]: dbs })))
-        .catch(() => undefined);
+        .catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          setToast(`脚本已执行，但刷新表结构失败：${msg}（可在左侧树右键「刷新」重试）`);
+        });
     },
     [],
   );
@@ -2267,14 +2433,28 @@ export function App() {
         push('copyname', '复制表名', <IconCopy size={12} />, () => copyText(table.name));
         // 合并树侧自管菜单项（查看定义 / 复制 DDL / INSERT 模板 / 收藏）——排在危险项之前
         if (extra?.treeItems?.length) items.push(...extra.treeItems);
-        if (table.kind === 'table') {
-          push('truncate', '清空表…', null, () => void onTableDestructive('truncate', connId, node.database!, table), {
+if (table.kind === 'table') {
+      push('truncate', '清空表…', null, () => void onTableDestructive('truncate', connId, node.database!, table), {
             danger: true,
             separatorBefore: true,
-          });
+       });
           push('drop', '删除表…', null, () => void onTableDestructive('drop', connId, node.database!, table), {
-            danger: true,
+          danger: true,
           });
+    /**
+       * v0.6.0：多选了 ≥2 张表时，额外给一个批量删除入口。
+    *
+  * 刻意**不覆盖**单表「删除表」：用户右键的是某一张表，
+    * 语义上「删除表」就该删它；批量是另一件事，多点一次最不容易误删。
+         */
+          const selectedCount = treeSelection.size;
+    if (selectedCount > 1) {
+          const n = resolveSelectedTables().length;
+     push('drop-batch', `批量删除 ${n} 张表…`, null, dropSelectedTables, {
+   danger: true,
+            separatorBefore: true,
+   });
+        }
         }
       } else if (node.kind === 'group') {
         push('newconn', '新建连接…', <IconPlus size={12} />, () => setEditorState('new'));
@@ -2282,7 +2462,7 @@ export function App() {
 
       if (items.length > 0) setCtxMenu({ x, y, title: node.label, items });
     },
-    [connStates, onToggleConnectionNode, onDeleteConnection, onRefreshConnSchema, onOpenObject, ws, copyText, onTableDestructive, openScriptModal, openConnScriptPick],
+    [connStates, onToggleConnectionNode, onDeleteConnection, onRefreshConnSchema, onOpenObject, ws, copyText, onTableDestructive, openScriptModal, openConnScriptPick, treeSelection, resolveSelectedTables, dropSelectedTables],
   );
 
   /** 树空白区右键：新建连接 */
@@ -2849,6 +3029,8 @@ export function App() {
             onToast={setToast}
             onRenameRequest={(req) => setDesigner({ mode: 'edit', database: req.database, table: req.table, connId: req.connId })}
             onDeleteRequest={(req) => void onTableDestructive('drop', req.connId, req.database, req.table)}
+            // v0.6.0：多选集合回传（批量删除在宿主侧弹危险确认后执行）
+            onSelectionChange={setTreeSelection}
             onNewTable={(database) => {
               const connId = Object.keys(schemas).find((cid) =>
                 (schemas[cid] ?? []).some((d) => d.name === database),
@@ -3048,12 +3230,29 @@ export function App() {
         )}
 
         {ws.tabs.length === 0 ? (
-          <EmptyState
-            hasConnections={connections.length > 0}
-            onNewConnection={() => setEditorState('new')}
-            onOpenPalette={() => setPaletteOpen(true)}
-            onNewQuery={newQueryTab}
-          />
+          connections.length > 0 ? (
+            /**
+             * v0.6.0：中间面板跟随左侧树（用户拍板：空态时显示对象清单）。
+             *
+             * 有连接但没开标签时，旧的 EmptyState 只给三张快捷入口卡 ——
+             * 中间大片留白，而用户真正想做的事（看这个库有哪些表）只能去左树里数。
+             * 有连接就展示清单；一个连接都没有时才保留"新建连接"引导
+             * （那种情况下清单必然是空的，显示它没有意义）。
+             */
+            <ObjectBrowser
+              roots={treeRoots}
+              activeKey={activeKey}
+              onOpenObject={onOpenObject}
+              findByKey={findTreeNode}
+            />
+          ) : (
+            <EmptyState
+              hasConnections={false}
+              onNewConnection={() => setEditorState('new')}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onNewQuery={newQueryTab}
+            />
+          )
         ) : null}
 
         {toast ? (

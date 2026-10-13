@@ -33,6 +33,7 @@ import {
 } from '../shared/ipc-channels.js';
 import type { ConnectionConfig } from '@dbstudio/core-connection';
 import type { HistoryStore } from '@dbstudio/core-history';
+import { isValidSnippetName, snippetNameTooLongMessage } from '@dbstudio/core-history/snippet-name';
 import type { SecretStore } from '@dbstudio/core-secret';
 import type { ConnectionStore, SaveConnectionInput } from './connection-store.js';
 import type { SessionRegistry, QueryOutcome, DriverFactory } from './session-registry.js';
@@ -442,24 +443,45 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
     wrap<boolean>(async () => history.setStarred(Number(req.id), !!req.starred)),
   );
 
-  ipcMain.handle(IPC.SNIPPET_LIST, () => wrap(async () => history.listSnippets()));
+ipcMain.handle(IPC.SNIPPET_LIST, () => wrap(async () => history.listSnippets()));
 
-  ipcMain.handle(IPC.SNIPPET_SAVE, (_e, s: { name: string; sql: string; description?: string | null }) =>
-    wrap(async () => {
-      const existing = history.getSnippet(s.name);
-      if (existing) {
-        history.updateSnippet(s.name, s.sql, s.description ?? null);
-        return history.getSnippet(s.name)!;
-      }
-      history.addSnippet({
-        name: s.name,
-        sql: s.sql,
-        description: s.description ?? null,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+  /**
+   * v0.6.0：片段按（连接, 库）归属，库内同名即覆盖。
+   *
+   * 名称校验放在**主进程**而不是只靠渲染层：
+   * 名称是唯一键的一部分，越界/非法名必须在写库前拦住，
+   * 否则 demo 模式（渲染层校验）与真机行为会不一致。
+   */
+  ipcMain.handle(
+    IPC.SNIPPET_SAVE,
+    (
+      _e,
+      s: { name: string; sql: string; description?: string | null; connectionId?: string; database?: string },
+    ) =>
+      wrap(async () => {
+  if (!isValidSnippetName(s.name)) {
+   throw Object.assign(new Error(snippetNameTooLongMessage(s.name)), {
+        code: ERROR_CODES.VALIDATION,
       });
-      return history.getSnippet(s.name)!;
-    }),
+    }
+        const connId = s.connectionId ?? '';
+        const db = s.database ?? '';
+        const existing = history.getSnippet(connId, db, s.name);
+        if (existing) {
+     history.updateSnippet(connId, db, s.name, s.sql, s.description ?? null);
+    return history.getSnippet(connId, db, s.name)!;
+     }
+    history.addSnippet({
+   connectionId: connId,
+          database: db,
+          name: s.name,
+          sql: s.sql,
+          description: s.description ?? null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      });
+        return history.getSnippet(connId, db, s.name)!;
+      }),
   );
 
   // ---------- 应用 ----------

@@ -14,6 +14,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DatabaseMeta } from '@dbstudio/core-schema-cache';
+import {
+  isValidSnippetName,
+  snippetNameTooLongMessage,
+  SNIPPET_NAME_MAX,
+} from '@dbstudio/core-history/snippet-name';
 import { ColumnarReader, type ColumnarPayload } from '@dbstudio/core-ipc-codec';
 import {
   resolveExecution,
@@ -804,15 +809,18 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
         )}
       </div>
 
-      {snippetOpen ? (
+{snippetOpen ? (
         <SnippetSaveDialog
           sql={handleRef.current?.getText() ?? ''}
-          onClose={() => setSnippetOpen(false)}
+          // v0.6.0：片段按（连接, 库）归属 —— 归属从编辑器上下文取，不让用户手填
+          connectionId={connId}
+    database={database ?? null}
+   onClose={() => setSnippetOpen(false)}
           onSaved={(name) => {
-            setSnippetOpen(false);
-            onToast?.(`已保存片段 ${name}`);
+    setSnippetOpen(false);
+    onToast?.(`已保存片段 ${name}`);
           }}
-        />
+     />
       ) : null}
     </div>
   );
@@ -1114,16 +1122,23 @@ function ExplainTreeNode({ node }: { node: ExplainNode }) {
 /**
  * B1 保存片段对话框（轻量内联，浮在本面板上）。
  *
- * Enter 提交、Esc 取消；重名 = 覆盖（主进程 HistoryStore.addSnippet 的
- * 「按名 upsert」语义，已在输入框说明文案里注明）。
+ * Enter 提交、Esc 取消；重名 = 覆盖（**同一连接 + 同一库**内同名即覆盖，
+ * 主进程 HistoryStore 的语义，已在输入框说明文案里注明）。
  * 保存失败把错误显示在对话框内 —— 关掉就丢了错误不友好。
+ *
+ * v0.6.0：归属维度（连接/库）由编辑器上下文带入，用户不填；
+ * 名称上限 25 个**汉字**（按码点计，见 core-history 的 isValidSnippetName）。
  */
 function SnippetSaveDialog({
   sql,
+  connectionId,
+  database,
   onClose,
   onSaved,
 }: {
   sql: string;
+  connectionId?: string | null;
+  database?: string | null;
   onClose: () => void;
   onSaved: (name: string) => void;
 }) {
@@ -1132,23 +1147,37 @@ function SnippetSaveDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 实时字数（超限时禁提交并给出提示，不必等用户点保存才报错）
+  const nameLen = [...name.trim()].length;
+  const tooLong = nameLen > SNIPPET_NAME_MAX;
+
   const submit = useCallback(async () => {
     const n = name.trim();
-    if (!n) {
+  if (!n) {
       setError('请填写片段名称');
+      return;
+    }
+  if (!isValidSnippetName(n)) {
+    setError(snippetNameTooLongMessage(n));
       return;
     }
     if (saving) return;
     setSaving(true);
     setError(null);
     try {
-      await pickBackend().snippetSave({ name: n, sql, description: description.trim() || null });
-      onSaved(n);
+      await pickBackend().snippetSave({
+     name: n,
+        sql,
+    description: description.trim() || null,
+        connectionId: connectionId ?? '',
+     database: database ?? '',
+    });
+   onSaved(n);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
-  }, [name, description, saving, sql, onSaved]);
+  }, [name, description, saving, sql, onSaved, connectionId, database]);
 
   // 全局捕获 Enter/Esc：焦点不在输入框上（比如刚点了别处）时快捷键依然可用
   useEffect(() => {
@@ -1173,17 +1202,26 @@ function SnippetSaveDialog({
       }}
     >
       <div className="sql-dialog" role="dialog" aria-label="保存片段" data-testid="sql-snippet-dialog">
-        <div className="sql-dialog-title">保存片段</div>
-        <label className="sql-dialog-field">
-          <span>名称（必填；重名将覆盖已有片段）</span>
+<div className="sql-dialog-title">保存片段</div>
+        <div className="sql-dialog-field">
+     <span>归属：{database || '未指定库'}</span>
+        </div>
+      <label className="sql-dialog-field">
+          <span>
+ 名称（必填；写「这段 SQL 干什么用」，同一库内重名将覆盖已有片段）
+     </span>
           <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="如：按状态统计订单"
-            data-testid="sql-snippet-name"
+    autoFocus
+     value={name}
+         onChange={(e) => setName(e.target.value)}
+ placeholder="如：按状态统计订单"
+   data-testid="sql-snippet-name"
           />
-        </label>
+{/* 字数按码点计（中文/emoji 都算 1 个），超限即禁用保存 */}
+    <em className={tooLong ? 'sql-dialog-count over' : 'sql-dialog-count'}>
+    {nameLen} / {SNIPPET_NAME_MAX}
+     </em>
+     </label>
         <label className="sql-dialog-field">
           <span>描述（可选）</span>
           <input
@@ -1197,8 +1235,8 @@ function SnippetSaveDialog({
           <button onClick={onClose} disabled={saving}>
             取消
           </button>
-          <button className="primary" onClick={() => void submit()} disabled={saving || !name.trim()}>
-            {saving ? '保存中…' : '保存'}
+<button className="primary" onClick={() => void submit()} disabled={saving || !name.trim() || tooLong}>
+     {saving ? '保存中…' : '保存'}
           </button>
         </div>
       </div>

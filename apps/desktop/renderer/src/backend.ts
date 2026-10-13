@@ -134,8 +134,17 @@ export interface Backend {
   /** V6：星标/取消星标 */
   historyStar(id: number, starred: boolean): Promise<boolean>;
   snippetList(): Promise<Snippet[]>;
-  /** 按名保存/覆盖片段（同名即更新，主进程语义） */
-  snippetSave(s: { name: string; sql: string; description?: string | null }): Promise<Snippet>;
+  /**
+   * 按名保存/覆盖片段（**同一连接 + 同一库**内同名即更新，主进程语义）。
+   * v0.6.0：加了归属维度 —— 同名片段可在不同库各存一份。
+   */
+  snippetSave(s: {
+    name: string;
+    sql: string;
+    description?: string | null;
+    connectionId?: string;
+    database?: string;
+  }): Promise<Snippet>;
 
   appGetMode(): Promise<GlassModeDto>;
   appDiagnostics(): Promise<DiagnosticsDto>;
@@ -146,6 +155,11 @@ export interface Backend {
   saveBinary(suggestedName: string, data: ArrayBuffer): Promise<string | null>;
   /** 订阅连接状态变化（D1 断线横幅）。返回退订函数 */
   onConnState(cb: (p: { id: string; state: string; lastError?: string | null }) => void): () => void;
+  /**
+   * v0.6.0：订阅 schema 后台刷新结果（快照回源完成、且结构确有变化时推送）。
+   * 没有它，磁盘快照会把新表永久挡在树外（刷新失效的第三处根因）。
+   */
+  onSchema(cb: (p: { id: string; databases: DatabaseMeta[] }) => void): () => void;
 
   // ---- V21 / V23：应用维护与多窗口 ----
 
@@ -230,6 +244,8 @@ export const ipcBackend: Backend = {
   // ⚠️ 字符串与 ipc-channels.ts 的 EVENT_CONN_STATE_CHANNEL 同值——
   //    渲染层不能 value-import shared 的实现（会把 electron 拖进 bundle），所以这里用字面量
   onConnState: (cb) => api().on('event:connState', cb as (p: unknown) => void),
+  // v0.6.0：schema 后台刷新推送（同上，字面量而非 value-import shared）
+  onSchema: (cb) => api().on('event:schema', cb as (p: unknown) => void),
 
   // V21：手动检查更新（不 unwrap：开发态是正常结论，不是异常）
   appCheckUpdate: async () => {
@@ -291,6 +307,12 @@ const demoHistory = (() => {
     },
   };
 })();
+
+/**
+ * v0.6.0：demo 片段存储（内存）。
+ * key = `连接 库 名称`，与主进程 HistoryStore 的「库内唯一」语义对齐。
+ */
+const demoSnippets = new Map<string, Snippet>();
 
 const demoBackend: Backend = {
   kind: 'demo',
@@ -465,15 +487,35 @@ const demoBackend: Backend = {
   historySearch: async (keyword, limit) => demoHistory.search(keyword, limit ?? 100),
   historyDelete: async (id) => demoHistory.remove(id),
   historyStar: async (id, starred) => demoHistory.star(id, starred),
-  snippetList: async () => [],
-  snippetSave: async (s) => ({
-    id: Date.now(),
-    name: s.name,
-    sql: s.sql,
-    description: s.description ?? null,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  }),
+/**
+   * v0.6.0：demo 后端**真的存**片段。
+   *
+   * 🔴 原来这里是 `snippetList: async () => []` —— 永远返空。
+   *    后果不是"demo 里收藏不好用"，而是：任何靠 snippetList 验证的功能
+   *    （保存后能在列表里看到、⌘K 能搜到）在浏览器 dev 模式下**静默失效**，
+   *    门禁全绿、真机却是另一条路径。替身必须实现被测功能，不能返回空数组糊过去。
+   *
+   * 语义与主进程 HistoryStore 对齐：同一 (connectionId, database) 内同名即覆盖。
+   */
+  snippetList: async () => [...demoSnippets.values()],
+  snippetSave: async (s) => {
+    const connectionId = s.connectionId ?? '';
+    const database = s.database ?? '';
+    const key = `${connectionId}\u0000${database}\u0000${s.name}`;
+    const prev = demoSnippets.get(key);
+    const row = {
+      id: prev?.id ?? Date.now() + demoSnippets.size,
+      connectionId,
+      database,
+      name: s.name,
+      sql: s.sql,
+      description: s.description ?? null,
+      createdAt: prev?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+    };
+    demoSnippets.set(key, row);
+    return row;
+  },
 
   appGetMode: async () => ({ mode: 'css' as const, reason: 'demo 模式（非 Electron）' }),
   appDiagnostics: async () => ({
@@ -490,6 +532,7 @@ const demoBackend: Backend = {
   pickPrivateKey: async () => null,
   saveBinary: async () => null,
   onConnState: () => () => {},
+  onSchema: () => () => {},
 
   // V21：demo 模式没有打包产物也没有发布通道 —— 明确说明，不给假结论
   appCheckUpdate: async () => ({

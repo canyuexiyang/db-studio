@@ -190,6 +190,57 @@ describe('applyTrafficLights（缺陷 6：交通灯必须真实可见，不接�
     expect(TRAFFIC_LIGHT_MEASURED.left + 2 * TRAFFIC_LIGHT_MEASURED.pitch + TRAFFIC_LIGHT_MEASURED.diameter)
       .toBe(TRAFFIC_LIGHT_MEASURED.right);
   });
+
+  /**
+   * v0.6.0：垂直对齐的数字口径。
+   *
+   * 「灯和侧栏头标题没对齐」原先只能靠注释猜 —— 而且 styles.css 与 window.ts
+   * 记了两套互相矛盾的数（20.5 vs 21）。这条断言把关系钉死：
+   * 灯中心 y 恒等于 position.y + 直径/2；侧栏头高度恒等于 2 × 灯中心 y
+   * （因为 .sidebar-head 内容垂直居中，中心 = height/2）。
+   *
+   * 🔴 为什么要断"口径"而不断"具体值"：值会随 Electron/macOS 升级变，
+   *   但这两条**关系**永远成立。断了关系，改值时才会被提醒同步改 CSS。
+   */
+  it('灯中心 y 与侧栏头高度满足垂直对齐关系', async () => {
+    const { TRAFFIC_LIGHT_POSITION, TRAFFIC_LIGHT_MEASURED: M } = await import('./window.js');
+    // 灯中心 = 顶边偏移 + 半径
+    expect(M.centerY).toBe(TRAFFIC_LIGHT_POSITION.y + M.diameter / 2);
+    // 侧栏头垂直居中 → 内容中心 = height/2，必须等于灯中心
+    expect(M.sidebarHeadHeight).toBe(2 * M.centerY);
+  });
+
+  /**
+   * 🔴 错误输入反查：把侧栏头高度改成不对齐的值（如原来的 30px）时，
+   * 上面那条关系断言必须变红。否则它只是一条恒真的装饰性断言。
+   */
+  it('🔴 错误输入：侧栏头高度偏离 2×centerY 时关系断言会红', async () => {
+    const { TRAFFIC_LIGHT_MEASURED: M } = await import('./window.js');
+    const wrong = 30; // 修复前的值：内容中心 15，灯中心 21，差 6px
+    expect(wrong).not.toBe(2 * M.centerY);
+  });
+
+  /**
+   * 渲染层 CSS 与主进程常量必须同源。
+   *
+   * 这是本项目最易复发的一类漂移：CSS 里的 78px 与 TS 里的 78 各写各的。
+   * 直接读 styles.css 断言字面量，能在改动不同步时立刻报出来。
+   */
+  it('渲染层 CSS 的安全区/侧栏头高度与主进程常量一致', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { TRAFFIC_LIGHT_MEASURED: M } = await import('./window.js');
+    const css = readFileSync(
+      // main/ 与 renderer/ 同在 apps/desktop/ 下 —— 从 main/ 要上两级
+      new URL('../../renderer/src/styles.css', import.meta.url),
+      'utf8',
+    );
+    // .traffic-light-safe 的 width 必须等于主进程给的最小安全区
+    const safeWidth = css.match(/\.traffic-light-safe\s*\{[^}]*width:\s*(\d+)px/)?.[1];
+    expect(Number(safeWidth)).toBe(M.safeAreaMinWidth);
+    // .sidebar-head 的 height 必须等于对齐公式的结果
+    const headHeight = css.match(/\.sidebar-head\s*\{[^}]*height:\s*(\d+)px/)?.[1];
+    expect(Number(headHeight)).toBe(M.sidebarHeadHeight);
+  });
 });
 
 describe('onLowFps 运行时保护（跨机型保险）', () => {

@@ -21,13 +21,16 @@
  * 🔴 状态标记一律用 CSS 圆点（.tree-state::before），不许用 emoji/字符符号。
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   flattenTree,
   searchTree,
   filterFlatByQuery,
   toggleExpanded,
   expandAncestors,
+  selectionIntentOf,
+  nextSelection,
+  selectAllTables,
   type TreeNode,
 } from '@dbstudio/core-tree-view';
 import type { ObjectKind, TableMeta } from '@dbstudio/core-schema-cache';
@@ -43,7 +46,7 @@ import {
 import { TreeContextMenu, type TreeContextMenuState, type ContextMenuItem } from './TreeContextMenu';
 import {
   IconPlus, IconGear, IconX, IconPlug, IconPower, IconDatabase, IconTable, IconEye,
-  IconBraces, IconFn, IconStar, IconStarFilled, IconZap, IconClock, IconFileCode, IconCopy,
+  IconBraces, IconFn, IconStar, IconStarFilled, IconZap, IconClock, IconFileCode, IconCopy, IconFolder, IconCheck,
 } from '../ui/icons';
 
 
@@ -82,6 +85,15 @@ export interface TreeViewProps {
   onRenameRequest?: (req: TreeTableActionRequest) => void;
   /** C6 Delete/Backspace：删除表（宿主转 onTableDestructive，自带危险确认）。未传时按键无操作 */
   onDeleteRequest?: (req: TreeTableActionRequest) => void;
+  /**
+   * v0.6.0：多选变化的回调（集合为「当前选中的对象节点 key」）。
+   *
+   * 为什么回调的是集合而不是让宿主读 TreeView 内部状态：
+   * 批量删除的执行在宿主侧（要弹危险确认、走 mutationApply），
+   * 让宿主反向读组件内部 state 会把两层耦合在一起。
+   * 未传时树仍可多选，只是宿主拿不到集合（功能不灭，也不该由树自己删表）。
+   */
+  onSelectionChange?: (keys: Set<string>) => void;
 }
 
 /** C2：查看对象定义请求（kind 与 core-schema-cache 的 ObjectKind 对齐） */
@@ -150,12 +162,21 @@ export function TreeView({
   onToast,
   onRenameRequest,
   onDeleteRequest,
+  onSelectionChange,
 }: TreeViewProps) {
   const [query, setQuery] = useState('');
   // C5 收藏：状态收在组件内部，mount 时读，切换时整表重渲染
   const [favs, setFavs] = useState<string[]>(() => loadFavorites());
   // 宿主未接 onNodeContextMenu 时的降级自绘菜单（仅对象节点有树侧菜单项）
   const [ownMenu, setOwnMenu] = useState<TreeContextMenuState | null>(null);
+  /**
+   * v0.6.0：多选集合（对象节点 key）+ ⇧ 区间锚点。
+   *
+   * 刻意**只收对象节点**：容器节点（分组/库/类别）多选没有对应的批量动作，
+   * 把它们塞进集合只会让"已选 N 项"这个数字含义不明。
+   */
+  const [selection, setSelection] = useState<Set<string>>(() => new Set());
+  const anchorRef = useRef<string | null>(null);
 
   const flat = useMemo(() => flattenTree(roots, expanded), [roots, expanded]);
 
@@ -299,21 +320,85 @@ export function TreeView({
     [favs, onShowDefinition, copyDdl, copyInsertTemplate, toggleFav],
   );
 
-  /** 单击：选中一切；容器节点顺带展开；未连接的连接节点发起握手 */
+  /**
+   * v0.6.0：分组节点（表/视图类别）右键的「全选本组」。
+   *
+   * 只对 `objectKind === 'table'` 给：批量删除的语义是"删表"，
+   * 视图/过程/函数没有同一个批量动作，给了就是给一个点不动的菜单项。
+   *
+   * 只收**本组子节点**里kind==='table' 的 key，不去扫整棵树。
+   */
+  const buildGroupMenuItems = useCallback(
+    (n: TreeNode): ContextMenuItem[] => {
+   if (n.kind !== 'kind' || n.objectKind !== 'table') return [];
+      const tableKeys = (n.children ?? [])
+        .filter((c) => c.kind === 'object' && c.table?.kind === 'table')
+      .map((c) => c.key);
+    if (tableKeys.length === 0) return [];
+      return [
+     {
+     key: 'tree-select-group',
+          label: `全选本组（${tableKeys.length} 张表）`,
+     icon: <IconCheck size={12} />,
+          separatorBefore: true,
+          onSelect: () => {
+            const next = selectAllTables(tableKeys);
+      setSelection(next);
+       onSelectionChange?.(next);
+         // 锚点落在本组第一张表：紧接着 ⇧ 点别处能接着取区间
+    anchorRef.current = tableKeys[0];
+          },
+        },
+      ];
+    },
+    [onSelectionChange],
+  );
+
+/** 单击：选中一切；容器节点顺带展开；未连接的连接节点发起握手 */
   const onRowClick = useCallback(
-    (f: { node: TreeNode; hasChildren: boolean }) => {
+(f: { node: TreeNode; hasChildren: boolean }, e: React.MouseEvent) => {
       const n = f.node;
+
+      /**
+       * v0.6.0：多选。根因是原来这里拿不到 event，读不到 ⌘/⇧。
+       *
+       * ⚠️ 只有**对象节点**进选区：容器节点（连接/分组/库/类别）没有批量动作，
+       * 让它们可多选只会让「已选 N 项」这个数字变得无法解释。
+       */
+      if (n.kind === 'object') {
+        const visibleKeys = visible.map((x) => x.node.key);
+        const next = nextSelection(
+          visibleKeys,
+          selection,
+          anchorRef.current,
+          n.key,
+          selectionIntentOf(e),
+        );
+        anchorRef.current = next.anchorKey;
+        setSelection(next.selected);
+        onSelectionChange?.(next.selected);
+        onSelectNode?.(n);
+        return;
+      }
+
+      // 点容器节点 = 离开多选语境（跟 Finder 一致），否则"已选 3 项"会顽固残留
+      if (selection.size > 0) {
+        setSelection(new Set());
+        anchorRef.current = null;
+        onSelectionChange?.(new Set());
+      }
+
       onSelectNode?.(n);
       if (n.kind === 'connection' && n.connection) {
         if (!isLiveState(stateOf(n.connection))) onToggleConnection?.(n.connection, false);
-        return;
+      return;
       }
       // 容器节点（分组/库/对象类别）：单击即展开/收起
       if (f.hasChildren && (n.kind === 'group' || n.kind === 'database' || n.kind === 'kind')) {
         onToggle(n.key);
       }
     },
-    [onSelectNode, onToggle, onToggleConnection, stateOf],
+    [onSelectNode, onToggle, onToggleConnection, stateOf, visible, selection, onSelectionChange],
   );
 
   const onDoubleClick = useCallback(
@@ -398,7 +483,18 @@ export function TreeView({
               ? `${stateLabel(st.state)}${st.lastError ? ' — ' + st.lastError : ''}${live ? '（双击展开库；电源按钮断开）' : '（单击连接）'}`
               : '单击连接'
             : n.label;
-        const KindIcon = n.kind === 'object' && n.table ? KIND_ICONS[n.table.kind] : n.kind === 'database' ? IconDatabase : null;
+        // v0.6.0：kind 分组节点（表/视图/存储过程/函数/触发器/事件）此前漏了图标，
+        // 导致分组行只有文字没有类别标识。KIND_ICONS 六项本就是齐的，纯接线漏了。
+        const KindIcon =
+          n.kind === 'object' && n.table
+            ? KIND_ICONS[n.table.kind]
+            : n.kind === 'kind' && n.objectKind
+              ? KIND_ICONS[n.objectKind]
+              : n.kind === 'database'
+                ? IconDatabase
+                : n.kind === 'group'
+                  ? IconFolder
+                  : null;
         // C5/C7 只服务表对象：星标按钮与拖拽都只挂在表行上
         const isTableObj = n.kind === 'object' && n.table?.kind === 'table';
         const favKey = n.kind === 'object' ? favKeyOfObjectKey(n.key) : '';
@@ -429,19 +525,30 @@ export function TreeView({
         return (
           <div
             key={n.key}
-            className={`tree-row${activeKey === n.key ? ' active' : ''}`}
+            className={`tree-row${activeKey === n.key ? ' active' : ''}${selection.has(n.key) ? ' selected' : ''}`}
             style={{ paddingLeft: 6 + f.depth * 14 }}
             data-testid={n.kind === 'connection' ? `tree-conn-${n.connection?.name ?? ''}` : undefined}
+            /**
+             * v0.6.0：稳定的定位钩子。
+             *
+             * 为什么加：e2e 之前只能靠样式反推节点类型（"有 badge 的是库"），
+             * 结果分组节点也带 badge（显示连接数），断言就指错了对象。
+             * 这类"靠观感猜语义"的选择器天生脆弱 —— 样式一改就断，而且断得莫名其妙。
+             * 节点 kind 与层级是**语义**，就该由组件显式暴露。
+             */
+ data-node-kind={n.kind}
+      data-node-depth={f.depth}
             draggable={isTableObj}
             onDragStart={onDragStart}
-            onClick={() => onRowClick(f)}
+            onClick={(e) => onRowClick(f, e)}
             onDoubleClick={() => onDoubleClick(f)}
             onContextMenu={(e) => {
               // Navicat 语义：右键 = 选中 + 弹出该级别菜单（阻止系统菜单）
               e.preventDefault();
               e.stopPropagation();
-              onSelectNode?.(n);
-              const treeItems = buildTreeMenuItems(n);
+onSelectNode?.(n);
+        // v0.6.0：对象节点给 C2/C3/C5，分组节点给「全选本组」
+    const treeItems = [...buildTreeMenuItems(n), ...buildGroupMenuItems(n)];
               if (onNodeContextMenu) {
                 // 宿主菜单为主：树侧项经第 4 参交由宿主合并
                 onNodeContextMenu(n, e.clientX, e.clientY, treeItems.length > 0 ? { treeItems } : undefined);

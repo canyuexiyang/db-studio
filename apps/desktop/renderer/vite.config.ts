@@ -104,6 +104,9 @@ export default defineConfig({
     alias: [
       // exact 规则必须排前面（见上方注释：前缀匹配会把 /facts 拼到 index.ts 后面）
       { find: /^@dbstudio\/core-sql-editor\/facts$/, replacement: resolve(root, 'packages/core-sql-editor/src/facts.ts') },
+      // v0.6.0：片段命名规则子入口。主入口带 node:sqlite，
+      // 渲染层只能从零依赖的 snippet-name 取（与 /facts 同思路）。
+      { find: /^@dbstudio\/core-history\/snippet-name$/, replacement: resolve(root, 'packages/core-history/src/snippet-name.ts') },
       // S 板块 / P1-C：编辑器新增的子入口。刻意拆开而不是并进主入口 ——
       // 主入口带关键字表与函数表，首屏组件一引就多付十几 KB（与 /facts 同口径）。
       { find: /^@dbstudio\/core-sql-editor\/tokens$/, replacement: resolve(root, 'packages/core-sql-editor/src/tokens.ts') },

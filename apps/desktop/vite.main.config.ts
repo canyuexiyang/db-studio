@@ -16,6 +16,16 @@ const root = resolve(here, '../..');
  *    而且驱动本来就是懒加载的（S2：别把它塞进主进程启动路径）
  */
 const CORE_ALIAS: Record<string, string> = {
+  /**
+   * 🔴 子入口必须排在同名主入口**之前**（键的插入顺序 = 前缀匹配顺序）。
+   * 放后面的话 `@dbstudio/core-history` 先命中，会把
+   * `@dbstudio/core-history/snippet-name` 拼成
+   * `.../src/index.ts/snippet-name` → 构建期UNLOADABLE_DEPENDENCY。
+   *
+   * ⚠️ 这个坑 typecheck 和单测都发现不了（tsconfig paths 与 vitest alias
+   * 各有自己的匹配规则），只有真正 build 才炸 —— 别指望门禁会拦。
+   */
+  '@dbstudio/core-history/snippet-name': resolve(root, 'packages/core-history/src/snippet-name.ts'),
   '@dbstudio/core-sql-guard': resolve(root, 'packages/core-sql-guard/src/index.ts'),
   '@dbstudio/core-sql-ident': resolve(root, 'packages/core-sql-ident/src/index.ts'),
   '@dbstudio/core-history': resolve(root, 'packages/core-history/src/index.ts'),

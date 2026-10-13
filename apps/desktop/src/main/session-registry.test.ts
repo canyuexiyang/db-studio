@@ -24,7 +24,7 @@ import {
 import { TypeCode } from '@dbstudio/core-ipc-codec';
 import { SchemaCache } from '@dbstudio/core-schema-cache';
 import { defaultConnectionConfig, type ConnectionConfig, type ConnectionState } from '@dbstudio/core-connection';
-import type { DatabaseMeta, ObjectKind } from '@dbstudio/core-schema-cache';
+import type { DatabaseMeta, ObjectKind, TableMeta } from '@dbstudio/core-schema-cache';
 import type { MySqlCredentials, QueryResult, TunnelHandle, TableInfo, ForeignKeyMeta, ReferencedValueQuery, ReferencedValueLookup } from '@dbstudio/core-driver-mysql';
 
 /** 可编程的替身驱动：想让它怎么返回就怎么返回 */
@@ -52,6 +52,10 @@ class FakeDriver implements DriverLike {
   queryDelayMs = 0;
   /** introspect 返回什么 */
   introspectResult: DatabaseMeta[] = SCHEMA;
+  /** introspect 被调用次数（v0.6.0：验证快照路径会回源） */
+  introspectCalls = 0;
+  /** listDatabases 被调用次数 */
+  listDatabasesCalls = 0;
 
   // ---- C2/C9 替身能力 ----
   /** showCreateObject 的返回值（null = 抛"对象不存在"） */
@@ -92,7 +96,20 @@ class FakeDriver implements DriverLike {
   }
 
   async introspect(): Promise<DatabaseMeta[]> {
+    this.introspectCalls++;
     return this.introspectResult;
+  }
+
+  /**
+   * v0.6.0：刷新语义改成「刷该连接可见的全部库」，registry 会先问可见库清单。
+   *
+   * 替身按 introspectResult 的库名作答 —— 那是这份元数据里真实存在的库。
+   * ⚠️ 不要返回跟 introspectResult 对不上的固定列表：那就是「替身照自己的假设实现」，
+   *    断言会在被测代码换了行为后依然全绿。
+   */
+  async listDatabases(): Promise<string[]> {
+    this.listDatabasesCalls++;
+    return this.introspectResult.map((d) => d.name);
   }
 
   async showCreateObject(database: string, name: string, kind: ObjectKind): Promise<string> {
@@ -128,6 +145,28 @@ class FakeDriver implements DriverLike {
   async close(): Promise<void> {
     this.serverVersion = null;
   }
+}
+
+/**
+ * v0.6.0 刷新用例用的轻量构造器。
+ *
+ * 只关心「库名 + 表名 + 类别」——schemaShapeChanged 也只比这三样，
+ * 列定义在这批用例里是噪声。刻意不复用上面那份 SCHEMA 的完整列结构。
+ */
+function table(name: string, kind: TableMeta['kind'] = 'table') {
+  return {
+    name,
+    kind,
+    comment: null,
+    estimatedRows: null,
+    engine: 'InnoDB',
+    collation: null,
+    columns: [],
+  };
+}
+
+function db(name: string, tables: ReturnType<typeof table>[]): DatabaseMeta {
+  return { name, charset: 'utf8mb4', collation: 'utf8mb4_general_ci', tables };
 }
 
 const SCHEMA: DatabaseMeta[] = [
@@ -628,6 +667,70 @@ describe('Schema', () => {
     const r2 = new SessionRegistry(cache, () => driver);
     // 未连接也能拿到快照信息
     expect(r2.snapshotInfo('c1')?.databases[0].name).toBe('app_db');
+  });
+
+  /**
+   * 🔴 v0.6.0「刷新失效」第三处根因的行为断言。
+   *
+   * 上一条「有磁盘快照时不回源」只查 snapshotInfo，**查不到是否回源**——
+   * 那是照着旧实现写的断言，改了实现它照样绿。这里补的是能被证伪的那条：
+   * 快照路径必须【后台回源】，且回源拿到新结构后【推送】出去。
+   */
+  it('快照路径：先返回快照让树秒出，随后后台回源并推送新结构', async () => {
+    // 磁盘上先落一份"只有老表"的快照
+    cache.save('c1', [db('app_db', [table('order')])]);
+
+    // 真库里已经多了新表（脚本建表后的真实状态）
+    driver.introspectResult = [db('app_db', [table('order'), table('payment')])];
+
+    const r = new SessionRegistry(cache, () => driver);
+    const pushed: { id: string; dbs: DatabaseMeta[] }[] = [];
+    r.setOnSchemaChange((id, dbs) => pushed.push({ id, dbs }));
+    await r.connect(cfg(), 'pwd');
+
+    const first = await r.getSchema('c1');
+    // 首次拿到的应该是磁盘快照（老表），树首屏不必等 information_schema
+    expect(first[0].tables.map((t) => t.name)).toEqual(['order']);
+    expect(pushed).toHaveLength(0); // 此刻还没回源完，不该已经推
+
+    // 等后台回源落地
+    await vi.waitFor(() => expect(pushed).toHaveLength(1));
+    expect(pushed[0].id).toBe('c1');
+    expect(pushed[0].dbs[0].tables.map((t) => t.name)).toEqual(['order', 'payment']);
+
+    // 之后再取就是新结构了
+    const second = await r.getSchema('c1');
+    expect(second[0].tables.map((t) => t.name)).toEqual(['order', 'payment']);
+  });
+
+  it('🔴 错误输入：回源结构没变时不推送（否则每次回源都重建上千节点的树）', async () => {
+    cache.save('c1', SCHEMA);
+    const r = new SessionRegistry(cache, () => driver);
+    const pushed: DatabaseMeta[][] = [];
+    r.setOnSchemaChange((_id, dbs) => pushed.push(dbs));
+    await r.connect(cfg(), 'pwd');
+
+    // introspectResult 与快照同形 → 不该推
+    driver.introspectResult = structuredClone(SCHEMA);
+    await r.getSchema('c1');
+    await new Promise((res) => setTimeout(res, 30));
+    expect(pushed).toHaveLength(0);
+  });
+
+  it('🔴 错误输入：refresh(force) 覆盖【全部可见库】，不再被 defaultDatabase 限死', async () => {
+    // 配了默认库的连接 —— 旧实现只 introspect 这一个库，新表在别的库里就永远刷不出来
+    const c = { ...cfg(), defaultDatabase: 'app_db' };
+    driver.introspectResult = [db('app_db', [table('order')]), db('crm_db', [table('leads')])];
+
+    const r = new SessionRegistry(cache, () => driver);
+    await r.connect(c, 'pwd');
+    await r.getSchema(c.id, { force: true });
+
+    expect(driver.listDatabasesCalls).toBeGreaterThan(0);
+    // 拿到了两个库 —— 若被 defaultDatabase 限死，这里只会有 app_db
+    const names = (await r.getSchema(c.id, { force: true })).map((d) => d.name);
+    expect(names).toContain('app_db');
+    expect(names).toContain('crm_db');
   });
 
   it('getTable 取到表元数据（网格靠它判可编辑性）', async () => {

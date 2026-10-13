@@ -1908,13 +1908,122 @@ try {
     ok('⌘W 确认后关闭当前标签', tabsAfter === tabsBefore - 1, `${tabsBefore} → ${tabsAfter}`);
     const activeAfter = await page.locator('.ws-tab.active').first().innerText().catch(() => '');
     ok('关闭后激活邻位标签', /查询/.test(activeAfter), activeAfter.split('\n')[0] ?? '');
-    // 关掉剩余 tab（可能不止一个）→ 空状态提示
+    // 关掉剩余 tab（可能不止一个）→ 空状态
     for (let i = 0; i < 8; i++) {
       if ((await page.locator('.ws-tab').count()) === 0) break;
       await page.keyboard.press('Meta+w');
       await page.waitForTimeout(400);
     }
-    ok('全部关闭后显示空状态提示', (await page.locator('[data-testid="empty-state"]').count()) === 1);
+    /**
+     * v0.6.0：空态形态变了 —— 有连接时中间面板改为显示**对象清单**（跟随左侧树），
+     * 不再是三张快捷入口卡。这是用户拍板的形态（见需求项2）。
+     *
+     * 断言跟着行为走，不是把测试改绿了事：
+     * 这里同时守住两个条件 —— 清单在（新的空态）且旧的 EmptyState 不再出现
+     *（否则等于新组件根本没接管，空态还是旧的）。
+     */
+    ok('全部关闭后显示对象清单（v0.6.0 空态）',
+      (await page.locator('[data-testid="object-browser"]').count()) === 1);
+    ok('旧的快捷入口空态已被对象清单取代',
+      (await page.locator('[data-testid="empty-state"]').count()) === 0);
+    // 清单应列出 demo 对象（能点开才算真的能用）
+    ok('对象清单列出了可打开的对象', (await page.locator('.ob-item').count()) > 0,
+      `${await page.locator('.ob-item').count()} 项`);
+
+/**
+     * v0.6.0：清单【跟随左侧树】联动（用户拍板的形态）。
+     *
+     * 断言口径：选中某个库 → 清单收敛到那个库。选 kind 行（表/视图分组）
+     * 才能断出"· 表"这种更细的联动，但那需要先展开库；
+     * 这里用库级联动做判定（更稳，且同样能证伪"根本没联动"）。
+     */
+    {
+      // 先展开第一个库：点它的三角（不是行{
+    // 展开到库层：点第一个未展开的三角（三角是容器行的标志）
+      const caret = page.locator('.tree-row[data-node-kind] .tree-caret', { hasText: '▸' }).first();
+      if ((await caret.count()) > 0) {
+        await caret.click();
+      await page.waitForTimeout(400);
+      }
+      /**
+       * 定位靠 TreeView 显式暴露的 data-node-kind（见该组件注释）。
+       * 早先用"有 .tree-badge 就是库"来猜，结果**分组节点也带 badge**（显示连接数），
+       * 断言指错了对象 —— 靠观感猜语义的测试天生脆弱，改样式就断且断得莫名其妙。
+       */
+   const dbRow = page.locator('.tree-row[data-node-kind="database"]').first();
+      const dbName = ((await dbRow.locator('.tree-label').innerText().catch(() => '')) ?? '').trim();
+      if (dbName) {
+    await dbRow.click();
+        await page.waitForTimeout(350);
+        const title = await page.locator('.ob-title').first().innerText().catch(() => '');
+        ok('清单标题跟随左侧树选中项（库名）', title.startsWith(dbName), `清单「${title}」vs 选中「${dbName}」`);
+     const dbs = [...new Set((await page.locator('.ob-item .ob-db').allInnerTexts()).map((t) => t.trim()))];
+        ok('清单条目收敛到选中的库', dbs.length <= 1 && (!dbs.length || dbs[0] === dbName), `库：${dbs.join(',') || '（空）'}`);
+      } else {
+     ok('清单标题跟随左侧树选中项（库名）', false, '没找到库行（data-node-kind="database"），无法验证联动');
+      }
+    }
+
+    /**
+     * 展开到对象层。
+     *
+     * 🔴 必须**逐层全展开**：树是分组→连接→库→类别→对象 四层，
+     *    每点一次 ▸ 只展开当前那一批里尚未展开的行；只点固定次数会停在中间层。
+     *    （实测：点4 次能到kind 层，要再点几轮才够 3 张表。）
+     *    循环条件用「还有没有 ▸」而不是固定次数 —— 树有多深就展开多深。
+     */
+    for (let pass = 0; pass < 12; pass++) {
+      const caret = page.locator('.tree-row[data-node-kind] .tree-caret', { hasText: '▸' });
+      const remaining = await caret.count();
+      if (remaining === 0) break;
+      await caret.first().click();
+      await page.waitForTimeout(250);
+    }
+  }
+
+  // 13d. v0.6.0 树多选
+  {
+/**
+     * 多选用 ⌘ 点击（macOS 惯例）。
+     *
+     * 定位用 data-node-kind="object"（语义钩子）**并**要求有 .tree-fav：
+     * 后者只挂在表对象行上。两层过滤保证点到的是真表，而不是视图/过程。
+     */
+    const tableRows = page.locator('.tree-row[data-node-kind="object"]:has(.tree-fav)');
+    const n = Math.min(await tableRows.count(), 2);
+    if (n < 2) {
+      ok('⌘ 点击可多选（行上有 selected 标记）', false,
+   `只找到 ${await tableRows.count()} 个表对象行，需先展开表分组`);
+    } else {
+      for (let i = 0; i < n; i++) {
+        await tableRows.nth(i).click({ modifiers: ['Meta'] });
+        await page.waitForTimeout(150);
+      }
+      const sel = await page.locator('.tree-row.selected').count();
+      ok('⌘ 点击可多选（行上有 selected 标记）', sel === n, `点了 ${n} 行，selected ${sel} 行`);
+    }
+
+    // ⇧ 区间：锚点在第一张表，⇧ 点第三张 → 应选中 3 张
+    const rows3 = page.locator('.tree-row[data-node-kind="object"]:has(.tree-fav)');
+    if ((await rows3.count()) >= 3) {
+      await rows3.nth(0).click();
+      await page.waitForTimeout(150);
+      await rows3.nth(2).click({ modifiers: ['Shift'] });
+      await page.waitForTimeout(200);
+      const sel3 = await page.locator('.tree-row.selected').count();
+      ok('⇧ 点击按可见顺序取区间', sel3 === 3, `${sel3} 行`);
+    } else {
+   ok('⇧ 点击按可见顺序取区间', false, `表对象行只有 ${await rows3.count()} 个，不足 3`);
+    }
+  }
+
+  // 13e. v0.6.0 分组节点有类别图标
+  {
+    // 「表/视图」这类分组行此前没有图标（KindIcon 漏了 kind 分支）
+    const kindRow = page.locator('.tree-row[data-node-kind="kind"]').first();
+    const hasIcon = (await kindRow.count()) > 0 && (await kindRow.locator(':scope > svg').count()) > 0;
+    ok('分组行有类别图标（表/视图/过程…）', hasIcon,
+    hasIcon ? '有 svg' : '分组行没有 svg —— KindIcon 又漏了 kind 分支');
   }
 
   // 14. 控制台干净

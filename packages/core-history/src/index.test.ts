@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync } from 'node:fs';
+import { rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { HistoryStore } from './index.js';
 
 let store: HistoryStore;
@@ -178,31 +179,68 @@ describe('HistoryStore — 列表与清理', () => {
   });
 });
 
-describe('HistoryStore — 片段', () => {
+describe('HistoryStore — 片段（v0.6.0：按库归属）', () => {
   it('增删查改', () => {
-    store.addSnippet({ name: '慢查询', sql: 'SHOW PROCESSLIST', description: '看当前连接', createdAt: 1, updatedAt: 1 });
-    const s = store.getSnippet('慢查询')!;
+    store.addSnippet({ connectionId: 'c1', database: 'db', name: '慢查询', sql: 'SHOW PROCESSLIST', description: '看当前连接', createdAt: 1, updatedAt: 1 });
+    const s = store.getSnippet('c1', 'db', '慢查询')!;
     expect(s.sql).toBe('SHOW PROCESSLIST');
 
-    expect(store.updateSnippet('慢查询', 'SHOW FULL PROCESSLIST', '改过的')).toBe(true);
-    expect(store.getSnippet('慢查询')!.sql).toBe('SHOW FULL PROCESSLIST');
+    expect(store.updateSnippet('c1', 'db', '慢查询', 'SHOW FULL PROCESSLIST', '改过的')).toBe(true);
+    expect(store.getSnippet('c1', 'db', '慢查询')!.sql).toBe('SHOW FULL PROCESSLIST');
 
     expect(store.listSnippets().length).toBe(1);
-    expect(store.deleteSnippet('慢查询')).toBe(true);
-    expect(store.getSnippet('慢查询')).toBeNull();
+    expect(store.deleteSnippet('c1', 'db', '慢查询')).toBe(true);
+    expect(store.getSnippet('c1', 'db', '慢查询')).toBeNull();
   });
 
-  it('片段名唯一', () => {
-    store.addSnippet({ name: 'a', sql: 'SELECT 1', description: null, createdAt: 1, updatedAt: 1 });
+  it('🔴 片段名在同一库内唯一', () => {
+    store.addSnippet({ connectionId: 'c1', database: 'db', name: 'a', sql: 'SELECT 1', description: null, createdAt: 1, updatedAt: 1 });
     expect(() =>
-      store.addSnippet({ name: 'a', sql: 'SELECT 2', description: null, createdAt: 2, updatedAt: 2 }),
+      store.addSnippet({ connectionId: 'c1', database: 'db', name: 'a', sql: 'SELECT 2', description: null, createdAt: 2, updatedAt: 2 }),
+    ).toThrow();
+  });
+
+  /**
+   * v0.6.0 的核心新增能力，也是「为什么不能只用 name UNIQUE」的答案。
+   * 每条都配一个反向断言，确保约束真的在起作用而不是碰巧通过。
+   */
+  it('同名片段可以在【不同库】各存一份', () => {
+    store.addSnippet({ connectionId: 'c1', database: 'db1', name: '对账', sql: 'SELECT 1', description: null, createdAt: 1, updatedAt: 1 });
+    expect(() =>
+      store.addSnippet({ connectionId: 'c1', database: 'db2', name: '对账', sql: 'SELECT 2', description: null, createdAt: 1, updatedAt: 1 }),
+    ).not.toThrow();
+    expect(store.getSnippet('c1', 'db1', '对账')!.sql).toBe('SELECT 1');
+    expect(store.getSnippet('c1', 'db2', '对账')!.sql).toBe('SELECT 2');
+  });
+
+  it('同名片段可以在【不同连接】各存一份', () => {
+    store.addSnippet({ connectionId: 'c1', database: 'db', name: '对账', sql: 'SELECT 1', description: null, createdAt: 1, updatedAt: 1 });
+    expect(() =>
+      store.addSnippet({ connectionId: 'c2', database: 'db', name: '对账', sql: 'SELECT 2', description: null, createdAt: 1, updatedAt: 1 }),
+    ).not.toThrow();
+    expect(store.listSnippets().length).toBe(2);
+  });
+
+  /**
+   * 🔴 迁移坑的回归守卫：旧行的归属是「空」而不是 NULL。
+   * SQLite 的 UNIQUE 里 NULL 不参与冲突判定 —— 一旦迁移时写成 NULL，
+   * 「库内唯一」会静默失效（能存出一堆同名片段），而这条断言就是拦住它的哨兵。
+   */
+  it('🔴 空归属用哨兵空串而非 NULL（NULL 会让唯一约束失效）', () => {
+    store.addSnippet({ connectionId: '', database: '', name: '全局片段', sql: 'SELECT 1', description: null, createdAt: 1, updatedAt: 1 });
+    const got = store.getSnippet('', '', '全局片段')!;
+    expect(got.database).toBe('');
+    expect(got.connectionId).toBe('');
+    // 空库内同名仍然必须被拒 —— 若这条不成立，说明存进去的是 NULL
+    expect(() =>
+      store.addSnippet({ connectionId: '', database: '', name: '全局片段', sql: 'SELECT 2', description: null, createdAt: 2, updatedAt: 2 }),
     ).toThrow();
   });
 
   it('片段内容带恶意 SQL 也安全', () => {
     const evil = "'); DROP TABLE snippet; --";
-    store.addSnippet({ name: 'evil', sql: evil, description: null, createdAt: 1, updatedAt: 1 });
-    expect(store.getSnippet('evil')!.sql).toBe(evil);
+    store.addSnippet({ connectionId: 'c1', database: 'db', name: 'evil', sql: evil, description: null, createdAt: 1, updatedAt: 1 });
+    expect(store.getSnippet('c1', 'db', 'evil')!.sql).toBe(evil);
     expect(store.listSnippets().length).toBe(1);
   });
 });
@@ -274,7 +312,7 @@ describe('HistoryStore — V6 星标与裁剪', () => {
     }
     const migrated = new HistoryStore(tmp);
     try {
-      expect(migrated.schemaVersion).toBe(2);
+      expect(migrated.schemaVersion).toBe(3);
       const rows = migrated.listHistoryAll(10);
       expect(rows.length).toBe(1);
       expect(rows[0].sql).toBe('SELECT legacy');
@@ -290,6 +328,68 @@ describe('HistoryStore — V6 星标与裁剪', () => {
 
 describe('HistoryStore — schema 版本', () => {
   it('写入并读回 schema_version', () => {
-    expect(store.schemaVersion).toBe(2);
+    expect(store.schemaVersion).toBe(3);
+  });
+});
+
+/**
+ * v0.6.0 迁移守卫：从**真实的 v2 旧库**（name UNIQUE、无归属列）升级。
+ *
+ * 🔴 这条不能省：迁移是本轮唯一会破坏用户既有数据的动作。
+ *  手写一条"新库能用"的断言，恰好绕过了迁移本身。
+ */
+describe('HistoryStore — v0.6.0 片段迁移（旧库 → 库内唯一）', () => {
+  it('旧库的 name UNIQUE 换成 (连接,库,名) 唯一，旧行归到全局', () => {
+const dir = mkdtempSync(join(tmpdir(), 'dbstudio-mig-'));
+    const dbPath = join(dir, 'history.db');
+    try {
+      // 手工造一个 v2 形态的旧库：name 内联 UNIQUE、没有 connectionId/database
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO schema_meta VALUES('schema_version', '2');
+        CREATE TABLE query_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          connectionId TEXT NOT NULL, database TEXT, sql TEXT NOT NULL,
+          success INTEGER NOT NULL, error TEXT, durationMs INTEGER NOT NULL DEFAULT 0,
+          rowCount INTEGER NOT NULL DEFAULT 0, executedAt INTEGER NOT NULL, starred INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE snippet (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          sql TEXT NOT NULL, description TEXT,
+          createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
+        );
+        INSERT INTO snippet (name, sql, description, createdAt, updatedAt)
+          VALUES ('旧的慢查询', 'SHOW PROCESSLIST', '迁移前存的', 1, 1);
+      `);
+      legacy.close();
+
+      const migrated = new HistoryStore(dbPath);
+      try {
+   // 旧行读回：SQL 原文与描述必须完好
+const old = migrated.getSnippet('', '', '旧的慢查询');
+        expect(old?.sql).toBe('SHOW PROCESSLIST');
+        expect(old?.description).toBe('迁移前存的');
+
+        // 🔴 旧行的 name 唯一约束必须已解除 —— 否则新库还是全局唯一，v0.6.0 白做
+      expect(() =>
+          migrated.addSnippet({ connectionId: 'c1', database: 'db', name: '同名新片段', sql: 'S', description: null, createdAt: 1, updatedAt: 1 }),
+      ).not.toThrow();
+      expect(migrated.getSnippet('c1', 'db', '同名新片段')).not.toBeNull();
+
+        // 同一库内同名仍要唯一（迁移后的新约束生效）
+        expect(() =>
+          migrated.addSnippet({ connectionId: 'c1', database: 'db', name: '同名新片段', sql: 'S2', description: null, createdAt: 2, updatedAt: 2 }),
+      ).toThrow();
+
+   // 旧片段仍可被同名覆盖（它落在全局作用域）
+        expect(migrated.updateSnippet('', '', '旧的慢查询', 'SHOW FULL PROCESSLIST', null)).toBe(true);
+      } finally {
+    migrated.close();
+      }
+    } finally {
+rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

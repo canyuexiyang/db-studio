@@ -21,6 +21,7 @@
       "@dbstudio/core-sql-guard": ["./packages/core-sql-guard/src/index.ts"],
       "@dbstudio/core-sql-ident": ["./packages/core-sql-ident/src/index.ts"],
       "@dbstudio/core-history": ["./packages/core-history/src/index.ts"],
+      "@dbstudio/core-history/snippet-name": ["./packages/core-history/src/snippet-name.ts"],
       "@dbstudio/core-schema-cache": ["./packages/core-schema-cache/src/index.ts"],
       "@dbstudio/core-secret": ["./packages/core-secret/src/index.ts"],
       "@dbstudio/core-export": ["./packages/core-export/src/index.ts"],

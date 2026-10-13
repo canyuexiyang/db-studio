@@ -10,6 +10,15 @@ import { resolve } from 'node:path';
 export default defineConfig({
   resolve: {
     alias: {
+      /**
+       * 🔴 子入口必须排在同名主入口**之前**。
+       *    这份表是对象形式（按 key 插入顺序前缀匹配），`@dbstudio/core-history`
+       *    先命中就会把 `@dbstudio/core-history/snippet-name` 拼成
+       *    `.../src/index.ts/snippet-name` → 解析失败。
+       *    （渲染层 vite.config.ts 用数组 + 正则 $，天然没这个问题 ——
+       *      但两处都得改，AGENTS.md §二要求别名三处同步维护。）
+       */
+      '@dbstudio/core-history/snippet-name': resolve(__dirname, 'packages/core-history/src/snippet-name.ts'),
       '@dbstudio/core-sql-guard': resolve(__dirname, 'packages/core-sql-guard/src/index.ts'),
       '@dbstudio/core-sql-ident': resolve(__dirname, 'packages/core-sql-ident/src/index.ts'),
       '@dbstudio/core-history': resolve(__dirname, 'packages/core-history/src/index.ts'),

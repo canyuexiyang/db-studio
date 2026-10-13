@@ -27,6 +27,7 @@ import { registerIpcHandlers, EVENT_CONN_STATE } from './ipc-handlers.js';
 import { SshTunnelManager } from './tunnel-manager.js';
 import { TransferManager } from './transfer-manager.js';
 import { SchemaCache } from '@dbstudio/core-schema-cache';
+import { EVENT_SCHEMA_CHANNEL } from '../shared/ipc-channels.js';
 import { HistoryStore } from '@dbstudio/core-history';
 import { SecretStore } from '@dbstudio/core-secret';
 
@@ -174,6 +175,14 @@ async function boot(): Promise<void> {
   //    第二个窗口的连接横幅永远不会更新（"另一个窗口已连接，这个还写着连接中"）。
   sessions.setOnStateChange((id, state, lastError) => {
     windows.broadcast(EVENT_CONN_STATE, { id, state, lastError });
+  });
+
+  // ③ v0.6.0：schema 后台回源完成 → 推送新结构。
+  //    「刷新失效」的第三处根因：命中磁盘快照时旧实现喂完快照就返回，
+  //    承诺过的「先渲染快照再后台刷新」从未实现，7 天 TTL 内的快照
+  //    会把新表永久挡在树外。有了这条推送，刷新不再依赖用户手动点。
+  sessions.setOnSchemaChange((id, databases) => {
+    windows.broadcast(EVENT_SCHEMA_CHANNEL, { id, databases });
   });
 
   // ---- 窗口 ----

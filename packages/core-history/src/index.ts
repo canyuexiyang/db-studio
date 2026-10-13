@@ -39,8 +39,15 @@ export interface HistoryEntry {
 
 export interface Snippet {
   id?: number;
-  /** 片段名 */
+  /** 片段名 —— 语义是「这段 SQL 干什么用」的用途描述（不是表名/库名） */
   name: string;
+  /**
+   * v0.6.0：归属连接。片段按库归属，同名片段可以在不同库各存一份。
+   * 旧库迁移时为空串哨兵（见 migrate）—— 不能用 NULL，见该处注释。
+   */
+  connectionId: string;
+  /** v0.6.0：归属库名。空串 = 未指定库（全局片段） */
+  database: string;
   /** SQL 内容 */
   sql: string;
   /** 备注 */
@@ -49,7 +56,17 @@ export interface Snippet {
   updatedAt: number;
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
+
+/**
+ * v0.6.0：库名/连接 id 为空时用的哨兵值。
+ *
+ * 🔴 为什么不能用 NULL：SQLite 的 UNIQUE 索引里 **NULL 不参与冲突判定**，
+ *    `UNIQUE(a,b,c)` 里只要有一个是 NULL，这条行就永远不与任何行冲突 ——
+ *    "库内唯一"会静默失效，用户能存出一堆同名片段。
+ *    用空串（真实标识符里不可能出现）代替 NULL，唯一约束才真正生效。
+ */
+const SCOPE_SENTINEL = '';
 
 export class HistoryStore {
   private db: DatabaseSync;
@@ -90,8 +107,8 @@ export class HistoryStore {
         starred      INTEGER NOT NULL DEFAULT 0
       );
 
-      CREATE TABLE IF NOT EXISTS snippet (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+CREATE TABLE IF NOT EXISTS snippet (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
         name        TEXT NOT NULL UNIQUE,
         sql         TEXT NOT NULL,
         description TEXT,
@@ -105,8 +122,54 @@ export class HistoryStore {
     // 默认值，对既有行立即生效（默认 0 = 未星标）。
     const cols = this.db.prepare('PRAGMA table_info(query_history)').all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === 'starred')) {
-      this.db.exec('ALTER TABLE query_history ADD COLUMN starred INTEGER NOT NULL DEFAULT 0');
+this.db.exec('ALTER TABLE query_history ADD COLUMN starred INTEGER NOT NULL DEFAULT 0');
     }
+
+    /**
+     * v0.6.0 迁移：snippet 从「全局 name UNIQUE」改成「按 (连接, 库) 归属、库内唯一」。
+     *
+     * 三步，顺序不能换：
+     *  1. 加两列（老行先落成空串哨兵，见 SCOPE_SENTINEL 的注释 —— NULL 不参与唯一约束）
+     *  2. 建新唯一索引
+     *  3. 删掉旧的 `name UNIQUE` 内联约束（SQLite 不能 ALTER 掉，只能重建表）
+     *
+     * ⚠️ 旧行会全部归到「全局片段」（连接=空、库=空）。这是刻意的：
+     *    用户在 v0.5 里存的片段本来就没有归属概念，硬猜一个库反而会把它藏起来。
+     */
+    const snCols = this.db.prepare('PRAGMA table_info(snippet)').all() as Array<{ name: string }>;
+    if (!snCols.some((c) => c.name === 'connectionId')) {
+      this.db.exec(`
+        ALTER TABLE snippet ADD COLUMN connectionId TEXT NOT NULL DEFAULT '';
+        ALTER TABLE snippet ADD COLUMN database TEXT NOT NULL DEFAULT '';
+      `);
+    }
+    // 只有内联 name UNIQUE 还在时才重建表（重建一次就再也���会触发）
+    const snSql = (this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='snippet'")
+      .get() as { sql?: string } | undefined)?.sql;
+    if (snSql && /name\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(snSql)) {
+      this.db.exec(`
+        CREATE TABLE snippet_new (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          connectionId TEXT NOT NULL DEFAULT '',
+          database    TEXT NOT NULL DEFAULT '',
+          name        TEXT NOT NULL,
+          sql         TEXT NOT NULL,
+          description TEXT,
+          createdAt   INTEGER NOT NULL,
+          updatedAt   INTEGER NOT NULL
+        );
+        INSERT INTO snippet_new (id, connectionId, database, name, sql, description, createdAt, updatedAt)
+          SELECT id, COALESCE(connectionId, ''), COALESCE(database, ''), name, sql, description, createdAt, updatedAt
+          FROM snippet;
+        DROP TABLE snippet;
+        ALTER TABLE snippet_new RENAME TO snippet;
+      `);
+    }
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_snippet_scope
+        ON snippet(connectionId, database, name);
+    `);
 
     // 常用查询路径的索引
     this.db.exec(`
@@ -181,27 +244,29 @@ export class HistoryStore {
         )
     `);
 
-    this.stmts.insertSnippet = this.db.prepare(`
-      INSERT INTO snippet (name, sql, description, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?)
+this.stmts.insertSnippet = this.db.prepare(`
+      INSERT INTO snippet (connectionId, database, name, sql, description, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.stmts.updateSnippet = this.db.prepare(`
       UPDATE snippet SET sql = ?, description = ?, updatedAt = ?
-      WHERE name = ?
+      WHERE connectionId = ? AND database = ? AND name = ?
     `);
 
     this.stmts.getSnippet = this.db.prepare(`
-      SELECT id, name, sql, description, createdAt, updatedAt
-      FROM snippet WHERE name = ?
+      SELECT id, connectionId, database, name, sql, description, createdAt, updatedAt
+      FROM snippet WHERE connectionId = ? AND database = ? AND name = ?
     `);
 
     this.stmts.listSnippets = this.db.prepare(`
-      SELECT id, name, sql, description, createdAt, updatedAt
+      SELECT id, connectionId, database, name, sql, description, createdAt, updatedAt
       FROM snippet ORDER BY updatedAt DESC
     `);
 
-    this.stmts.deleteSnippet = this.db.prepare('DELETE FROM snippet WHERE name = ?');
+    this.stmts.deleteSnippet = this.db.prepare(
+      'DELETE FROM snippet WHERE connectionId = ? AND database = ? AND name = ?',
+    );
   }
 
   // ---------- 查询历史 ----------
@@ -270,11 +335,14 @@ export class HistoryStore {
     return Number(this.stmts.pruneHistory.run(keep).changes);
   }
 
-  // ---------- 片段 ----------
+// ---------- 片段 ----------
 
   addSnippet(s: Omit<Snippet, 'id'>): number {
     const now = Date.now();
     const r = this.stmts.insertSnippet.run(
+      // 哨兵：空串而非 NULL —— 见 SCOPE_SENTINEL，唯一约束靠它生效
+      s.connectionId ?? SCOPE_SENTINEL,
+      s.database ?? SCOPE_SENTINEL,
       s.name,
       s.sql,
       s.description ?? null,
@@ -284,12 +352,31 @@ export class HistoryStore {
     return Number(r.lastInsertRowid);
   }
 
-  updateSnippet(name: string, sql: string, description?: string | null): boolean {
-    return this.stmts.updateSnippet.run(sql, description ?? null, Date.now(), name).changes > 0;
+  updateSnippet(
+    connectionId: string,
+    database: string,
+    name: string,
+    sql: string,
+    description?: string | null,
+  ): boolean {
+    return (
+      this.stmts.updateSnippet.run(
+        sql,
+    description ?? null,
+        Date.now(),
+        connectionId || SCOPE_SENTINEL,
+        database || SCOPE_SENTINEL,
+     name,
+      ).changes > 0
+    );
   }
 
-  getSnippet(name: string): Snippet | null {
-    const row = this.stmts.getSnippet.get(name);
+  getSnippet(connectionId: string, database: string, name: string): Snippet | null {
+    const row = this.stmts.getSnippet.get(
+      connectionId || SCOPE_SENTINEL,
+      database || SCOPE_SENTINEL,
+      name,
+    );
     return row ? this.mapSnippet(row) : null;
   }
 
@@ -297,8 +384,14 @@ export class HistoryStore {
     return this.stmts.listSnippets.all().map(this.mapSnippet);
   }
 
-  deleteSnippet(name: string): boolean {
-    return this.stmts.deleteSnippet.run(name).changes > 0;
+  deleteSnippet(connectionId: string, database: string, name: string): boolean {
+    return (
+this.stmts.deleteSnippet.run(
+        connectionId || SCOPE_SENTINEL,
+    database || SCOPE_SENTINEL,
+        name,
+      ).changes > 0
+    );
   }
 
   // ---------- 生命周期 ----------
@@ -335,6 +428,9 @@ export class HistoryStore {
     return {
       id: row.id,
       name: row.name,
+      // 空串哨兵读回来仍是空串：调用方按「空 = 不限归属」处理，不要在存储层改语义
+      connectionId: row.connectionId ?? SCOPE_SENTINEL,
+      database: row.database ?? SCOPE_SENTINEL,
       sql: row.sql,
       description: row.description ?? null,
       createdAt: row.createdAt,
@@ -342,3 +438,10 @@ export class HistoryStore {
     };
   }
 }
+
+// 片段命名规则在子入口 snippet-name.ts（零依赖，渲染层可直接用 —— 主入口带 node:sqlite）
+export {
+  SNIPPET_NAME_MAX,
+  isValidSnippetName,
+  snippetNameTooLongMessage,
+} from './snippet-name.js';

@@ -96,6 +96,10 @@ class FakeDriver implements DriverLike {
   async introspect() {
     return this.introspectResult;
   }
+  /** v0.6.0：刷新路径会先问可见库清单（本文件的测试不触达，按 introspectResult 作答） */
+  async listDatabases() {
+    return this.introspectResult.map((d) => d.name);
+  }
   // C2/C9：DriverLike 扩展出的元数据能力（本文件的测试不触达，给空实现保编译）
   async showCreateObject(_database: string, _name: string, _kind: string): Promise<string> {
     return '';

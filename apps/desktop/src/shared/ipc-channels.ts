@@ -108,6 +108,13 @@ export type IpcChannel = (typeof IPC)[keyof typeof IPC];
 
 /** 连接状态变化推送 —— ipc-handlers.ts 里的 EVENT_CONN_STATE 与这里必须同值 */
 export const EVENT_CONN_STATE_CHANNEL = 'event:connState';
+/**
+ * v0.6.0：schema 后台刷新推送（快照 → 真库回源完成后）。
+ *
+ * 与 EVENT_CONN_STATE_CHANNEL 同口径：单向推送、只被订阅不被 invoke，
+ * 因此**刻意不放进 IPC map**（那张表要求每个 key 都有 handler）。
+ */
+export const EVENT_SCHEMA_CHANNEL = 'event:schema';
 /** 原生菜单命令转发（F1）：main/menu.ts → 渲染层 App */
 export const EVENT_MENU_COMMAND = 'event:menuCommand';
 
@@ -502,6 +509,19 @@ export interface ScriptErrorDetail {
 export interface ScriptDoneResult {
   executed: number;
   failed: number;
+  /**
+   * v0.6.0-hotfix：MySQL **亲口报告**的写入行数（affectedRows 之和）。
+   *
+   * 🔴 为什么必须与 `executed` 分开：executed 是「我们认为发出了多少条」，
+   *    affectedRows 是「数据库真的写进去多少行」。二者可以严重背离 ——
+   *    2026-10-13 的数据丢失缺陷就是 executed=50004 / failed=0，
+   *    但 affectedRows 只有 2002。UI 若只展示 executed，
+   *    用户看到的就是「全部成功」，而库里少了 96% 的数据。
+   *
+   * 有了这个字段，UI 可以在 done 阶段做一致性核对并显式告警，
+   * 让这类缺陷**不可能再静默通过**。
+   */
+  affectedRows?: number;
   elapsedMs: number;
   errors: ScriptErrorDetail[];
   /** true = 停止模式下中途失败退出 */
@@ -575,7 +595,17 @@ export interface DbStudioApi {
   /** V6：星标/取消星标（返回是否命中） */
   historyStar(id: number, starred: boolean): Promise<IpcResult<boolean>>;
   snippetList(): Promise<IpcResult<Snippet[]>>;
-  snippetSave(s: { name: string; sql: string; description?: string | null }): Promise<IpcResult<Snippet>>;
+  /**
+   * 按名保存/覆盖片段 —— v0.6.0 起是**同一连接 + 同一库**内同名即覆盖。
+   * 归属维度是这轮加的：同名片段要在不同库各存一份，靠 connectionId/database 区分。
+   */
+  snippetSave(s: {
+    name: string;
+    sql: string;
+    description?: string | null;
+    connectionId?: string;
+    database?: string;
+  }): Promise<IpcResult<Snippet>>;
 
   // ---- 应用 ----
   appGetMode(): Promise<IpcResult<GlassModeDto>>;

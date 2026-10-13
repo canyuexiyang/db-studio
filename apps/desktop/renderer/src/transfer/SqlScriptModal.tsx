@@ -42,6 +42,12 @@ interface ScriptMsg {
   stats?: ScriptScanStats;
   executed?: number;
   total?: number;
+  /**
+   * v0.6.0-hotfix：MySQL 实际写入行数。
+   * 🔴 与 executed 背离 = 有数据没进去，必须显式告警而不是显示「全部成功」。
+   *   （2026-10-13 数据丢失缺陷：executed=50004 / affectedRows=2002）
+   */
+  affectedRows?: number;
   elapsedMs?: number;
   currentSql?: string | null;
   failed?: number;
@@ -76,7 +82,14 @@ export function SqlScriptModal({
   const [onError, setOnError] = useState<'stop' | 'continue'>('stop');
   const [stats, setStats] = useState<ScriptScanStats | null>(null);
   const [progress, setProgress] = useState({ executed: 0, total: 0, elapsedMs: 0 });
-  const [result, setResult] = useState<{ executed: number; failed: number; elapsedMs: number; errors: ScriptErrorDetail[]; aborted: boolean; lastError: string | null } | null>(null);
+  /**
+   * 执行结果。
+   *
+   * 🔴 affectedRows：MySQL 亲口报告的写入行数。executed 只是「我们发出了多少条」，
+   *    二者可以严重背离（2026-10-13 数据丢失：50004 条 vs 2002 行）——
+   *    所以必须留着做一致性核对，否则 UI 会显示「全部成功」而库里少 96% 数据。
+   */
+  const [result, setResult] = useState<{ executed: number; failed: number; affectedRows?: number; elapsedMs: number; errors: ScriptErrorDetail[]; aborted: boolean; lastError: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const jobIdRef = useRef<string | null>(null);
   /** done 时是否已经触发过 onFinished（刷新只做一次） */
@@ -96,12 +109,28 @@ export function SqlScriptModal({
         setResult({
           executed: msg.executed ?? 0,
           failed: msg.failed ?? 0,
+          // 🔴 必须带下来：done 阶段的一致性核对靠它（executed ≠ affectedRows = 有数据没进去）
+          affectedRows: msg.affectedRows,
           elapsedMs: msg.elapsedMs ?? 0,
           errors: msg.errors ?? [],
           aborted: !!msg.aborted,
           lastError: msg.lastError ?? null,
         });
         setStage('done');
+        /**
+         * 🔴 v0.6.0 缺陷修复：原来刷新只在【关弹窗】时触发（见 requestClose），
+         *   用户跑完脚本只能盯着"已完成"面板，左侧树纹丝不动 ——
+         *   这正是"脚本跑完刷新看不到新表"的直接体感。
+         *   改为 done 到达即刷新；finishedRef 保证与关弹窗那次的去重。
+         *
+         * 判据从 `executed > 0` 放宽到 `executed + failed > 0`：
+         * 全条失败时库结构**也可能**已被改动（如 DROP 成功、后续 INSERT 全失败），
+         * 那种情况恰恰最需要刷新让用户看到真实状态。
+         */
+        if (!finishedRef.current && (msg.executed ?? 0) + (msg.failed ?? 0) > 0) {
+          finishedRef.current = true;
+          onFinished();
+        }
       } else if (msg.type === 'error') {
         setError(msg.message ?? '脚本执行失败');
         setStage('error');
@@ -111,7 +140,8 @@ export function SqlScriptModal({
       }
     });
     return unsub;
-  }, [backend]);
+    // onFinished 进依赖：done 时要触发它，闭包捕获旧引用会拿到上一次渲染的回调
+  }, [backend, onFinished]);
 
   /** 关闭：未完结的任务必须清掉 worker（scanning/confirm 阶段它还在等确认） */
   const requestClose = useCallback(() => {
@@ -119,7 +149,9 @@ export function SqlScriptModal({
     if (jobId && (stage === 'scanning' || stage === 'confirm' || stage === 'running')) {
       void backend.scriptCancel(jobId);
     }
-    if ((stage === 'done' || stage === 'error') && !finishedRef.current && result && result.executed > 0) {
+    //兜底：done 事件已触发过刷新时 finishedRef 为 true，这里不会重复触发
+    if ((stage === 'done' || stage === 'error') && !finishedRef.current && result
+      && result.executed + result.failed > 0) {
       finishedRef.current = true;
       onFinished();
     }
@@ -295,6 +327,35 @@ export function SqlScriptModal({
               {result.aborted ? (
                 <p className="bad"><IconAlert /> 中途失败已停止（{result.lastError ?? '未知错误'}）</p>
               ) : null}
+              {/*
+                🔴 数据完整性核对（2026-10-13 缺陷的直接对策）。
+                「已执行 N 条」是**我们认为发出了多少条**，不是数据库写进去多少行。
+                两者背离就说明有语句被静默丢弃或整体回滚 —— 那时若还显示
+                「已执行成功」，用户只会去怀疑自己的脚本，而不会怀疑工具。
+
+                口径：只在「全部成功 + 有 affectedRows + 明显少」时报警。
+                DDL 的 affectedRows 是 0，所以只在 affectedRows > 0 时才可能触发；
+                UPDATE 改0 行也会让这个数偏小，故设一个宽松阈值（少 50% 以上且差 ≥50），
+                避免正常场景误报 —— 误报的告警等于没有告警。
+              */}
+              {(() => {
+                const ar = result.affectedRows;
+                const missing = result.executed - (ar ?? result.executed);
+                const suspicious =
+                  typeof ar === 'number' &&
+                  ar > 0 &&
+                  result.failed === 0 &&
+                  !result.aborted &&
+                  missing >= 50 &&
+                  missing > result.executed * 0.5;
+                return suspicious ? (
+                  <p className="bad" data-testid="script-row-mismatch">
+                    <IconAlert /> 数据可能未完整写入：报告执行 {result.executed.toLocaleString()} 条，
+                    但数据库只确认写入 {ar.toLocaleString()} 行（差 {missing.toLocaleString()}）。
+                    请核对表内行数；这通常是脚本内的 SQL 本身有问题，而非执行中断。
+                  </p>
+                ) : null;
+              })()}
               {result.failed > 0 ? (
                 <div>
                   <p className="bad"><IconAlert /> {result.failed} 条执行失败：</p>

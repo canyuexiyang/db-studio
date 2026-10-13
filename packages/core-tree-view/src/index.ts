@@ -504,3 +504,86 @@ export function confirmLevelFor(action: 'dropTable' | 'truncateTable', danger: b
   if (action !== 'dropTable' && action !== 'truncateTable') return 'none';
   return danger ? 'typeToConfirm' : 'confirm';
 }
+
+// ---------- 多选（v0.6.0）----------
+
+/**
+ * 树上一次"点击"的修饰键意图。
+ *
+ * 抽成显式类型而不是直接把 React 的 MouseEvent 传进来：
+ * 选择规则是纯逻辑，放core 里能离线单测（渲染层只负责把 event 翻译成它）。
+ */
+export type SelectionIntent =
+  /** 无修饰键单击：唯一选中（且成为 shift 的锚点） */
+  | 'replace'
+  /** ⌘/Ctrl 点击：切换该行的选中态（点已选的 = 取消选中） */
+  | 'toggle'
+  /** ⇧ 点击：从锚点起**按可见顺序**切成区间 */
+  | 'range';
+
+/** 把鼠标事件的修饰键翻译成选择意图。⌘ 与 Ctrl 同义（macOS 惯用 ⌘，其他平台 Ctrl） */
+export function selectionIntentOf(e: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean }): SelectionIntent {
+  if (e.shiftKey) return 'range';
+  if (e.metaKey || e.ctrlKey) return 'toggle';
+  return 'replace';
+}
+
+/**
+ * 树上一次点击后的新选中集合。
+ *
+ * 三种语义（对齐 Finder / VSCode 的成熟惯例）：
+ *  - replace：清空后只留这一行，锚点移到这一行
+ *  - toggle：并入/移出，**锚点不动**（连点多个 ⌘ 后按 ⇧，区间应从锚点算起）
+ *  - range ：从锚点到本行取一段。**锚点缺失时退化为 replace** ——
+ *    ���户 ⇧ 点了一行、还没点过别的，此时没有"起点"的概念，退化成单选最符合直觉
+ *
+ * @param visibleKeys 当前**可见行**的 key 有序列表（区间按可见顺序，不能按全树顺序）
+ * @param selected    当前选中集合
+ * @param anchorKey   上一次 replace 点击的行 key；null = 还没有锚点
+ */
+export function nextSelection(
+  visibleKeys: readonly string[],
+  selected: ReadonlySet<string>,
+  anchorKey: string | null,
+  targetKey: string,
+  intent: SelectionIntent,
+): { selected: Set<string>; anchorKey: string | null } {
+  if (intent === 'replace') {
+    return { selected: new Set([targetKey]), anchorKey: targetKey };
+  }
+
+  if (intent === 'toggle') {
+    const next = new Set(selected);
+    if (next.has(targetKey)) next.delete(targetKey);
+    else next.add(targetKey);
+    // 锚点刻意不动：⌘ 点选多个后按 ⇧，区间应从最初那行算起
+    return { selected: next, anchorKey };
+  }
+
+  // range
+  if (anchorKey == null || !visibleKeys.includes(anchorKey)) {
+    return { selected: new Set([targetKey]), anchorKey: targetKey };
+  }
+  const a = visibleKeys.indexOf(anchorKey);
+  const b = visibleKeys.indexOf(targetKey);
+  if (a < 0 || b < 0) {
+    // 锚点或目标不在可见列表里（搜索过滤后发生）→ 退化为单选，别给用户一个空区间
+    return { selected: new Set([targetKey]), anchorKey: targetKey };
+  }
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  // 🔴 区间是**替换**而不是并入（Finder 行为）：否则 ⇧ 永远只会越选越多，
+  //   用户没法把选区缩小回去。
+  return { selected: new Set(visibleKeys.slice(lo, hi + 1)), anchorKey };
+}
+
+/**
+ * 全选当前可见行中属于指定分组的表节点（"全选本组"）。
+ *
+ * 只收`kind === 'table'` —— 视图/存储过程/函数没有"批量删表"的入口，
+ * 把它们混进来会让批量删除列表出现用户没预期的对象。
+ *
+ * @param tableKeys 本组内所有表节点的 key（由调用方按可见顺序给出）
+ */
+export function selectAllTables(tableKeys: readonly string[]): Set<string> {
+  return new Set(tableKeys);
+}

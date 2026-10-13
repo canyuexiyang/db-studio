@@ -190,6 +190,24 @@ export const TRAFFIC_LIGHT_MEASURED = {
   right: 76,
   /** 渲染层安全区必须 ≥ 此值（styles.css .traffic-light-safe width） */
   safeAreaMinWidth: 78,
+  /**
+   * v0.6.0：单灯中心相对窗口顶边的 css y。
+   *
+   * 存在的意义：让「侧栏头标题有没有和交通灯对齐」**有数字可对齐**。
+   * 原先是靠注释里两套互相矛盾的口径在猜（window.ts 说 21、styles.css 说 20.5），
+   * 而 `.sidebar-head` 高 30px、内容中心在 y=15 —— 灯比内容低约 5.5px，
+   * 这就是「没对齐」的成因，不是 CSS 的锅。
+   *
+   * 🔴 口径统一到本文件（TRAFFIC_LIGHT_MEASURED 一处为准）：
+   *   y 中心 = position.y + 直径/2 = 14 + 7 = 21。
+   *   styles.css 里那套 20.5 的旧注释已同步订正，别再照它推算。
+   */
+  centerY: 21,
+  /**
+   * v0.6.0：侧栏头高度必须 = 2 × centerY = 42px，才能让标题中心落在灯中心上。
+   * 渲染层 `.sidebar-head { height: var(--sidebar-head-h) }` 引用同一口径。
+   */
+  sidebarHeadHeight: 42,
 } as const;
 
 export async function createMainWindow(opts: CreateWindowOptions = {}): Promise<BrowserWindow> {

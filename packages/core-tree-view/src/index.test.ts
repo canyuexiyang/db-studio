@@ -12,6 +12,9 @@ import {
   filterFlatByQuery,
   buildColumnIndex,
   confirmLevelFor,
+  selectionIntentOf,
+  nextSelection,
+  selectAllTables,
   OBJECT_KIND_LABELS,
   EXPANSION_MEMORY_VERSION,
 } from './index.js';
@@ -356,5 +359,108 @@ describe('危险操作确认层级', () => {
 
   it('其它操作不需要确认', () => {
     expect(confirmLevelFor('open' as never, false)).toBe('none');
+  });
+});
+
+/**
+ * 多选选择模型（v0.6.0）。
+ *
+ * 断言纪律：每条"应该这样"的断言都配一条**错误输入**用例，
+ * 确认它在错误场景下会红 —— 否则断言本身可能恒真。
+ */
+describe('多选：selectionIntentOf', () => {
+  it('无修饰键 → replace', () => {
+    expect(selectionIntentOf({})).toBe('replace');
+    expect(selectionIntentOf({ metaKey: false, ctrlKey: false, shiftKey: false })).toBe('replace');
+  });
+
+  it('⌘ 或 Ctrl → toggle', () => {
+    expect(selectionIntentOf({ metaKey: true })).toBe('toggle');
+    expect(selectionIntentOf({ ctrlKey: true })).toBe('toggle');
+  });
+
+  it('⇧ → range（优先级高于 ⌘：同时按下按 range 走）', () => {
+    expect(selectionIntentOf({ shiftKey: true })).toBe('range');
+    expect(selectionIntentOf({ shiftKey: true, metaKey: true })).toBe('range');
+  });
+});
+
+describe('多选：nextSelection', () => {
+  const rows = ['a', 'b', 'c', 'd', 'e'];
+
+  it('replace：清空后只留目标行，锚点移到目标', () => {
+    const r = nextSelection(rows, new Set(['a', 'b']), 'a', 'd', 'replace');
+    expect([...r.selected]).toEqual(['d']);
+    expect(r.anchorKey).toBe('d');
+  });
+
+  it('🔴 错误输入：replace 必须真的清掉旧选中（若这条红，上面的断言无意义）', () => {
+    const r = nextSelection(rows, new Set(['a', 'b', 'e']), 'a', 'c', 'replace');
+    expect(r.selected.size).toBe(1);
+    expect(r.selected.has('a')).toBe(false);
+    expect(r.selected.has('e')).toBe(false);
+  });
+
+  it('toggle：未选中的加入', () => {
+    const r = nextSelection(rows, new Set(['a']), 'a', 'c', 'toggle');
+    expect([...r.selected].sort()).toEqual(['a', 'c']);
+  });
+
+  it('toggle：已选中的移出（再点一次 = 取消）', () => {
+    const r = nextSelection(rows, new Set(['a', 'c']), 'a', 'c', 'toggle');
+    expect([...r.selected]).toEqual(['a']);
+  });
+
+  it('toggle 不动锚点（⌘ 点多个后按 ⇧，区间从最初那行算起）', () => {
+    const r = nextSelection(rows, new Set(['a']), 'a', 'e', 'toggle');
+    expect(r.anchorKey).toBe('a');
+  });
+
+  it('range：从锚点到目标闭区间', () => {
+    const r = nextSelection(rows, new Set(), 'b', 'd', 'range');
+    expect([...r.selected]).toEqual(['b', 'c', 'd']);
+  });
+
+  it('range：锚点在目标之后时反向取区间（向上⇧）', () => {
+    const r = nextSelection(rows, new Set(), 'd', 'b', 'range');
+    expect([...r.selected]).toEqual(['b', 'c', 'd']);
+  });
+
+  it('🔴 错误输入：range 是【替换】而不是并入（否则选区永远缩不回去）', () => {
+    const r = nextSelection(rows, new Set(['a', 'e']), 'b', 'c', 'range');
+    expect([...r.selected]).toEqual(['b', 'c']);
+    expect(r.selected.has('e')).toBe(false);
+  });
+
+  it('range 按【可见顺序】而不是全树顺序（搜索过滤后不能选到看不见的行）', () => {
+    const filtered = ['b', 'd']; // 可见行只有这两行
+    const r = nextSelection(filtered, new Set(), 'b', 'd', 'range');
+    expect([...r.selected]).toEqual(['b', 'd']);
+  });
+
+  it('range：无锚点时退化为 replace（⇧ 是第一次点击）', () => {
+    const r = nextSelection(rows, new Set(), null, 'c', 'range');
+    expect([...r.selected]).toEqual(['c']);
+    expect(r.anchorKey).toBe('c');
+  });
+
+  it('range：锚点已不在可见列表（搜索后）→ 退化为单选，不给空区间', () => {
+    const r = nextSelection(rows, new Set(), 'zzz-not-visible', 'c', 'range');
+    expect([...r.selected]).toEqual(['c']);
+  });
+
+  it('range：锚点与目标是同一行 → 只选它', () => {
+    const r = nextSelection(rows, new Set(), 'c', 'c', 'range');
+    expect([...r.selected]).toEqual(['c']);
+  });
+});
+
+describe('多选：selectAllTables', () => {
+  it('全选本组传入的表节点', () => {
+    expect([...selectAllTables(['t1', 't2'])]).toEqual(['t1', 't2']);
+  });
+
+  it('空组返回空集（不该把当前别处的选中清掉后再塞一堆）', () => {
+    expect(selectAllTables([]).size).toBe(0);
   });
 });

@@ -40,6 +40,7 @@ import { encodeColumnar, type ColumnarPayload } from '@dbstudio/core-ipc-codec';
 import type { ConnectionConfig, SslConfig } from '@dbstudio/core-connection';
 import type { SqlStatement } from '@dbstudio/core-mutation';
 import type { ForeignKeyDto, ReferencedValuesDto } from '../shared/ipc-channels.js';
+import { schemaShapeChanged } from './schema-shape.js';
 
 /** 网格默认加载行数（PRD §6.3.1） */
 export const DEFAULT_PAGE_SIZE = 3000;
@@ -95,6 +96,13 @@ export interface DriverLike {
   query(sql: string, values?: unknown[]): Promise<QueryResult>;
   /** 元数据 introspect。传 undefined = 自动选库 */
   introspect(schemas?: string[]): Promise<DatabaseMeta[]>;
+  /**
+   * v0.6.0：当前账号可见的全部库（已排除系统库）。
+   *
+   * 单独暴露是因为 introspect(undefined) 会回退到「连接配置的库」——
+   * 刷新要覆盖该连接可见的**全部**库，就不能依赖那个默认语义。
+   */
+  listDatabases(): Promise<string[]>;
   /** 对象定义原文（C2）：SHOW CREATE，六类对象各自的 DDL 列名由驱动层适配 */
   showCreateObject(database: string, name: string, kind: ObjectKind): Promise<string>;
   /** 表信息（C9/A14）：information_schema.TABLES 单行；null = 表不存在 */
@@ -257,6 +265,13 @@ export class SessionRegistry {
   private onStateChangeCb:
     | ((connId: string, state: ConnectionState, lastError: string | null) => void)
     | null = null;
+  /**
+   * v0.6.0：schema 后台刷新回调（快照 → 真库回源完成后推送新结构）。
+   * null = 无人订阅。语义与 onStateChangeCb 同为"旁路推送，异常不影响会话"。
+   */
+  private onSchemaChangeCb: ((connId: string, dbs: DatabaseMeta[]) => void) | null = null;
+  /** v0.6.0：在飞的后台回源（按连接去重，避免 CONN_LIST 打出一排 introspect） */
+  private readonly inFlightSchema = new Map<string, Promise<void>>();
 
   constructor(
     private readonly cache: SchemaCache,
@@ -304,6 +319,25 @@ export class SessionRegistry {
     if (!cb || !s) return;
     try {
       cb(connId, s.runtime.state, s.runtime.lastError);
+    } catch {
+      // 订阅方的问题不能炸主进程
+    }
+  }
+
+  /**
+   * v0.6.0：订阅 schema 变化（后台回源完成时推送）。
+   * 主进程接到 `event:schema` 通道。传 null 退订。
+   */
+  setOnSchemaChange(cb: ((connId: string, dbs: DatabaseMeta[]) => void) | null): void {
+    this.onSchemaChangeCb = cb;
+  }
+
+  /** 推送新结构。异常绝不影响会话本身（与 emitState 同口径） */
+  private emitSchema(connId: string, dbs: DatabaseMeta[]): void {
+    const cb = this.onSchemaChangeCb;
+    if (!cb) return;
+    try {
+      cb(connId, dbs);
     } catch {
       // 订阅方的问题不能炸主进程
     }
@@ -635,8 +669,13 @@ export class SessionRegistry {
   /**
    * 取 schema。优先内存 → 磁盘快照 → 真库 introspect。
    *
-   * 树首屏要走磁盘快照（PRD §6.2.1：先出结构再刷新），
-   * 但 `force` 时强制回源，用于"刷新"按钮。
+   * 🔴 v0.6.0：命中磁盘快照时**不能就此返回完事**。原来这里是
+   *   「喂快照 → 直接 return」，`schemaCapturedAt` 之后再没人动它 ——
+   *   注释里承诺的「先渲染快照再后台刷新」全仓无实现，
+   *   于是 7 天 TTL 内的快照会把新表永久挡在树外（"刷新失效"的第三处根因）。
+   *
+   *   改为：快照立即返回（保住树首屏），同时**在后台回源**，
+   *   拿到新结构后通过 schema 推送通道通知渲染层更新。
    */
   async getSchema(connId: string, opts: { force?: boolean } = {}): Promise<DatabaseMeta[]> {
     const s = this.sessions.get(connId);
@@ -648,6 +687,9 @@ export class SessionRegistry {
     if (!opts.force && cached.snapshot) {
       s.schema = cached.snapshot.databases;
       s.schemaCapturedAt = cached.snapshot.capturedAt;
+      // 后台回源：快照只负责"立刻有东西看"，真库才是事实来源。
+      // 并发去重用 inFlightSchema —— CONN_LIST 会对每个连接各调一次，不去重会打出一排 introspect。
+      this.refreshInBackground(connId);
       return s.schema;
     }
 
@@ -659,6 +701,39 @@ export class SessionRegistry {
     return dbs;
   }
 
+  /**
+   * 后台回源（快照兜底路径专用）。
+   *
+   * 三条纪律：
+   *  1. **失败静默**：这是"锦上添花的刷新"，主调用方已经拿到快照可用了，
+   *     在这里抛错只会把一次成功的读变成失败。连接未建立属正常态（还没连上）。
+   *  2. **去重**：同一连接同时只允许一次在飞的回源。
+   *  3. **只在结构真变了才推送**：每轮 introspect 都推一次会让渲染层白重渲染整棵树。
+   */
+  private refreshInBackground(connId: string): void {
+    if (this.inFlightSchema.has(connId)) return;
+    const s = this.sessions.get(connId);
+    if (!s?.driver) return;
+
+    let inflight: Promise<void>;
+    inflight = (async () => {
+      try {
+        const before = s.schema;
+        const dbs = await this.introspect(s);
+        s.schema = dbs;
+        s.schemaCapturedAt = Date.now();
+        this.cache.save(connId, dbs);
+        // 只有结构真变了才推送：每轮 introspect 都推会让渲染层白重渲染整棵树（上千节点）
+        if (schemaShapeChanged(before, dbs)) this.emitSchema(connId, dbs);
+      } catch {
+        // 见纪律 1：静默。快照仍可用，用户想强制刷新有刷新按钮。
+      } finally {
+        this.inFlightSchema.delete(connId);
+      }
+    })();
+    this.inFlightSchema.set(connId, inflight);
+  }
+
   private async introspect(s: Session): Promise<DatabaseMeta[]> {
     if (!s.driver) throw new SessionError('NOT_CONNECTED', '连接未建立');
     if (s.runtime.state !== 'connected' && s.runtime.state !== 'busy') {
@@ -668,7 +743,23 @@ export class SessionRegistry {
     // 但迁移（connected→busy）发生时照常推送
     this.beginQueryTracked(s);
     try {
-      const targets = s.cfg.defaultDatabase ? [s.cfg.defaultDatabase] : undefined;
+      /**
+       * 🔴 v0.6.0 缺陷修复：原来这里写死 `defaultDatabase ? [defaultDatabase] : undefined`，
+       *   导致配了默认库的连接**永远只刷那一个库** —— 用户在另一个库里建了表，
+       *   点「刷新」当然看不到新表。这是「刷新失效」的主因。
+       *
+       *   语义改为：**刷新就是刷新该连接可见的全部库**。
+       *   defaultDatabase 只该影响「连上后默认落在哪个库」，不该收窄元数据范围 ——
+       *   树是靠 schemas[connId] 全量渲染的，收窄了与树的需求直接矛盾。
+       *
+       * ⚠️ 传undefined **不够**：驱动层 introspect(undefined) 会回退到
+       *   `cred.database ? [cred.database] : listDatabases()`（core-driver-mysql:517），
+       *   配了库名的连接照样只扫一个库。所以必须显式列出全部可见库。
+       */
+      const visible = await s.driver.listDatabases();
+      // 可见库为空（如受限账号只能看到一个未在 SCHEMATA 授权的库）时退回连接配置里的库，
+      // 否则刷新会把树清空 —— 比"刷不全"更糟
+      const targets = visible.length > 0 ? visible : s.cfg.defaultDatabase ? [s.cfg.defaultDatabase] : [];
       return await s.driver.introspect(targets);
     } catch (e) {
       this.noteDriverFailure(s, e);

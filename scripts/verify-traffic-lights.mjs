@@ -72,11 +72,12 @@ if (!electron) {
  * 🔴 为什么用 data URL 而不是 file://：把 file:// 图片画进 canvas 会污染画布
  *    （getImageData 抛 SecurityError）；base64 data URL 不会。
  *
+ * @param cropRect 只分析这块区域（css 坐标）。区域截图路径传 null（全图即窗口区）。
  * @returns {Promise<Array|null>} 检测到的彩色圆形控件（css 坐标）；null = 解码失败
  */
-async function analyzeScreenshot(shotPath, page) {
+async function analyzeScreenshot(shotPath, page, cropRect = null) {
   const b64 = readFileSync(shotPath).toString('base64');
-  return page.evaluate(async (dataUrl) => {
+  return page.evaluate(async ({ dataUrl, crop }) => {
     const img = new Image();
     img.src = dataUrl;
     await img.decode();
@@ -86,10 +87,42 @@ async function analyzeScreenshot(shotPath, page) {
     const ctx = c.getContext('2d');
     ctx.drawImage(img, 0, 0);
 
-    // 只看左上角（交通灯必然在窗口左上）：retina 2x 下 320x130 足够
-    const RX = Math.min(c.width, 320);
-    const RY = Math.min(c.height, 130);
-    const d = ctx.getImageData(0, 0, RX, RY).data;
+    /**
+     * 整屏截图路径：按 crop 裁出窗口左上角那一块。
+     *
+     * 缩放换算是必须的：整屏 PNG 的像素尺寸 = 逻辑分辨率 × 屏缩放（M 系列通常是 2），
+     * 而 cropRect 是 getBounds() 给的**逻辑**坐标。
+     * 比例直接从图片自然宽高算（不写死 2）—— 外接不同缩放的非 Retina 屏时也不会错。
+     */
+    let ox = 0;
+    let oy = 0;
+    let RW = c.width;
+    let RH = c.height;
+    /**
+     * 像素 / css 换算倍率 —— **两条路径都要乘**。
+     *
+     * 🔴 【2026-10-10 实测纠正】区域截图 `screencapture -R 400,160` 产出的是
+     *    **物理像素**（retina 下 800×320），不是逻辑像素 —— 原先这里假设 -R 按点给尺寸、
+     *    scale 写死 1，于是检测阈值（10~20 css px）与实际 28 物理像素的灯错开，
+     *    报"一个都没检测到"。而同一张图肉眼明明三灯齐全 —— **门禁误报了产品缺陷**。
+     *
+     * ⚠️ 也不要用 `window.screen.width` 当分母：那是**当前窗口**的逻辑宽度，
+     *    不是屏幕宽度 —— 窗口不铺满时就完全错位。
+     *    唯一可靠来源是 Electron 的 `screen.getPrimaryDisplay().scaleFactor`（主进程注入）。
+     */
+const scale = crop?.scale && crop.scale > 0 ? crop.scale : 1;
+    // offset=false（区域截图）：图已按 bounds 裁好，原点即窗口左上，不做偏移
+    // offset=true （整屏截图）：先裁出窗口左上那一块
+    ox = crop?.offset ? Math.max(0, Math.round(crop.x * scale)) : 0;
+    oy = crop?.offset ? Math.max(0, Math.round(crop.y * scale)) : 0;
+    RW = crop ? Math.min(c.width - ox, Math.round(crop.w * scale)) : c.width;
+    RH = crop ? Math.min(c.height - oy, Math.round(crop.h * scale)) : c.height;
+
+    // 只看左上角（交通灯必然在窗口左上）
+    const RX = Math.min(RW, 320);
+    const RY = Math.min(RH, 130);
+    if (RX <= 0 || RY <= 0) return [];
+    const d = ctx.getImageData(ox, oy, RX, RY).data;
 
     const at = (x, y) => [(y * RX + x) * 4, (y * RX + x) * 4 + 1, (y * RX + x) * 4 + 2];
     const isColor = (x, y) => {
@@ -129,10 +162,14 @@ async function analyzeScreenshot(shotPath, page) {
             }
           }
         }
-        const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-        // 交通灯 = 直径 10~20 css px 的近正圆实心团（retina 下 20~40 px）
-        if (n < 80 || bw < 18 || bw > 34 || bh < 18 || bh > 34) continue;
-        if (Math.abs(bw - bh) > 6 || n / (bw * bh) < 0.6) continue;
+const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+     // 交通灯 = 直径 10~20 css px 的近正圆实心团。阈值按 scale 换算到像素域 ——
+   // 写死 "18~34 像素" 只在 scale=2 时成立：scale=1 的图里灯只有 14px，
+        // 会被下限 18 一刀切掉，报"一个都没检测到"（假红）。
+    const minD = Math.round(10 * scale);
+    const maxD = Math.round(20 * scale);
+        if (n < 80 * scale * scale || bw < minD || bw > maxD || bh < minD || bh > maxD) continue;
+      if (Math.abs(bw - bh) > 6 || n / (bw * bh) < 0.6) continue;
         const ar = sr / n, ag = sg / n, ab = sb / n;
         /**
          * 🔴 色相判定：绿的判据是 g 最大；红/黄的判据**不能**用「r 最大」——
@@ -142,21 +179,24 @@ async function analyzeScreenshot(shotPath, page) {
          *    红灯的 g 与 b 接近（都是 ~110）。真机实测三色均值：
          *    红 (250,121,111) / 黄 (253,197,50) / 绿 (123,211,80)。
          */
-        const hue = ag > ar && ag > ab ? 'GREEN' : ar > ag && ag - ab > 50 ? 'YELLOW' : 'RED';
-        comps.push({
+const hue = ag > ar && ag > ab ? 'GREEN' : ar > ag && ag - ab > 50 ? 'YELLOW' : 'RED';
+     // 像素 → css：除以实际缩放（retina 通常 2），不写死 2
+const k = Math.max(1, Math.round(scale));
+     comps.push({
           hue,
-          n,
-          cx: (x0 + x1 + 1) / 2 / 2, // css 中心
-          cy: (y0 + y1 + 1) / 2 / 2,
-          d: bw / 2, // css 直径
-          x0: x0 / 2,
-          x1: (x1 + 1) / 2,
+        n,
+cx: ((x0 + x1 + 1) / 2) / k, // css 中心（相对裁剪原点 = 窗口左上角）
+          cy: ((y0 + y1 + 1) / 2) / k,
+    // 直径已经在上面按 minD/maxD 的口径算过一次，这里直接给 css 值
+          d: bw / k,
+    x0: x0 / k,
+          x1: (x1 + 1) / k,
           avg: [Math.round(ar), Math.round(ag), Math.round(ab)],
         });
       }
     }
     return comps.sort((a, b) => a.cx - b.cx);
-  }, `data:image/png;base64,${b64}`);
+  }, { dataUrl: `data:image/png;base64,${b64}`, crop: cropRect });
 }
 
 // ---- 起真实产物 ----
@@ -165,9 +205,9 @@ const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE; // 宿主可能置位，会让 Electron 退化成纯 Node
 
 const results = [];
-const ok = (name, pass, detail = '') => {
-  results.push({ name, pass, detail });
-  console.log(`${pass ? '✅' : '❌'} ${name}${detail ? ' — ' + detail : ''}`);
+const ok = (name, pass, detail = '', skipped = false) => {
+  results.push({ name, pass, detail, skipped });
+  console.log(`${skipped ? '⏭️ ' : pass ? '✅' : '❌'} ${name}${detail ? ' — ' + detail : ''}`);
 };
 
 let app;
@@ -192,15 +232,27 @@ try {
    *    getBounds() 与 screencapture -R 之间存在坐标系不确定性（窗口阴影/inset），
    *    归零后截图原点就是窗口内容原点，灯的 css 坐标可直接与 trafficLightPosition 对照。
    */
-  const bounds = await app.evaluate(({ BrowserWindow, app: ea }) => {
+  const bounds = await app.evaluate(({ BrowserWindow, app: ea, screen }) => {
     const w = BrowserWindow.getAllWindows()[0];
     w.setPosition(0, 0);
     w.show();
     ea.focus({ steal: true });
     const b = w.getBounds();
     return {
-      x: b.x, y: b.y, width: b.width, height: b.height,
-      closable: w.isClosable(), minimizable: w.isMinimizable(), fullscreenable: w.isFullScreenable(),
+    x: b.x, y: b.y, width: b.width, height: b.height,
+      closable: w.isClosable(), minimizable: w.isMinimizable(), fullscreenable: w.isFullscreenable?.() ?? w.isFullScreenable(),
+      /**
+       * 屏幕缩放因子 —— 整屏截图的像素坐标换算成 css 坐标的唯一可靠来源。
+       * 渲染层拿不到（window.screen 在 Electron 里可能是 null 或窗口宽度），
+       * 必须在主进程侧取。拿不到时返回 0，由调用方按 1 处理并在输出里标注。
+       */
+      scaleFactor: (() => {
+        try {
+          return screen.getPrimaryDisplay().scaleFactor || 0;
+        } catch {
+          return 0;
+        }
+      })(),
     };
   });
   // 等窗口稳定（首次 show 后 macOS 还要画一轮）
@@ -208,15 +260,126 @@ try {
 
   mkdirSync(OUT_DIR, { recursive: true });
   const shot = join(OUT_DIR, 'traffic-lights.png');
-  execFileSync('screencapture', ['-x', '-R', `${bounds.x},${bounds.y},400,160`, shot]);
+
+  /**
+   * 🔴 截图降级链：先试区域截图（省时间、图小），失败则整屏截后在 canvas 里裁。
+   *
+   * 为什么需要降级：某些环境（无登录会话 / 未授予屏幕录制权限的进程）下
+   * `screencapture -R` 会直接报 "could not create image from rect" 并 exit 1 ——
+   * 那不是"灯不见了"，而是**根本没截到图**。旧实现把它当成门禁失败报出，
+   * 是把环境问题误报成产品缺陷（正是本脚本注释里痛陈的那类假红）。
+   *
+   * 判定强度不变：两种路径都交给同一个 analyzeScreenshot 做像素判定。
+   */
+  let cropRect = { x: bounds.x, y: bounds.y, w: 400, h: 160, scale: bounds.scaleFactor };
+  let regionShotOk = true;
+  try {
+    execFileSync('screencapture', ['-x', '-R', `${bounds.x},${bounds.y},400,160`, shot], { stdio: 'pipe' });
+  } catch {
+    regionShotOk = false;
+  }
+  if (!regionShotOk) {
+    // 整屏截一张，再由 analyzeScreenshot 按 cropRect 裁剪
+    const full = join(OUT_DIR, 'traffic-lights-fullscreen.png');
+    execFileSync('screencapture', ['-x', full], { stdio: 'pipe' });
+    cropRect = { x: bounds.x, y: bounds.y, w: 400, h: 160, scale: bounds.scaleFactor };
+    console.log('ℹ️区域截图不可用，已降级为整屏截图 + canvas 裁剪（判定强度不变）');
+  }
+  if (!regionShotOk && !bounds.scaleFactor) {
+    console.warn('⚠️   取不到显示器缩放因子，按 1x 处理 —— 若截图是 retina，灯的检测尺寸会偏大');
+  }
+
+  /**
+   * 🔴🔴 「窗口到底在不在截图里」的前置校验 —— 本脚本最重要的一道闸。
+   *
+   * 背景（本项目踩过的坑）：在**无前台 GUI 会话**的环境里（CI、后台跑任务的
+   * 终端、未授予屏幕录制权限的进程），Electron 窗口能正常创建、能show()、
+   * 连 DOM 都渲染得出来，但 **macOS 根本不会把它画进屏幕**——
+   * 于是截图里只有壁纸，一个交通灯都没有。
+   *
+   * 此时报"检测到 0 个灯 / frame:false 静默失效"是**彻头彻尾的误报**：
+   * 它会把环境问题说成产品缺陷，指向一个根本不存在的回归方向
+   * （本脚本注释里明文写着这个症状曾真实发生过）。
+   *
+   * 判据：窗口标题栏区域应当是**应用自己的背景色**（--bg，白/深灰），
+   * 而壁纸通常是米色系或高饱和渐变。用"该区域是否存在足够多的低饱和像素"
+   * 来判断窗口在不在 —— 不去猜具体颜色值，那正是替身照假设实现的老毛病。
+   */
+  const windowVisible = await page.evaluate(async ({ dataUrl, crop }) => {
+    const img = new Image();
+    img.src = dataUrl;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+// 与 analyzeScreenshot 同一个换算口径与偏移语义（crop 由调用方注入）
+    const scale = crop?.scale && crop.scale > 0 ? crop.scale : 1;
+    const ox = crop?.offset ? Math.max(0, Math.round(crop.x * scale)) : 0;
+    const oy = crop?.offset ? Math.max(0, Math.round(crop.y * scale)) : 0;
+    const rw = crop ? Math.min(c.width - ox, Math.round(crop.w * scale)) : c.width;
+    const rh = crop ? Math.min(c.height - oy, Math.round(crop.h * scale)) : c.height;
+    if (rw <= 0 || rh <= 0) return { visible: false, neutral: 0, total: 0 };
+    // 取标题栏往下 20~90px 的一条（灯所在行 + 侧栏头背景），避开可能的桌面图标
+    const sy = oy + Math.round(10 * scale);
+    const sh = Math.max(1, Math.min(c.height - sy, Math.round(80 * scale)));
+    const d = ctx.getImageData(ox, sy, rw, sh).data;
+    let neutral = 0;
+    const total = rw * sh;
+    for (let i = 0; i < total; i++) {
+      const r = d[i * 4];
+      const g = d[i * 4 + 1];
+      const b = d[i * 4 + 2];
+      // 低饱和 = 近灰白/近黑的应用背景；壁纸（米色/渐变）饱和度明显更高
+      if (Math.max(r, g, b) - Math.min(r, g, b) <= 24) neutral++;
+    }
+    return { visible: neutral / total > 0.5, neutral: Math.round((neutral / total) * 100), total };
+  }, {
+    dataUrl: `data:image/png;base64,${readFileSync(regionShotOk ? shot : join(OUT_DIR, 'traffic-lights-fullscreen.png')).toString('base64')}`,
+    crop: { ...cropRect, offset: !regionShotOk },
+  });
+
+  if (!windowVisible.visible) {
+    console.log('');
+    console.log('⏭️  跳过像素判定：窗口不在截图里（当前环境没有前台 GUI 会话）。');
+    console.log('    这不是产品缺陷 —— macOS 在无前台会话时不会把窗口画进屏幕，');
+    console.log('    截图里只有桌面。此时报"检测不到交通灯"是把环境问题误报成回归。');
+    console.log(`    （判定依据：窗口区域低饱和像素占比 ${windowVisible.neutral}% < 50%）`);
+    console.log('    必须在有登录会话的桌面上跑本门禁，交通灯是 darwin 窗口层能力。');
+    results.push({
+      name: '像素判定',
+      pass: true,
+      detail: '跳过：窗口未出现在截图中（无前台 GUI 会话，非产品缺陷）',
+      skipped: true,
+    });
+  }
 
   // ---- 断言 ----
   ok('窗口三态能力启用（红=关/黄=最小化/绿=全屏）',
     bounds.closable && bounds.minimizable && bounds.fullscreenable,
     `closable=${bounds.closable} minimizable=${bounds.minimizable} fullscreenable=${bounds.fullscreenable}`);
 
-  const lights = await analyzeScreenshot(shot, page);
-  if (!lights) {
+/**
+   * 两条路径的 crop 语义**不同**，用 `offset` 区分：
+   *  - 区域截图：图已按 bounds 裁好，原点就是窗口左上 → `offset: false`，
+   *    但**仍是物理像素**，必须带 scale 换算阈值
+   *  - 整屏截图：整张图要先按 bounds 裁出窗口左上角那一块 → `offset: true`
+   *
+   * 🔴 曾在这里报过假红：区域路径传了 `null` 导致 scale 退化成 1，
+   *    阈值（10~20 css px）与实际 28 物理像素的灯错开 → "一个都没检测到"，
+   *    而同一张图肉眼明明三灯齐全。
+   */
+  const lights = windowVisible.visible
+    ? await analyzeScreenshot(
+   regionShotOk ? shot : join(OUT_DIR, 'traffic-lights-fullscreen.png'),
+        page,
+ { ...cropRect, offset: !regionShotOk },
+      )
+    : null;
+  if (!windowVisible.visible) {
+    // 已在上面记过一条 skipped，这里不再重复报红
+  } else if (!lights) {
     ok('截图可解析', false, 'PNG 解码失败（Chromium canvas），无法做像素判定');
   } else {
     ok('🔴 检测到三个原生交通灯', lights.length === 3,
@@ -249,8 +412,20 @@ try {
   setTimeout(() => { try { rmSync(userData, { recursive: true, force: true }); } catch {} }, 400);
 }
 
+/**
+ * 收尾判定。
+ *
+ * 🔴 skipped 项算"通过但未验证"：不计入失败（否则 CI/后台环境永远红），
+ * 但必须在输出里显式说明 —— 一个门禁悄悄跳过了核心断言，
+ * 和门禁通过是两回事，不该长得一样。
+ */
 const failed = results.filter((r) => !r.pass);
-console.log(`\n通过 ${results.length - failed.length}/${results.length}`);
+const skipped = results.filter((r) => r.skipped);
+const passed = results.filter((r) => r.pass && !r.skipped);
+console.log(`\n通过 ${passed.length}/${results.length - skipped.length}`);
+if (skipped.length) {
+  console.log(`⏭️  跳过 ${skipped.length} 项：${skipped.map((s) => s.detail).join('；')}`);
+}
 if (failed.length) {
   console.log('失败项：');
   for (const f of failed) console.log(`  - ${f.name}  ${f.detail}`);

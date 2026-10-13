@@ -84,6 +84,26 @@ export function IconDatabase({ size = 12 }: IconProps) {
   );
 }
 
+/**
+ * v0.6.0：分组（连接分组）节点图标。
+ *
+ * 此前树里分组行是三行里唯一没有图标的容器节点（库/对象类别都有），
+ * 视觉上像"漏了一截"。与库节点刻意同色系但形状不同，避免误读成数据库。
+ */
+export function IconFolder({ size = 12 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M3.5 7.2a2 2 0 0 1 2-2h3.3l2 2.4h7.7a2 2 0 0 1 2 2v8.6a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** 表格:表节点 */
 export function IconTable({ size = 12 }: IconProps) {
   return (

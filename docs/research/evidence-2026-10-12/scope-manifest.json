@@ -1,0 +1,1332 @@
+{
+  "date": "2026-10-12",
+  "note": "文件覆盖索引；不表示所有文件逐行审计或所有功能真机验收。关键链路阅读及交互证据见主报告。",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "lines": 154,
+      "sha256": "9d1ede1523de1bba59d5fdbf79bc6220415a0bd738b77b94833d19f361a116d9",
+      "category": "文档"
+    },
+    {
+      "path": "README.md",
+      "lines": 412,
+      "sha256": "258f896b733560f3cb5123bd5519fd527fd033482b86315fbddc72bf35634d8c",
+      "category": "文档"
+    },
+    {
+      "path": "apps/desktop/README.md",
+      "lines": 84,
+      "sha256": "06c2f30fdf821e496f98153b3fd89bbf04b6475c07a2077ae9d2a3f80dfc4d9d",
+      "category": "文档"
+    },
+    {
+      "path": "apps/desktop/renderer/README.md",
+      "lines": 35,
+      "sha256": "a577df7351ffc1c083aa84e1fd913730327bfca1a7e431a979b7d4103e8c14b7",
+      "category": "文档"
+    },
+    {
+      "path": "apps/desktop/renderer/index.html",
+      "lines": 27,
+      "sha256": "54f3367513462e007b161136a3c8bb8f1bc5c9e29723a76006783fdf1ad9c33a",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/App.tsx",
+      "lines": 3588,
+      "sha256": "2c031f12479c5ea02059918c042c0ca8633439f38d841aca356d87f9ae7d09c8",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/backend.ts",
+      "lines": 549,
+      "sha256": "52885e5f7855967dfb205f6a7b048cf477264496ea98c14e51f905fd4294722d",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/connection/ConnectionEditor.tsx",
+      "lines": 653,
+      "sha256": "f006fcfb99a3c37291a8a01a1291ad1250f4b32fc3f85c3f407cb2885c290b63",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/danger/DangerConfirmModal.tsx",
+      "lines": 106,
+      "sha256": "873e3b3a10a8965b57c3f8ec98c47a2240a3af5c6f98c3857e55eb988758e3ae",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/demoData.ts",
+      "lines": 229,
+      "sha256": "10bcaee0e2cca596ce2b9802accbe94148eac297267143e74994a0ad7cc226ae",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/designer/TableDesigner.tsx",
+      "lines": 673,
+      "sha256": "aacd7660cece7cc4123d6f870f44dbe4a1559ae8d64b533c0a970ae8d96da4d8",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/detail/CellValueModal.tsx",
+      "lines": 363,
+      "sha256": "328b1c671f031c8bd5d1f93a81b6098bb091920a68e77c91f989d95152ae4310",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/detail/DetailPanel.tsx",
+      "lines": 226,
+      "sha256": "178b127e1ba55fb7d0164305e27fca4c92c5c1865428bd9cfdfcd9503fbd4032",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/editor/SqlEditorCore.ts",
+      "lines": 1090,
+      "sha256": "1546e13b670c44a7de26f93b58c7113d7fa54ec34c4cbb0a9f2cb76fc61109a5",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/editor/SqlEditorPanel.tsx",
+      "lines": 1265,
+      "sha256": "52ed60a4a41137d66b9127f59055c7f38297e5232f36bb898476d3519c686cd1",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/editor/sqlEditorCore.test.ts",
+      "lines": 318,
+      "sha256": "8d0f9c463131c44e546e66bc1f2efee107394998dea41149c4a3ca932512cabf",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/editor/warmup.ts",
+      "lines": 60,
+      "sha256": "7c6d101a5c280aa71ace833dbd68d4c8621357c27f6169ff8ec7c34cc7aa9957",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/filter/FilterBuilder.tsx",
+      "lines": 629,
+      "sha256": "cfd970b690eb101710890e2c0175012b2e69ed8d648ee4de5d93839238214e63",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/filter/preview.ts",
+      "lines": 22,
+      "sha256": "3312b7fcf21fed14c95da8ac0431c6048009c7d74ca7540abd6b50cbd147d425",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/filter/savedFilters.test.ts",
+      "lines": 372,
+      "sha256": "1511bb88183ce9fae10fead12181629bf4a2729184a9f23bbc4a412b07c72fe4",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/filter/savedFilters.ts",
+      "lines": 310,
+      "sha256": "a42b2fc05a087fd9696f4614d5eb2f500617e11e6cef472232379025672691e7",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/CellContextMenu.tsx",
+      "lines": 358,
+      "sha256": "41e2a3bf7de39717eafcaf7293e3f2ff17c1b583e5ac8d5fd210d623795d779a",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/ColumnQuickFinder.tsx",
+      "lines": 193,
+      "sha256": "65e46b4ac0a6965e1990b8b0ffbe5201ce08df7d0ba06fd1d7aa995b923ea338",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/DataGrid.test.ts",
+      "lines": 294,
+      "sha256": "5e205155a838fc38fd0e55c86ca5bbfbfbbeafa87cd4e7044a4fc8f9a47ddd6c",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/DataGrid.tsx",
+      "lines": 2406,
+      "sha256": "31248facd36958fb4c8d408f6994d26784b6f3c2adfede5ea75f5413acf2a6d6",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/ForeignKeyPicker.tsx",
+      "lines": 191,
+      "sha256": "662806446fe7e3cec9223cd11ebb241f613aeff17906baea416d83214effa8e4",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/HeaderContextMenu.test.ts",
+      "lines": 78,
+      "sha256": "a75e3df8820a83e194f467dd9fa0381e81837f52606e664c746e5e835eb1d974",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/HeaderContextMenu.tsx",
+      "lines": 212,
+      "sha256": "0f27bbfd636f144cd12163d8a59ef8c1e49a2450a5822566c038241219cda7fb",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/SavePreviewModal.tsx",
+      "lines": 99,
+      "sha256": "3bdd84a692be81ab57f8f4e1b5b48beb927364da2d5133f5ebd858dbcc3576b2",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/TransposedView.tsx",
+      "lines": 429,
+      "sha256": "7214291e62a2a0586883967b49350506da0e51bafdd2c00a342079685f4f1898",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/columnFinder.test.ts",
+      "lines": 206,
+      "sha256": "55fb787813880a086d3b2ba4167597950e55824c0b6b21b31de6b87df8abf75d",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/columnFinder.ts",
+      "lines": 180,
+      "sha256": "3f966415072e5ee14aa11ca43650f73250e0b8bb739fa1538ab7c85ab47b3939",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/groupStripe.test.ts",
+      "lines": 195,
+      "sha256": "8d9eb31014ec87a56f7c5147939c8b54ec7ac1f1acb413e0ba76151dac4c33ff",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/groupStripe.ts",
+      "lines": 153,
+      "sha256": "0ab75a6874ba5d823fe2cc5882314b0fae978cad037c18bdef46989411d11628",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/useGridData.test.ts",
+      "lines": 306,
+      "sha256": "d140bd7f9f6ea5a43eb2ded8895a2999250f78da8795ad86493357937b468e88",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/grid/useGridData.ts",
+      "lines": 329,
+      "sha256": "cdf477c681108b258dbb0a2f0a53009040336f9b90eda0b589087857ae9d1e05",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/main.tsx",
+      "lines": 13,
+      "sha256": "3386fdb5aab0cbf8214bcd9ceaaad63c6241045d8599184842c276b1386cbd8d",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/palette/CommandPalette.tsx",
+      "lines": 198,
+      "sha256": "e110bb7fe76f8efec00e39f8059c5caa4430cc83e50c580ffe1dde309a5a0f21",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/prefs/PreferencesPanel.tsx",
+      "lines": 207,
+      "sha256": "80af35c6503b824784b6cb1b1701b3df05be0595c9a3ef1e43851d46c57def08",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/prefs/preferences.test.ts",
+      "lines": 113,
+      "sha256": "4ab4a52b100fff3c6b5d985c5f71fa87c2e0b76c5727ff28960038ac22db9d38",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/prefs/preferences.ts",
+      "lines": 111,
+      "sha256": "d63854d76ec7060dd8e8a4532958abca440a7a3674a02b100908f1524fc40189",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/styles.css",
+      "lines": 4711,
+      "sha256": "ad4e50e557af2fcb41eb52a5e1cb28c152c8c327f7d0545ad914635267d7a3b1",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/transfer/ExportModal.tsx",
+      "lines": 396,
+      "sha256": "54f79f37beac8058c8860ece8751ca72a4821c7e7c3f07704dcd37311e0e247f",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/transfer/ImportWizard.tsx",
+      "lines": 480,
+      "sha256": "ff97d8da97bc47ccc61da72a3d2c36333d77f3d4e5e0b7a5f382d4924689bf97",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/transfer/ScriptDbPicker.tsx",
+      "lines": 102,
+      "sha256": "45973ff1ede3cca8a5850c7a3507895faf37ba171221b8685a671cde6f86d873",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/transfer/SqlScriptModal.tsx",
+      "lines": 365,
+      "sha256": "bee3a04d783a697ebed2db80ac211d9c2adbbf923a9351c9de01181f85aff6bd",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/tree/TreeContextMenu.tsx",
+      "lines": 94,
+      "sha256": "679473c5f40dc22e90be3a07f1cf7af9128cb39f50b1810299fe88b947635446",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/tree/TreeView.tsx",
+      "lines": 722,
+      "sha256": "24a45b39ce098be277e609527813c49798c7109d38e510c3d0a60a05ea0cccf5",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/tree/favorites.test.ts",
+      "lines": 89,
+      "sha256": "8e265aa0f6f3f3e54cc6fb2466461b1669585962bc18e65c9dec6ca25fee54c7",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/tree/favorites.ts",
+      "lines": 83,
+      "sha256": "72559c2a1ff936cb875a327c47276b036fd418155bf01164fb3ba14114f860f5",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/ui/icons.tsx",
+      "lines": 450,
+      "sha256": "e8435e3d5cab330d2e5caf5404e9cacb61444cda5b42c4e4c671f863f9e0a269",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/ConnStateBanner.tsx",
+      "lines": 128,
+      "sha256": "91a89de216e23c0dc61909fb6a745530877d50e69d8eb38212a9f410af2244d0",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/EmptyState.tsx",
+      "lines": 70,
+      "sha256": "504ad75033020eb2d25026818d261d83271990343cf31964dc24b7e5e890a3e2",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/ObjectBrowser.tsx",
+      "lines": 181,
+      "sha256": "9a3c90720679e9541d540ed1235e76d04cf45524198f7fb11f405ba6b0f697f4",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/TablePane.tsx",
+      "lines": 386,
+      "sha256": "aae6c1d7a0f9cae821a05e059488820f6250f5c3480be5ab95bb94dfb048e47e",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/WorkspaceTabsBar.tsx",
+      "lines": 87,
+      "sha256": "5d41fb3fadadb516eb06786902f81c8ff062f18bd058b626d3ca88521bd425d1",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/fontZoom.test.ts",
+      "lines": 120,
+      "sha256": "39a190d08d553af6d9b61f6ba0cd12a62988290d237a60324244ad683c97da0e",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/fontZoom.ts",
+      "lines": 68,
+      "sha256": "718fc10c38c535bdb2584938d60621cdbb01f1ba9e484e173f884dac7b39761a",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/sessionSnapshot.test.ts",
+      "lines": 241,
+      "sha256": "236bf937f1e41d386fe605d7f2ae6d4db72a841c20b3404492095e1b8dca5435",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/sessionSnapshot.ts",
+      "lines": 170,
+      "sha256": "c5e9fd47e3312460aac1e382fa4cc0d6532265124ca347cd7d10501f7460ba70",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/src/workspace/useWorkspaceTabs.ts",
+      "lines": 203,
+      "sha256": "2688b30f1473c4a8a7f016edb9881a97821f9f5bfaa56a097e3cd04b694fb355",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/renderer/vite.config.ts",
+      "lines": 156,
+      "sha256": "9d6f2d559d7175176a0ce7210f243c608cb7bb0d139a0c1a61ea8b1b50aad83a",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/connection-store.test.ts",
+      "lines": 239,
+      "sha256": "7fce81d364a681885d8bfbf23f2558752f9821641fad4dc7a662cc8d6e930b8b",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/src/main/connection-store.ts",
+      "lines": 266,
+      "sha256": "12ee31da91e13fb6955749d295048d7f2d1cf1517b25b2de031b5bbe90506efe",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/ipc-handlers.test.ts",
+      "lines": 852,
+      "sha256": "df940c56092aa0e57749cf77ea1f779c7e921b06effa69f175012b9729490bfe",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/src/main/ipc-handlers.ts",
+      "lines": 710,
+      "sha256": "24e40bbb4e620603adf228b0a284528580ab213f5072e70b41b3ca4f53f78225",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/main.ts",
+      "lines": 249,
+      "sha256": "dbb6ab6ceb1d2a01f97e62c748b3835a2c40356de7b472016a2655eb765beade",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/menu.test.ts",
+      "lines": 156,
+      "sha256": "0699fcbd1d29169ecdbd0394867b7a10705ec49d907ff66ec4dbc12caea5f6ee",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/src/main/menu.ts",
+      "lines": 188,
+      "sha256": "7db5cd6dd75353d9d2323a2907af4e415f77bc5a6ce05a1a5ebed585181fd6d2",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/object-meta.ts",
+      "lines": 30,
+      "sha256": "1bdd719bf376999bc68180452a156ac7a53b79c1aa6959034812166dd181a1bd",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/schema-shape.test.ts",
+      "lines": 89,
+      "sha256": "5a971fb9d568c967845567a6433c38def1ad0ab3e3b85b32724a58c837bba82a",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/src/main/schema-shape.ts",
+      "lines": 47,
+      "sha256": "ec2f24ab85ff1eb02d5c4825470e2ddbb163f333b66fdc1467fd85d5e48478be",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/session-registry.test.ts",
+      "lines": 1226,
+      "sha256": "230200b0a0d82e1309534566bd86b648f887505ef6548a74836b18ed19dd35ed",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/src/main/session-registry.ts",
+      "lines": 1220,
+      "sha256": "6ad16d6a8512c2e92a902e1ecec41dd1f4e6a7843f68293ea6441726c5baaa4a",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/transfer-manager.ts",
+      "lines": 506,
+      "sha256": "04d21f5a805acd9b60697124318725523a7654defa9acbdc44c9effe81422f39",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/tunnel-manager.test.ts",
+      "lines": 230,
+      "sha256": "a4207d36a5741adae00005ff15b4293a7f0d441ab3ba471321fe23e5417baa92",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/src/main/tunnel-manager.ts",
+      "lines": 168,
+      "sha256": "4fcb50700ccad52f0ed1a73a514e944edeb8d8ba5e4144018dfd4bd7759bfd43",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/updater.ts",
+      "lines": 152,
+      "sha256": "bc86edacddc1fa7129c2cc4e969a5ab05f7188aa211ee599207f2c34ef5ea18e",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/window-manager.ts",
+      "lines": 109,
+      "sha256": "b67f464df402be1c0e3d2a4c98cbac0078e68a9c37d7e285a2476edc6a1d8630",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/window.test.ts",
+      "lines": 274,
+      "sha256": "c254c8909152b6942ccd9550c99a2ba6b2ec47d53d06b32068496e5058031c87",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/src/main/window.ts",
+      "lines": 411,
+      "sha256": "aff3c4f21fcb497bd246809feb32a067cb31bd97012899476edb5f9d970919e5",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/workers/export-worker.cjs",
+      "lines": 422,
+      "sha256": "cfe48ccb893a880d646a7bf80785c328b7e6a43a6b7a14a653b1ba774b14f21b",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/workers/import-worker.cjs",
+      "lines": 224,
+      "sha256": "1f60c43dc4c0ee01f66bb4e80a6c1a72bf6d1527e9152688f3809b8215f1ef3f",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/main/workers/sql-script-worker.cjs",
+      "lines": 394,
+      "sha256": "0ac1f665f306fed050012bb01af506262bba55274771f45bdc142217e1983e34",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/preload/preload.cjs",
+      "lines": 151,
+      "sha256": "6d6078cdddeeae0833715438f6ba80465b355a762fa375fd61130ec10485538f",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/shared/ipc-channels.cjs",
+      "lines": 82,
+      "sha256": "8cf9d6bc98caf508f89707f51791aebe5a778630a4ebff079942c958f8362714",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/shared/ipc-channels.test.ts",
+      "lines": 73,
+      "sha256": "bb77475d4d16ca723167760d3aa02ae07c1e1e199a273646f56b3d09cad93f9f",
+      "category": "测试/验收"
+    },
+    {
+      "path": "apps/desktop/src/shared/ipc-channels.ts",
+      "lines": 639,
+      "sha256": "a78c353cbf15548433ea3d4c7beb8df05f48fce3d200620bccbf1b259fbeeae3",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/src/shared/renderer-types.ts",
+      "lines": 62,
+      "sha256": "a5dbf4e09b035396596b485deb407e52eb6fe5f27b7fd77778488445cc96f11e",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/vite.main.config.ts",
+      "lines": 128,
+      "sha256": "e4ef9f3a31ac2b2a4e537a16deb27577b3e28bf1c2e6b159919376ce75125c51",
+      "category": "实现/构建"
+    },
+    {
+      "path": "apps/desktop/vite.preload.config.ts",
+      "lines": 36,
+      "sha256": "778211b136954cbc6dc33b1e5b22a0207bb5627627fb2c59a9398c4de23a4394",
+      "category": "实现/构建"
+    },
+    {
+      "path": "docs/README.md",
+      "lines": 95,
+      "sha256": "57f4fba31ea1fd1f2e845f2a4ad7754508fd425988d0eefbff8a03325d947926",
+      "category": "文档"
+    },
+    {
+      "path": "docs/RELEASES.md",
+      "lines": 146,
+      "sha256": "543064ccee639cb6b7cc5c956b67717db4bf3b69ef1ee4608130b5c5dff40b35",
+      "category": "文档"
+    },
+    {
+      "path": "docs/archive/PRD-v0.4.md",
+      "lines": 1292,
+      "sha256": "6a706fc0edb996807bdb4dd67b3cb64fe4e40a648188860f42d4685fae26afd0",
+      "category": "文档"
+    },
+    {
+      "path": "docs/archive/PRD-v0.5-修订增量.md",
+      "lines": 384,
+      "sha256": "8338291587aa8c6f33f94ebb5341c87d8f78cde9441289837ac5dbb08badde4e",
+      "category": "文档"
+    },
+    {
+      "path": "docs/archive/R1-并行研发契约-2026-09-26.md",
+      "lines": 88,
+      "sha256": "8854e96f2fbdbc392b3006b42b2a10662198af873a1c99b81597d728e1af3374",
+      "category": "文档"
+    },
+    {
+      "path": "docs/archive/REQUIREMENTS-v0.1.md",
+      "lines": 225,
+      "sha256": "469f7e09e10e48522ffe68d24db44fb9e4604dc40674961fff9024d21f57e74a",
+      "category": "文档"
+    },
+    {
+      "path": "docs/archive/概览-2026-09-28竞品调研.md",
+      "lines": 32,
+      "sha256": "adbbe5926ea60ecf9106a1fa04852a8cfa31621bf4ac4fb2e19af3bb9c059c58",
+      "category": "文档"
+    },
+    {
+      "path": "docs/archive/竞品对比与功能迭代清单-2026-09-26.md",
+      "lines": 187,
+      "sha256": "153dbe647c78d7aa5867f080722b0325fafa8b881ff9b444ca313f00621b0395",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-21.md",
+      "lines": 138,
+      "sha256": "5f682bd061be4b53a8dad2ea1c6dc034a2d863c46181d71f108f7de9916b98b3",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-22.md",
+      "lines": 294,
+      "sha256": "fd93767ae978bad282ae4fdff93e6e40082cf2f49b98ecdc5734b4538a377206",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-24.md",
+      "lines": 98,
+      "sha256": "81a26502ab1309c44ded694fbbc1c92e30fa716905c4df09b159ae6d87dad17d",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-26-r1.md",
+      "lines": 54,
+      "sha256": "a47036d928399cc26f127e40f49698128ee0f17f85fe3f7889152e542d0f78ee",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-26.md",
+      "lines": 262,
+      "sha256": "ef0ca8860ec3f9eb817c3479ac85e2f2906d00d225cb1314336be815a6f7e7de",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-27-grid-row-gutter.md",
+      "lines": 99,
+      "sha256": "d8d08e5d58ab4ac4a62398850e7d6a0423ea4ce6f203c86f25f6351831e4ab65",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-27.md",
+      "lines": 61,
+      "sha256": "fab431153a57bb8428d89e70fc11e7bb8fbbdb3578c1a029f3e853a816f98a78",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-29-p1b.md",
+      "lines": 121,
+      "sha256": "bf3476bd4ebc0d00c5d46ff7dc03b10d627371e2358e3ae5f176cf0e50c44a45",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-29-v1.3-defects.md",
+      "lines": 437,
+      "sha256": "c8f79b0c1fdf4f53741324b75484a267e1f3c232a731030faf3373f7a90e5c38",
+      "category": "文档"
+    },
+    {
+      "path": "docs/devlog/DEV-PROGRESS-2026-09-29.md",
+      "lines": 104,
+      "sha256": "857c5358b853f27f8484475fb1931633c90137ed6ef2125a351a8c0f67c47cce",
+      "category": "文档"
+    },
+    {
+      "path": "docs/engineering/S0-格式化体积实测-2026-09-29.md",
+      "lines": 94,
+      "sha256": "c451fb56bf9104022fad5e5abc68a4033d38d04fdca0d23ea52e7d1bf38006ce",
+      "category": "文档"
+    },
+    {
+      "path": "docs/engineering/SPIKE-REPORT-v1.0.md",
+      "lines": 311,
+      "sha256": "112cf84312555b65149ed2b14eb85b3e8f497d15cee9daf9aada81bfe363fd7e",
+      "category": "文档"
+    },
+    {
+      "path": "docs/engineering/TECH-REVIEW-v1.0.md",
+      "lines": 488,
+      "sha256": "3e107a9155300d229af69c3e1dfb9c9b445cf04ce9a1805e08e1e42b71c93e53",
+      "category": "文档"
+    },
+    {
+      "path": "docs/product/PRD-v1.0.md",
+      "lines": 1501,
+      "sha256": "4b3fffde34cfbb3e247158edbe1dcd525cad665d9c372deb46a1fd585314dea2",
+      "category": "文档"
+    },
+    {
+      "path": "docs/product/PRD-v1.1-功能增量.md",
+      "lines": 89,
+      "sha256": "15846477fd9d2d85b415e25cc1b4d910d22eac80442d8c10062e2241331e8b1e",
+      "category": "文档"
+    },
+    {
+      "path": "docs/product/PRD-v1.2-功能增量.md",
+      "lines": 352,
+      "sha256": "3c39ef1c3653f6dde0bdc363539a1bf6597e65bb7096b26a11901ffadb3def65",
+      "category": "文档"
+    },
+    {
+      "path": "docs/product/REQ-v1.2-SQL编辑器增强.md",
+      "lines": 213,
+      "sha256": "52120dd5baef1f73e16598509d29fc37ee09c40a48602b22e62f0b328afb4122",
+      "category": "文档"
+    },
+    {
+      "path": "docs/product/REQ-v1.2-窗口原生控件.md",
+      "lines": 221,
+      "sha256": "b66f6b2ed953471996ad45aa4c948a8802d2a58e77c3179f0f86f494bc8bff1a",
+      "category": "文档"
+    },
+    {
+      "path": "docs/product/REQ-v1.3-缺陷清理.md",
+      "lines": 564,
+      "sha256": "33b57909f45b8c4c9c9d52c81a46e33e1990a503ecda308e7cf791d8a7a3254c",
+      "category": "文档"
+    },
+    {
+      "path": "docs/research/竞品调研与功能路线图.md",
+      "lines": 500,
+      "sha256": "e8504a47fe6f5e7b5037698d528654affed50add12647b8366578d6ca0c446af",
+      "category": "文档"
+    },
+    {
+      "path": "packages/README.md",
+      "lines": 113,
+      "sha256": "73fc5983893b65397791f22a6fc00ff079ca6098cc46a1aeebf8c6a8c16b7b09",
+      "category": "文档"
+    },
+    {
+      "path": "packages/_integration/module-integration.test.ts",
+      "lines": 227,
+      "sha256": "5ecfd6e91cb4b6c756feb2910e851f29cd005529aa4a71e064316b86b31aa1cd",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-clipboard/README.md",
+      "lines": 54,
+      "sha256": "87c2a7f8751dca1bcfbc0633cf92a528b5305c6c48b6b52c8d01b307eddcaab2",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-clipboard/src/index.test.ts",
+      "lines": 636,
+      "sha256": "5bc9001fbd9bfee42323c1fd310e9a06991c81e3497a9c9cf41839c3d3e56f48",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-clipboard/src/index.ts",
+      "lines": 840,
+      "sha256": "5219a5e9e21df6224c6c127aa76d1eefe79761cb98c5831287aa855c57bc11b1",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-command-palette/README.md",
+      "lines": 47,
+      "sha256": "482793ea217a77dfe680f7f8215b987025b0d7bc1cbdea459cef9b6eb05b636f",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-command-palette/src/index.test.ts",
+      "lines": 193,
+      "sha256": "d1fa5dc05e569f06abcb2ddd65b2c44681bcd93d90e104cca8d63513cffd1a16",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-command-palette/src/index.ts",
+      "lines": 311,
+      "sha256": "befbeb26160bbda96426979d48870461b18328763e5b18b25ca27e4b1f8b14bf",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-connection/README.md",
+      "lines": 58,
+      "sha256": "f29c3c2b36d6609412c67ba60533e45f7b9335d69c0e4b5ee333f630d35308c1",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-connection/src/index.test.ts",
+      "lines": 316,
+      "sha256": "892a880d3ddf2679e68a8989ecc4755e6061d299e89c70f1115a934c6045dac5",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-connection/src/index.ts",
+      "lines": 561,
+      "sha256": "9324d837efd310e14174f2ee38c439265bb33ff7a5282ebfa5d1c74ce3397567",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-driver-mysql/README.md",
+      "lines": 67,
+      "sha256": "d19ce6f8b47c4ae3cdcabae72e76eb29157bd5830227c80862ba682b4359c88c",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-driver-mysql/src/index.test.ts",
+      "lines": 1300,
+      "sha256": "014754776e02ddc2e468f4f3dec1c60b6c58e5a53b4a7f67e6bb126fb289487b",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-driver-mysql/src/index.ts",
+      "lines": 993,
+      "sha256": "35c9c2861e1158bd414f18ad72b2cca593825c467d2ed542d929d188eb975cd9",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-export/README.md",
+      "lines": 55,
+      "sha256": "199098423a19183611995a0325dd32d6c396450801e70efb083959d4939cf5cf",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-export/src/index.test.ts",
+      "lines": 248,
+      "sha256": "3dfe98310a596085107deb3828393ee2b74fcdd0c3e320bdd05e6881b8615e61",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-export/src/index.ts",
+      "lines": 311,
+      "sha256": "f0f06921fadda4b80ad7ae18f49768ed70678bb2e282d06db7399660c78f11f7",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-filter/README.md",
+      "lines": 44,
+      "sha256": "25abad1794089255b25e35c6c652514d711249197f95f9dd24eb47d142671d4a",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-filter/src/index.test.ts",
+      "lines": 373,
+      "sha256": "24d2c95c1aac4a4ac28d7358a597fbd6ccf42da924d9a384ee5c047efc2673e0",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-filter/src/index.ts",
+      "lines": 489,
+      "sha256": "aab1af4126a360352a98facaff97c5236508e2708ef004683481a908b438c7cb",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-grid-view/README.md",
+      "lines": 41,
+      "sha256": "0ed4a38c2c91912f9d95e128eaaa3b0796189e7c3924a771228f4971ff3f109b",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-grid-view/src/grid-features.test.ts",
+      "lines": 168,
+      "sha256": "35b71cb9e099890c48dde92b8de62111ea861883383ed3c8950f7a4037183e18",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-grid-view/src/index.test.ts",
+      "lines": 515,
+      "sha256": "8a2db715cd22ecacb660f4e74d538d1783f13f722e2e6af5599f8daa8ac650bb",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-grid-view/src/index.ts",
+      "lines": 1150,
+      "sha256": "24ecd716cee2dfe732b482495fa132f69d9fc50e0cca856aa1351cd6fcdef484",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-grid-view/src/p1b-features.test.ts",
+      "lines": 297,
+      "sha256": "8abcacd0834ec690c8064a71f2c3846005c56bfced9e66224ca7bf0b89d6379e",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-history/README.md",
+      "lines": 57,
+      "sha256": "a7287f5287226dd64a4f66bf0a6342922ba0f7325d000f9f744ec5a2e55f556b",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-history/src/index.test.ts",
+      "lines": 395,
+      "sha256": "635d0533c2758d8bcb20746210e2d8ced81381650a1a7a949df62102d2b4f950",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-history/src/index.ts",
+      "lines": 447,
+      "sha256": "a16329b546470ce61fd690caf6f8941551e96c85a8f1f8d7389d7215068f56a9",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-history/src/snippet-name.test.ts",
+      "lines": 61,
+      "sha256": "c22be7a438f7e5d8f44109a7d6079b9a3a602f3be0335a43831c0a5cd03137ac",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-history/src/snippet-name.ts",
+      "lines": 36,
+      "sha256": "8675c1bfc7fd57b106d6976faac89013a4993d97cf5e1f18005f7e666b824470",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-import/src/index.test.ts",
+      "lines": 512,
+      "sha256": "09435c4e5017a85997ec4dfbda5760dbb93d60abbc5436f33814c63b63c1792b",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-import/src/index.ts",
+      "lines": 116,
+      "sha256": "e599c304f0769827754154356e4aff939efeb39b67f1846c6cfa87e3d58de5e7",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-import/src/insert-merge-types.ts",
+      "lines": 19,
+      "sha256": "5eff798cd5e1294d6c4d253a7c398201df7f9d2185411f5ac26b6fa0461e209d",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-import/src/insert-merge.test.ts",
+      "lines": 281,
+      "sha256": "b73f31697c604c665edc2874f74a2fa2b62daf72c803dcc526b6e832ca75725d",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-import/src/insert-merge.ts",
+      "lines": 33,
+      "sha256": "0bfc327d75c976ff31c6414d7689230cc854820ce2e78b8dd3edbc8f7f108403",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-import/src/runtime.cjs",
+      "lines": 960,
+      "sha256": "88470f9e1c70e6f107e6145e741e1e316d716478b425a5ac66a7b69abcc1b3ef",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-ipc-codec/README.md",
+      "lines": 66,
+      "sha256": "d9ed4cb7babd6dad97c7756d0cf77c14672a586dea6e1e21595776195a4c7d95",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-ipc-codec/src/index.test.ts",
+      "lines": 282,
+      "sha256": "bb92f86d9cb908dbf772a3fe10a5f890a0f09c2e0e25e7595a3c988af0be1541",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-ipc-codec/src/index.ts",
+      "lines": 452,
+      "sha256": "08511d411202894dfde3af014cb28f38f83877f98fbadab6adae68ee9771b71a",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-mutation/README.md",
+      "lines": 73,
+      "sha256": "efd6e7b6cacf075e63ca36e83523551383e1b9daa4538a1fca1069d9a8f2c68a",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-mutation/src/index.test.ts",
+      "lines": 513,
+      "sha256": "c49d18f29300691d2e41de8e4a3e53f05b84b217b92d9b8b84d8c861d9bb8580",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-mutation/src/index.ts",
+      "lines": 778,
+      "sha256": "67a996cd6580acf0398f96ac563e469bf34263989f847df6880982f9b1264b1c",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-mutation/src/sql-expression.test.ts",
+      "lines": 289,
+      "sha256": "06213a280ae8fe26514324630c0f588a453c5a3d7b9f7cae7e880d2a60a6f4e3",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-schema-cache/README.md",
+      "lines": 44,
+      "sha256": "f71fe704f712e7c89319f34547feb1406ca6005362dcecc18b711402d7da2272",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-schema-cache/src/index.test.ts",
+      "lines": 266,
+      "sha256": "a10867be02566d9c1d37d7a51f5ea51fdb97afc952c6f964d503767e0ab91a4b",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-schema-cache/src/index.ts",
+      "lines": 248,
+      "sha256": "422334f710e98449a97204c82fb5a90d51d05809d22ae8d58827cac9405ebedb",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-secret/README.md",
+      "lines": 47,
+      "sha256": "07e4345f0e1cd6291e028c824a12df88f187bd71cd467ff7bd417c801d3a23a0",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-secret/src/index.test.ts",
+      "lines": 295,
+      "sha256": "d34d8261ae8cb57ac50dda4eff1811b7fa880a9cf365550e1c46663e86f4ece0",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-secret/src/index.ts",
+      "lines": 297,
+      "sha256": "16f4503e1d04f56e9d32385178edcaa726cc8f0b1ac51d9932d313c5d80e403e",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-editor/src/facts.ts",
+      "lines": 32,
+      "sha256": "58108518793a600e372e24b55cc3edf4d069010e916800c22a54bd3b9845a84c",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-editor/src/formatter.test.ts",
+      "lines": 334,
+      "sha256": "dd33053ee22e31151b5f0e635bda8f04cb726f98bd8d082104fa2dbc18adf273",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-editor/src/formatter.ts",
+      "lines": 530,
+      "sha256": "13aaaf9b3fd1088370f73d496b647a13e66c832e820884fcb417b8d30345f5bc",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-editor/src/hints.test.ts",
+      "lines": 662,
+      "sha256": "eef79742c02a5a6320d666678ce893db9ae8f3a60d065454187c1ec8bc4e32ab",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-editor/src/hints.ts",
+      "lines": 737,
+      "sha256": "1e138e3f3c408439980e226e053c584868ca2e4f66d6ec5875ed6d2aaefb8f62",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-editor/src/index.test.ts",
+      "lines": 542,
+      "sha256": "b5d0425ed9cf16dda666d481a4871a0deda58fdf2e6f300f59de5fefdce35c21",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-editor/src/index.ts",
+      "lines": 791,
+      "sha256": "97905f3cf2b0b82fe5beaf0cd21fd07b94b6825307f014a065c5434c498c9449",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-editor/src/lint.test.ts",
+      "lines": 557,
+      "sha256": "fea27bc71a6387f6a7d7f09f6fa81b8b92700b12be6025ac2281dd0fa92fa31d",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-editor/src/lint.ts",
+      "lines": 723,
+      "sha256": "cb2439807539d0cbc62bc9fb64f7d1d17a7706851d76f32ffacdd138194fed81",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-editor/src/tokens.test.ts",
+      "lines": 317,
+      "sha256": "ccbb22d05e15d1ac2ba6407c27d9f1cb1eb45d0e0b1cd8e39cc264a353f39f2c",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-editor/src/tokens.ts",
+      "lines": 345,
+      "sha256": "22577e31b8e06919d3420ccc396ca95e384dbbcb4077ced7ba45a190932b6c9d",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-guard/README.md",
+      "lines": 99,
+      "sha256": "345a7f356508c6412ed8fad79bfcc57a5df392f29350149dd3f721162e34fba7",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-sql-guard/probe.mjs",
+      "lines": 62,
+      "sha256": "47147e5f4ccd20df7718f199a24bfab307fc0f0d610de7314eafb9cd2bfa1491",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-guard/src/danger.test.ts",
+      "lines": 79,
+      "sha256": "841ee542888c9f6e24d0415bf0ff8f12254d1645cb1db69c0dd197128cf54577",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-guard/src/extract-single-table.test.ts",
+      "lines": 84,
+      "sha256": "8e66187d68ca091863d3b9d51aee9bc3af7db7c1eabdde82a50503f624409433",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-guard/src/index.test.ts",
+      "lines": 194,
+      "sha256": "cfe135932f2f026bcae3d7f083b82af1237517372650f775b6a406f30ffae5f1",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-guard/src/index.ts",
+      "lines": 504,
+      "sha256": "0abfe7a7e18694126a01f51ee1fd9552777e834f938c60bacd861bd886a9fd14",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-sql-ident/README.md",
+      "lines": 31,
+      "sha256": "9f36e322fd407693722584ca7455c5bf08cbfc31ab7841c27fb56978eb82190d",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-sql-ident/src/index.test.ts",
+      "lines": 78,
+      "sha256": "a4c100808bdbcec7a6d12aa40fc67d7467c04c3f49f7771226f8ba86d8521ce9",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-sql-ident/src/index.ts",
+      "lines": 83,
+      "sha256": "7768331f6f2bde603746f3326927a2c4dc5bd499bf971534d74b493dbffa1ca8",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-ssh-tunnel/src/index.test.ts",
+      "lines": 440,
+      "sha256": "d665419c563078cba58d82be8ac8ba3d7814d1c7193386fde3b49f6a00a98a00",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-ssh-tunnel/src/index.ts",
+      "lines": 431,
+      "sha256": "973518d004759498d8396ce63887f083ea9c84759c77eedb4253a74fd7f33ec7",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-table-designer/src/index.test.ts",
+      "lines": 295,
+      "sha256": "42bd37566b5554978f56c5b345d0990aff9ae803776654badc3a925a3d6072d3",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-table-designer/src/index.ts",
+      "lines": 635,
+      "sha256": "846d3d21c445be873b57b96e6f6570ddf241dfc0271ac7e36ce516ecacf62069",
+      "category": "实现/构建"
+    },
+    {
+      "path": "packages/core-tree-view/README.md",
+      "lines": 47,
+      "sha256": "1b84c38f08666b4b88c6b2dba33eed8152e5849440b0982fe83f317cd91886fc",
+      "category": "文档"
+    },
+    {
+      "path": "packages/core-tree-view/src/index.test.ts",
+      "lines": 466,
+      "sha256": "2acfad8ad02ea0959670aa71f131465dbe4b0ac062fefb9bd43236d1d82ef7b8",
+      "category": "测试/验收"
+    },
+    {
+      "path": "packages/core-tree-view/src/index.ts",
+      "lines": 589,
+      "sha256": "206a03d2351a4b7f089653471baf6373f3154447d2b06f25b8cb2b76703d1040",
+      "category": "实现/构建"
+    },
+    {
+      "path": "scripts/capture-installed.mjs",
+      "lines": 83,
+      "sha256": "fd6cc8db9e85c0210e0032e81817354ab55789c9756da53b989cb2a34f0b64c8",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/check-bundle.mjs",
+      "lines": 167,
+      "sha256": "54b4a964250dcd99878fdc9730e8276ef3961cd63941d7925be5a058031e047c",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/clean-dist.mjs",
+      "lines": 52,
+      "sha256": "6d78fa52335cd1f2b23912a656fb7933d55fc0cb4d0656ac7de292f34883eceb",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/copy-workers.mjs",
+      "lines": 41,
+      "sha256": "f7d5591f9b32e9cde6952f1839e0d560c3ee32387af00dd76c535e735063bac8",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-app.mjs",
+      "lines": 738,
+      "sha256": "408479ba88d7b310bb3c768549d1993c54494965cc759965aae52b366ab1a7fe",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-idle-reconnect.mjs",
+      "lines": 239,
+      "sha256": "c1affe05efcbaa562cd36e602bc050d8519c9018507af9142d5762f5940b50cb",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-idle-ui.mjs",
+      "lines": 186,
+      "sha256": "cf10fc7c384079c93ce9f0092ef91a38bdfcda5b3517206f56ed2b4432162fef",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-perf-grid.mjs",
+      "lines": 102,
+      "sha256": "ef3c60bb8060cef64bdb392050afdf134611cac852b7156b0c5d8bf257502d0c",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-perf.mjs",
+      "lines": 110,
+      "sha256": "a7a47a70b929c50ca907d3bf517acdc04a8d1c177a632a35eb170ece490b2a88",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-script-ui.mjs",
+      "lines": 308,
+      "sha256": "d68ab07eee1bf0d925bf7d5c4f9bcd11da39a42025fa1c2b809c74d2b32cc8d8",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-smoke.mjs",
+      "lines": 694,
+      "sha256": "7295c7f5ac083f717ccb8a025cc5796afebceb6fc55b7b1cb9fc6c7048f48ba0",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-ssh.mjs",
+      "lines": 465,
+      "sha256": "bb0821b93787bbd2bdfebbb675964822050e4dba1d48204376b1ed02151a6fbf",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-transfer-ui.mjs",
+      "lines": 281,
+      "sha256": "6f1a4b8842a0563ebbe0ec5744070dc41d55be4c21f25e45c339990766694c1c",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-transfer.mjs",
+      "lines": 298,
+      "sha256": "0f4a1780cdc07c0ce0b2e2e60fa7417807f512864f01de647c83016e43288a10",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/e2e-ui.mjs",
+      "lines": 2042,
+      "sha256": "7996d873870e859f50c4689072662fa9581538f14480100bbd337ebab8c3d06c",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/make-icon.mjs",
+      "lines": 177,
+      "sha256": "91c1827c90541fcc51be9a10d08ee6af2d698ccc5785bddc26ad99a99988dd79",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/pack-dir.mjs",
+      "lines": 67,
+      "sha256": "bbb083733168d4f909ac4b062321559fb042f840464614cd731d728bc498a4fb",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/verify-installed.mjs",
+      "lines": 386,
+      "sha256": "d97329fb035752b18c41bd374c13865b94a33fb18752fc47331075ef2e8adaec",
+      "category": "测试/验收"
+    },
+    {
+      "path": "scripts/verify-traffic-lights.mjs",
+      "lines": 433,
+      "sha256": "47658065547ba8e6d9b10acec22ab40543a8012b4fefc70e2e373410e56c808f",
+      "category": "测试/验收"
+    },
+    {
+      "path": "spike/s1-glass-grid/README.md",
+      "lines": 38,
+      "sha256": "34bcdea8319e5625f7e5b1251daad21faddcb5e3d5dacecb7843538375954db5",
+      "category": "文档"
+    },
+    {
+      "path": "spike/s1-glass-grid/RESULTS.md",
+      "lines": 156,
+      "sha256": "93ac9292e21074c559fccf3be90fd554a12a78eee195fd5b173a462f47d100a2",
+      "category": "文档"
+    },
+    {
+      "path": "spike/s2-coldstart/RESULTS.md",
+      "lines": 128,
+      "sha256": "3733abdedb5f4ba2e241c12a3342659379970af9952eaabf49c22348d13cf292",
+      "category": "文档"
+    },
+    {
+      "path": "spike/s3-xlsx-export/RESULTS.md",
+      "lines": 134,
+      "sha256": "591eff9eadf88aa8871364d83487e8d6ca90f2c76413a954bf4692374aa8d017",
+      "category": "文档"
+    },
+    {
+      "path": "spike/s4-package-sign/RESULTS.md",
+      "lines": 158,
+      "sha256": "0fdf9a74da327b2ac970b0008a6740210852c594d38ac59898074bde1e5e2170",
+      "category": "文档"
+    },
+    {
+      "path": "spike/s5-fixture-ipc/README.md",
+      "lines": 66,
+      "sha256": "1ffb4677b4c6d45cd78cce8ea3dee7465288d8915192f9a77740d71a1005e6bb",
+      "category": "文档"
+    },
+    {
+      "path": "spike/s5-fixture-ipc/RESULTS.md",
+      "lines": 135,
+      "sha256": "a112655335835f4516778ebc82b0f010e7f1d715ee0e1adfb631d465563aebc5",
+      "category": "文档"
+    }
+  ]
+}
