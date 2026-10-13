@@ -780,6 +780,248 @@ function classifyScriptStatement(sql) {
   return 'other';
 }
 
+
+// ========== v0.6.0：连续 INSERT 合并（实现源在此，insert-merge.ts 是薄封装） ==========
+/** 语句里出现即禁止合并的构造（大小写不敏感，作用于整条语句） */
+const FORBIDDEN = [
+  /\bon\s+duplicate\b/i,   // 重跑幂等语义
+  /\bon\s+conflict\b/i,    // 同上（MariaDB/PG 兼容语法）
+  /\breturning\b/i,        // 返回结果集的行会被静默丢弃
+  /\bwith\b/i,             // 前置 CTE，结构上不可直接拼
+];
+
+/**
+ * 剥掉开头与内嵌的 `/*! ... *\/` 条件注释（mysqldump 的版本门控）。
+ * 只影响"判定"，不改写语句本体 —— 合并时仍用原文，避免动到数据。
+ */
+function stripConditionalComments(sql) {
+  return sql.replace(/\/\*!\d*\s*/g, ' ').replace(/\*\//g, ' ');
+}
+
+/** 单个表名片段：带引号的（可含任意字符）或裸标识符 */
+const IDENT_SEG = "(?:`[^`]*`|\"[^\"]*\"|\\[[^\\]]*\\]|[^\\s.(]+)";
+
+/**
+ * 🔴 解析策略：**分段**而不是一条大正则。
+ *
+ * 第一版用一条正则同时吃「表名 + 列清单 + VALUES」，结果每一段都在抢：
+ * 贪婪的列名模式把 ` (a) VALUES (1)` 一起吞掉，VALUES 组恒为空，
+ * 表现为"所有 INSERT 都判不出可合并"—— 修复静默失效，还很难看出是正则的问题。
+ *
+ * 分段后每一步都能单独判成败：
+ *  1. 先按 VALUES 关键字切头尾（VALUES 之前的部分必然是「表名 (列清单)」）
+ *  2. 再从头部里解析表名与列清单
+ * 任何一步不像就整体不合并 —— 退回逐条执行，功能永远正确。
+ */
+const INSERT_HEAD_RE =
+  /^INSERT\s+(?:(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE)\s+)*INTO\s+([\s\S]+?)\s+VALUES\s+([\s\S]+)$/i;
+
+/** 头部「表名 (列清单)」：列清单用惰性 + 尾部锚定，允许内部含括号 */
+const TARGET_RE = new RegExp(
+  `^(${IDENT_SEG}(?:\\.${IDENT_SEG})*)\\s*\\(([\\s\\S]*)\\)\\s*$`,
+);
+
+/**
+ * 解析一条 INSERT，判断能否参与合并。
+ *
+ * @returns mergeable=false 时其余字段无意义，调用方应退回逐条执行
+ */
+function parseInsertShape(rawSql) {
+  const none = { mergeable: false, database: '', table: '', columns: [], valuesClause: '' };
+  if (!rawSql) return none;
+
+  // 分号会让拼接后变成多语句：交给上层去处理，别在这里蒙混
+  if (rawSql.includes(';')) return none;
+
+  const sql = stripConditionalComments(rawSql).trim();
+  if (FORBIDDEN.some((re) => re.test(sql))) return none;
+
+  const head = INSERT_HEAD_RE.exec(sql);
+  if (!head) return none;
+
+  const values = head[2].trim();
+  if (!values) return none;
+
+  // INSERT ... SELECT：行数未知，拼上去就错了
+  if (/^\s*SELECT\b/i.test(values)) return none;
+
+  const target = TARGET_RE.exec(head[1].trim());
+  if (!target) return none;
+
+  /**
+   * 拆库名与表名。
+   *
+   * 🔴 不能用 lastIndexOf('.') 切：反引号标识符里可以合法含点与空格
+   *    （`my.db`.`weird table`），按最后一个点切会拿到残缺的库名；
+   *    库名判错就可能把两个不同库的 INSERT 判成"可合并"—— 跨库串数据。
+   *    这里按标识符分段（点只作分隔符，不出现在引号内部）。
+   */
+  const segments = target[1].match(new RegExp(IDENT_SEG, 'g')) || [];
+  const unquote = (t) => t.replace(/^[`"[]/, '').replace(/[`"\]]$/, '');
+  const database = segments.length >= 2 ? unquote(segments[segments.length - 2]).toLowerCase() : '';
+  const table = unquote(segments[segments.length - 1] ?? '').toLowerCase();
+  if (!table) return none;
+
+  const columns = target[2]
+    .split(',')
+    .map((c) => c.trim().replace(/^[`"']|[`"']$/g, '').toLowerCase())
+    .filter((c) => c.length > 0);
+  // 没有列清单的 INSERT（INSERT INTO t VALUES (...)）不参与合并：
+  // 列名对不上就无法安全判定同构，只能靠猜测 —— 猜错就是数据错位。
+  if (columns.length === 0) return none;
+
+  // values 必须是「(…),(…)…」形态；出现括号外的裸内容说明不是纯 VALUES 列表
+  if (!/^\(/.test(values)) return none;
+
+  return {
+    mergeable: true,
+    database,
+    table,
+    columns,
+    valuesClause: values,
+  };
+}
+
+/**
+ * 判断两条 INSERT 能否合并到同一条语句里。
+ *
+ * 口径：同库同表 + 列清单完全一致（个数与顺序）。
+ * 列顺序不同就拒绝 —— 合并后第二行的值会落进错误的列，这是数据损坏。
+ */
+function canMergeWith(prev, next) {
+  if (!prev.mergeable || !next.mergeable) return false;
+  if (prev.database !== next.database) return false;
+  if (prev.table !== next.table) return false;
+  if (prev.columns.length !== next.columns.length) return false;
+  for (let i = 0; i < prev.columns.length; i++) {
+    if (prev.columns[i] !== next.columns[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * 表标识符片段（单个名字，可带引号且允许内部空格与点）：
+ *   `my.db`.`weird table` 的每一段各自匹配。
+ *
+ * 🔴 裸标识符分支刻意排除 `.` 与 `(`（不含引号时不允许这两个字符），
+ *    否则表名模式会越过"表名 (列清单)"的分界把列清单一起吞掉。
+ */
+
+/**
+ * 把两条已判定可合并的 INSERT 拼成一条。
+ *
+ * 🔴 只做两件事：把上条的 VALUES 尾部逗号接起来、把新条目的括号列表追加。
+ *    一个字符的语义解释都不做 —— 任何"顺手优化一下引号"都是自找数据损坏。
+ *
+ * 头部从原文按「VALUES 之前」切出，库表名的引号写法（`my-db`.`weird table`）
+ * 原样保留 —— 这正是第一版用 `[^\\s(]+` 写表名时踩的坑：
+ * 表名里带空格会被提前截断，拼接结果丢掉整组新值（静默数据损坏）。
+ */
+/**
+ * 把两条已判定可合并的 INSERT 拼成一条。
+ *
+ * 🔴🔴 【2026-10-13 修复数据丢失】这里曾把 **已有N 组的语句再合并时丢掉前面全部组**，
+ * 表现为「脚本 50000 行 INSERT，实际只落 30~50 行」而 UI 显示执行成功。
+ *
+ * ## 缺陷机制（保留记录：这是本项目最隐蔽的一类错）
+ *
+ *   旧实现：`head = prevSql.slice(0, 第一个VALUES)` + ` prevShape.valuesClause`
+ *
+ *   而 `prevShape` 是**调用方持有的上一条 shape**，不是 prevSql 重新解析的结果。
+ *   worker 里的用法是：
+ *     pending.sql   = mergeTwoInsert(pending.sql, pending.shape, shape)
+ *     pending.shape = **没有更新**   ← 致命
+ *   于是第二次合并时：
+ *     prevSql  = "... VALUES (1),(2)"      （已含 2 组）
+ *     prevShape= { valuesClause: "(1)" }   （仍是最初那1 组）
+ *     head     = 第一个 VALUES 之前        （正确）
+ *     结果= head + "(1)" + ", (3)"  = 只有 2 组 → **第 2 组被静默丢弃**
+ *   再合并一次又回到 2 组，于是每批恒定只剩最后 2 组 ——与真机 observed 完全吻合。
+ *
+ * ## 修复口径
+ *
+ * 不信任外部传入的 prevShape，而是**从 prevSql 自身切出头部**再拼：
+ *   result = head + " VALUES " + [prevSql 的全部值组] + ", " + [next 的值组]
+ *
+ * 这样合并是**幂等**的：无论 prevSql 已经合并了多少组，都完整保留。
+ * 「拆头部」与「拆值组」用同一个正则，两处判定永远自洽（不会再各写一份而漂移）。
+ *
+ * ⚠️ 仍然刻意**不解释任何字面量**：只按括号配对切分字符串外的括号，
+ *    引号内的括号/逗号原样保留（`'a)b,c'` 这类数据不会被切错）。
+ */
+function splitInsertHeadAndValues(sql) {
+  const cleaned = sql.replace(/\/\*!\d*\s*/g, ' ');
+  //头部：第一个「不在引号内」的 VALUES 关键字之前
+  const at = /\s+VALUES\s+/i.exec(stripLiterals(cleaned));
+  if (!at) return null;
+  const head = cleaned.slice(0, at.index).replace(/\s+$/, '');
+  const rest = cleaned.slice(at.index + at[0].length).trim();
+  if (!rest.startsWith('(')) return null;
+  return { head, values: splitTopLevelValueGroups(rest) };
+}
+
+/** 把字符串字面量替换成等长空格，使正则只在「代码区」生效（不改变长度，索引仍对得上） */
+function stripLiterals(sql) {
+  let out = '';
+  let quote = null;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (quote) {
+      if (ch === '\\') { out += '  '; i++; continue; }
+      if (ch === quote) { quote = null; out += ch; continue; }
+      // 字面量内部一律抹成空格：VALUES 关键字只可能在代码区
+      out += ch === quote ? ch : ' ';
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * 按括号配对切分 VALUES 列表：'(a),(b)' → ['(a)', '(b)']
+ * 只认括号外的逗号，引号内的括号与逗号原样保留。
+ */
+function splitTopLevelValueGroups(list) {
+  const groups = [];
+  let depth = 0, start = -1, quote = null;
+  for (let i = 0; i < list.length; i++) {
+    const ch = list[i];
+    if (quote) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '(') { if (depth === 0) start = i; depth++; continue; }
+    if (ch === ')') {
+      depth--;
+      if (depth === 0 && start >= 0) { groups.push(list.slice(start, i + 1)); start = -1; }
+      continue;
+    }
+    if (ch === ',' && depth === 0) continue;
+  }
+  return groups;
+}
+
+function mergeTwoInsert(prevSql, prevShape, nextShape) {
+  const parts = splitInsertHeadAndValues(prevSql);
+  const prevGroups = parts ? parts.values : [prevShape.valuesClause];
+  const head = parts ? parts.head : prevSql.replace(/\s*$/, '');
+  // 防御：prevSql 切不出值组时退回调用方给的 shape，绝不凭空造组
+  const groups = prevGroups.length > 0 ? prevGroups : [prevShape.valuesClause];
+  const nextGroups = splitTopLevelValueGroups(nextShape.valuesClause);
+  const tail = nextGroups.length > 0 ? nextGroups : [nextShape.valuesClause];
+  return `${head} VALUES ${[...groups, ...tail].join(', ')}`;
+}
+
+/** 合并后的语句大小上限（MB）。超过就先把已攒的刷出去，避免拼出超大语句 */
+const MERGED_INSERT_MAX_BYTES = 4 * 1024 * 1024;
+
+/** 单批最多合并多少条 —— 给错误定位留出可读的粒度，也限制内存占用 */
+const MERGED_INSERT_MAX_ROWS = 500;
+
 module.exports = {
   parseDelimited,
   stripBom,
@@ -795,4 +1037,9 @@ module.exports = {
   filterRetryRows,
   createStatementSplitter,
   classifyScriptStatement,
+  parseInsertShape,
+  canMergeWith,
+  mergeTwoInsert,
+  MERGED_INSERT_MAX_ROWS,
+  MERGED_INSERT_MAX_BYTES,
 };
