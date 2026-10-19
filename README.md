@@ -212,6 +212,14 @@ MySQL ──mysql2──▶ 主进程拉取 ──列式编码──▶ ArrayBuf
 
 ## 快速开始
 
+### 直接装（不想编译的话）
+
+从 [Releases](https://github.com/canyuexiyang/db-studio/releases/latest) 下 `DB-Studio-<版本>-arm64.dmg`（Apple Silicon，macOS 26+）。仅 ad-hoc 签名、未做公证，首次打开请右键 →「打开」，或：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/DB Studio.app"
+```
+
 ### 环境要求
 
 | 项 | 要求 |
@@ -364,7 +372,7 @@ npm run verify:installed # 已安装 .app 的真机验收（22 项，含版本�
 npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染层之外验证）
 ```
 
-**当前基线（v0.7.0 · 已出包并本机安装）**：
+**当前基线（v0.7.0 · 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases) 并本机安装）**：
 
 | 门禁 | 结果 |
 |---|---|
