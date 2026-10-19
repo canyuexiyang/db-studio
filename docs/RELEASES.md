@@ -90,9 +90,15 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 
 **旧包回滚**：`apps/desktop/release/.prev-installed-0.6.1.app`
 
+**发布**：[GitHub Release v0.7.0](https://github.com/canyuexiyang/db-studio/releases/tag/v0.7.0)（2026-10-19）
+资产三件：`DB-Studio-0.7.0-arm64.dmg`（145 MB）+ `.blockmap` + **`latest-mac.yml`**。
+⚠️ 资产名用连字符（`DB-Studio-…`），与 `latest-mac.yml` 里的 `url` 逐字一致 —— EB 生成的
+文件名带空格（`DB Studio-…`），直接上传会让 `electron-updater` 拼出 404 的 URL。
+发布后已核对：远程 `latest-mac.yml` 的 `sha512` 与 `size`（152225792）与实际资产一致。
+
 **已知限制**：自动下载/安装未启用（无 Developer ID 与重签链路，自动替换会因为签名校验
-失败而启动不了）；Release 资产需同时上传 `latest-mac.yml`，否则 `electron-updater`
-查不到更新（会如实报 `failed`，不会谎报「已是最新」）。
+失败而启动不了），检查到新版本给下载页链接。Release 资产里的 `latest-mac.yml` **不能删**，
+否则 `electron-updater` 查不到更新（会如实报 `failed`，不会谎报「已是最新」）。
 
 ---
 
