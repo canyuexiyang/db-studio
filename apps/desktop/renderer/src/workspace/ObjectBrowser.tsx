@@ -17,12 +17,20 @@
  *
  * 之所以合成一个组件而不是三个：它们的差别只是"过滤条件"，
  * 拆开会导致三份几乎一样的 JSX，样式改动要改三处。
+ *
+ * ## 🔴 v0.7.0 T02/R02：作用域必须带 connId
+ *
+ * 旧实现只比较 `database`。两个连接（如 prod_order / dev_order）都有 `order_db`
+ * 时，选中其中一个的 `order_db`，中间清单会把两个连接的表全列出来、还出现同名
+ * 两条。库名不是全局唯一身份 —— 唯一身份是 `(connId, database, kind, name)`。
+ * 过滤/排序/连接名的纯逻辑已抽到 `objectBrowserModel.ts`，由单测钉住。
  */
 
 import { useMemo } from 'react';
-import { OBJECT_KIND_LABELS, OBJECT_KIND_ORDER, type TreeNode } from '@dbstudio/core-tree-view';
-import type { ObjectKind, TableMeta } from '@dbstudio/core-schema-cache';
+import { OBJECT_KIND_LABELS, type TreeNode } from '@dbstudio/core-tree-view';
+import type { ObjectKind } from '@dbstudio/core-schema-cache';
 import { IconTable, IconEye, IconBraces, IconFn, IconZap, IconClock, IconDatabase } from '../ui/icons';
+import { collectConnNames, collectObjects, scopeFromActiveKey } from './objectBrowserModel';
 
 const KIND_ICON: Record<ObjectKind, (p: { size?: number }) => React.ReactNode> = {
   table: IconTable,
@@ -32,66 +40,6 @@ const KIND_ICON: Record<ObjectKind, (p: { size?: number }) => React.ReactNode> =
   trigger: IconZap,
   event: IconClock,
 };
-
-/** 清单里的一条对象 */
-interface ListedObject {
-  key: string;
-  name: string;
-  database: string;
-  connId: string;
-  table: TableMeta;
-}
-
-/**
- * 从树里收集对象。
- *
- * @param roots  整棵树的根
- * @param scope 作用域：null = 全部连接；否则 { connId, database } = 某个库
- * @param onlyKind 只列某一类别；null = 全类别（仍按OBJECT_KIND_ORDER 排序）
- */
-function collectObjects(
-  roots: TreeNode[],
-  scope: { connId: string; database: string } | null,
-  onlyKind: ObjectKind | null,
-): ListedObject[] {
-  const out: ListedObject[] = [];
-  const walk = (nodes: TreeNode[]) => {
-    for (const n of nodes) {
-      // 只取 kind 节点的直接子节点：扁平遍历整棵树再过滤会重复收录
-      if (n.kind === 'kind' && n.database && n.objectKind
-        && (!onlyKind || n.objectKind === onlyKind)
-        && (!scope || scope.database === n.database)) {
-        const connId = connIdOfKey(n.key);
-        if (connId) {
-          for (const c of n.children ?? []) {
-            if (c.kind === 'object' && c.table && c.database) {
-              out.push({ key: c.key, name: c.label, database: c.database, connId, table: c.table });
-            }
-          }
-        }
-      }
-      walk(n.children ?? []);
-    }
-  };
-  walk(roots);
-
-  // 排序：库名 → 类别固定序 → 表名。跨连接概览时，同名表来自不同库不会撞在一起。
-  const orderOf = (k: ObjectKind) => OBJECT_KIND_ORDER.indexOf(k);
-  out.sort((a, b) => {
-    if (a.database !== b.database) return a.database < b.database ? -1 : 1;
-    const ka = orderOf(a.table.kind);
-    const kb = orderOf(b.table.kind);
-    if (ka !== kb) return ka - kb;
-    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-  });
-  return out;
-}
-
-/** 从 kind/db 节点 key 取 connId（与 App.parseTreeKeyContext 同口径） */
-function connIdOfKey(key: string): string {
-  const parts = key.split(':');
-  return (parts[0] === 'kind' || parts[0] === 'db' || parts[0] === 'obj') && parts.length >= 3 ? parts[1] : '';
-}
 
 export interface ObjectBrowserProps {
   roots: TreeNode[];
@@ -104,28 +52,22 @@ export interface ObjectBrowserProps {
 }
 
 export function ObjectBrowser({ roots, activeKey, onOpenObject, findByKey }: ObjectBrowserProps) {
-  /**
-   * 作用域与类别：从 activeKey 反解。
-   *
-   * `kind:<connId>:<db>:<kind>` 直接给出三者；`db:<connId>:<db>` 给出前两者；
-   * 其它（连接节点/分组/空）→ null = 全部连接概览。
-   */
-  const scope = useMemo((): { connId: string; database: string; onlyKind: ObjectKind | null } | null => {
-    if (!activeKey) return null;
-    const parts = activeKey.split(':');
-    if (parts[0] === 'kind' && parts.length >= 4) {
-      return { connId: parts[1], database: parts[2], onlyKind: parts[3] as ObjectKind };
-    }
-    if (parts[0] === 'db' && parts.length >= 3) {
-      return { connId: parts[1], database: parts[2], onlyKind: null };
-    }
-    return null;
-  }, [activeKey]);
+  const scope = useMemo(() => scopeFromActiveKey(activeKey), [activeKey]);
+
+  const connNames = useMemo(() => collectConnNames(roots), [roots]);
 
   const objects = useMemo(
-    () => collectObjects(roots, scope ? { connId: scope.connId, database: scope.database } : null, scope?.onlyKind ?? null),
-    [roots, scope],
+    () => collectObjects(
+      roots,
+      scope ? { connId: scope.connId, database: scope.database } : null,
+      scope?.onlyKind ?? null,
+      connNames,
+    ),
+    [roots, scope, connNames],
   );
+
+  /** 跨连接概览时才有必要显示连接名（单库作用域下连接名是冗余噪音） */
+  const showConn = scope === null;
 
   const title = scope
     ? scope.onlyKind
@@ -152,7 +94,7 @@ export function ObjectBrowser({ roots, activeKey, onOpenObject, findByKey }: Obj
       <div className="ob-head">
         <IconDatabase size={12} />
         <span className="ob-title">{title}</span>
-        <span className="ob-count">{objects.length}</span>
+        <span className="ob-count" data-testid="ob-count">{objects.length}</span>
       </div>
       <div className="ob-list">
         {objects.map((o) => {
@@ -161,8 +103,9 @@ export function ObjectBrowser({ roots, activeKey, onOpenObject, findByKey }: Obj
             <button
               key={o.key}
               className="ob-item"
-              title={`${o.database}.${o.name}`}
+              title={showConn ? `${o.connName} · ${o.database}.${o.name}` : `${o.database}.${o.name}`}
               data-testid={`ob-item-${o.name}`}
+              data-conn-id={o.connId}
               onClick={() => {
                 const node = findByKey(roots, o.key);
                 if (node) onOpenObject(node);
@@ -170,6 +113,7 @@ export function ObjectBrowser({ roots, activeKey, onOpenObject, findByKey }: Obj
             >
               <Ico size={12} />
               <span className="ob-name">{o.name}</span>
+              {showConn && <span className="ob-conn">{o.connName}</span>}
               <span className="ob-db">{o.database}</span>
               <span className="ob-kind">{OBJECT_KIND_LABELS[o.table.kind]}</span>
             </button>

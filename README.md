@@ -9,8 +9,8 @@ MySQL 优先、单机自用、macOS 原生观感 —— 对标 Navicat Premium�
 
 Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · 虚拟滚动
 
-[![version](https://img.shields.io/badge/version-0.5.0-blue)](docs/RELEASES.md)
-[![tests](https://img.shields.io/badge/tests-1563_passed-brightgreen)](#验证)
+[![version](https://img.shields.io/badge/version-0.7.0-blue)](docs/RELEASES.md)
+[![tests](https://img.shields.io/badge/tests-2200_passed-brightgreen)](#验证)
 [![platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue)](#系统与环境限制)
 [![arch](https://img.shields.io/badge/arch-Apple%20Silicon%20%C2%B7%20Intel-orange)](#适配芯片)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
@@ -86,6 +86,10 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 - 无主键/唯一键的表**自动只读**（写操作安全红线）
 - 三态排序（服务端执行）+ Shift 多列；15 种操作符的参数化筛选构建器 + 已保存筛选方案
 - 单元格 SQL 表达式模式（填 `NOW()`/`UUID()` 原样嵌入）、批量编辑条（多行同列 Apply/Discard）
+- **撤销 / 重做**（⌘Z / ⇧⌘Z）：单元格、批量、新增行、复制行进同一撤销栈（上限 100 步），保存成功或放弃改动时整栈清空
+- **ENUM 专用下拉**（选项只来自 DDL 定义值）+ **日期时间辅助控件**（原始字符串逐字可见，日期控件只改日期段，时间与 6 位微秒原样保留）
+- **六态网格**：loading / error / disconnected / idle / empty / ready，各有独立块与重试入口；状态栏行数带口径（`exact` / `estimated` / `truncated`）
+- **表视图记忆**：每张表记住排序与筛选，重开即恢复（只记「怎么看」，不记数据）
 - 外键值导航与下拉、鼠标拖选矩形选区、⌥↑ 递进选区、⌘F 结果集内查找、⌘F12 列快速定位
 - 复制 6 格式（TSV/CSV/JSON/Markdown/INSERT/UPDATE 带真实值）；**默认只复制值、不带列名表头**（需要列名走复制菜单的「含列名」，Markdown 永远带表头）
 - 选中区聚合统计；单元格完整值弹窗（JSON 高亮 / BLOB 预览与存盘）
@@ -100,6 +104,9 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 - 实时错误检测下划线（纯前端静态推断，不打库）、内联显示每条语句耗时
 - 基于 schema 缓存的补全（表名/库名/字段属性）、SQL 专属双主题高亮、自研轻量格式化
 - 草稿自动保存恢复、片段收藏、查询历史（星标/删单条/按连接过滤）
+- **SQL 文件三件套**（打开 / 另存为 / 保存）+ 结果标签固定/重命名
+- **结果集预算**：超过 `200k 行 / 64MiB` 显式截断并告知（不做静默截断）
+- 「打开源表」可带**定位键**跳到对应行；按钮文案明确**不继承** WHERE/ORDER BY/LIMIT
 - **查询结果写回**：单表 SELECT + 主键 → 可编辑表格（JOIN 结果保持只读，fail-closed）
 
 </details>
@@ -121,7 +128,10 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 - 详情面板三区块：表信息 / 字段（**注释常驻显示**）/ 建表语句 DDL；单元格完整值在弹窗里看
 - 可视化表设计器（字段/索引/外键三 Tab + 差异 ALTER + DDL 预览）
 - 导入 4 格式（csv/tsv/xlsx/json）向导；导出 5 格式（xlsx/csv/json/sql/markdown）+ 整库备份
+- **导出四范围**（选区 / 已加载 / 全部匹配 / 整库），每项标注是「快照」还是「重查」
 - 全部导入导出跑在 **utilityProcess**（可 kill = 真取消，崩溃不拖垮主进程）
+- **工具栏身份条**：连接 / 环境 / 库 / 对象四段常显，缺数据时如实写「未命名连接」而非拿 connId 顶替；按**可用宽度**在 full/compact 间切换（导出/导入/设计/粘贴收进「更多」菜单，保存与筛选永不折叠）
+- **更新检查四态**：`unconfigured` / `failed` / `update` / `latest` —— 没配发布通道不会谎报「已是最新」
 - macOS 原生菜单栏、原生交通灯、Liquid Glass 玻璃窗、三栏可拖拽布局、多标签、多窗口、会话恢复、三态主题、⌘K 命令面板
 
 </details>
@@ -279,6 +289,8 @@ node scripts/verify-installed.mjs                              # 22 项安装后
 - **签名**：`identity: null` = 仅 **ad-hoc 签名**，自用单机不做 Developer ID / 公证。EB 会跳过签名并残留 Electron 模板旧签名，因此 `pack-dir.mjs` 打包后补一次**外层** ad-hoc 重签（`codesign --force --sign -`）。🔴 **绝不用 `--deep`**（会抹掉内嵌 Helper 的 entitlements，导致网络服务崩溃、渲染层加载不出）。
 - **原生模块**：`electron-window-glass` 自带 arm64/x64 预编译 N-API 产物，**无需 rebuild**（`npmRebuild: false`）；`.node` 不能从 asar 加载 → `asarUnpack: **/*.node`。
 - **workspaces 运行时依赖**：EB 只自动收集根 `dependencies` 闭包，对 workspace 提升有缺陷 → `mysql2` / `electron-window-glass` / `node-sql-parser` / `@dbstudio/core-import` 等用 `extraResources` 显式复制到 `Contents/Resources/node_modules/`（asar 外）。**新增运行时依赖要同步维护 `electron-builder.yml` 的 `extraResources`。**
+- **更新通道**：`electron-builder.yml` 的 `publish:`（GitHub provider）**只在打 dmg 时才生成 `app-update.yml`**，`--dir` 产物不会有 → `pack-dir.mjs` 在 **ad-hoc 重签之前**补写 `Contents/Resources/app-update.yml`（重签后写会破坏签名）。`electron-updater` 及其 16 个运行时依赖闭包同样要走 `extraResources`。
+- **发布**：有 `publish:` 段后打包必须显式 `--publish never`（EB 默认 `onTagOrDraft` 会尝试上传）。Release 资产**必须同时上传 `latest-mac.yml`**，否则应用内检查更新只能如实报 `failed`。
 
 > 完整打包陷阱（宿主 brokered-fs shim、safe-delete 护栏、NODE_OPTIONS 清理等）见项目长期记忆与 `docs/devlog/`。
 
@@ -352,20 +364,24 @@ npm run verify:installed # 已安装 .app 的真机验收（22 项，含版本�
 npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染层之外验证）
 ```
 
-**当前基线（v1.3 收官 · v0.5.0 已发布）**：
+**当前基线（v0.7.0 · 已出包并本机安装）**：
 
 | 门禁 | 结果 |
 |---|---|
-| 单元测试 | **1563 passed / 47 文件** |
-| `check:bundle` | 9/9 体积断言通过（首屏 442.5KB / 预算 1465KB；编辑器 lazy 133.0/150KB gzip） |
-| e2e:ui（真浏览器 UI 回归） | 219 |
-| e2e:app（Electron 真机） | 45 |
+| 单元测试 | **2200 passed / 80 文件** |
+| `check:bundle` | 9/9 体积断言通过（首屏 538.0 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip） |
+| e2e:ui（真浏览器 UI 回归） | 372 |
+| e2e:app（Electron 真机） | 60 |
+| e2e:keys（五焦点键盘矩阵） | 47 |
 | e2e:idle / e2e:idle:ui（空闲断开自动重连） | 16 / 4 |
 | 真库冒烟（e2e:smoke） | 74 |
 | 导入导出（e2e:transfer） | 28 |
 | SSH 真机（e2e:ssh） | 18 |
-| verify:installed（装好的 .app） | 22 |
-| verify:traffic-lights（像素） | 6 |
+| 冲突检测（e2e:conflict） | 17 |
+| 脚本导入数据完整性（e2e:script:data） | 10 |
+| 脚本导入 UI（e2e:script:ui） | 18 |
+| verify:installed（装好的 .app） | **22/22** |
+| verify:traffic-lights（像素） | **6/6** |
 
 > 🔴 **不跑 `npm run verify` 不许宣告完成**（AGENTS.md §五）。
 

@@ -6,7 +6,8 @@
  * 🔴 点外关闭必须放行菜单内部的 pointerdown —— 否则菜单项的 click 永远收不到。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
+import { useMenuBehavior } from '../ui/useMenuBehavior';
 
 export interface ContextMenuItem {
   key: string;
@@ -18,6 +19,11 @@ export interface ContextMenuItem {
   /** 危险动作：红色文本 + 红色 hover */
   danger?: boolean;
   disabled?: boolean;
+  /**
+   * T14/T18：禁用原因。**禁用而不说原因**比不显示这一项更糟 —— 用户只会以为
+   * 「软件坏了」。悬停可见（title），且与原生菜单/工具栏用同一套措辞。
+   */
+  disabledReason?: string;
   /** 该项上方画分隔线 */
   separatorBefore?: boolean;
   onSelect: () => void;
@@ -34,39 +40,8 @@ export interface TreeContextMenuState {
 
 export function TreeContextMenu({ menu, onClose }: { menu: TreeContextMenuState; onClose: () => void }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState({ x: menu.x, y: menu.y });
-
-  // 渲染后按实际尺寸做视口内收敛（右下角弹出时不裁切）
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setPos({
-      x: Math.max(4, Math.min(menu.x, window.innerWidth - r.width - 8)),
-      y: Math.max(4, Math.min(menu.y, window.innerHeight - r.height - 8)),
-    });
-  }, [menu]);
-
-  useEffect(() => {
-    const onPointerDown = (e: PointerEvent) => {
-      // 菜单内部的按下不关闭 —— 否则 menuitem 的 click 事件永远轮不到
-      if (e.target instanceof Node && rootRef.current?.contains(e.target)) return;
-      onClose();
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('pointerdown', onPointerDown, true);
-    window.addEventListener('keydown', onKeyDown, true);
-    window.addEventListener('resize', onClose);
-    window.addEventListener('blur', onClose);
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown, true);
-      window.removeEventListener('keydown', onKeyDown, true);
-      window.removeEventListener('resize', onClose);
-      window.removeEventListener('blur', onClose);
-    };
-  }, [onClose]);
+  // T18：边界钳制 + 键盘巡航（↑↓/Home/End）+ Esc 返回原焦点 —— 四类菜单共用一套
+  const pos = useMenuBehavior({ rootRef, x: menu.x, y: menu.y, onClose });
 
   return (
     <div className="ctx-menu" ref={rootRef} role="menu" style={{ left: pos.x, top: pos.y }}>
@@ -78,6 +53,7 @@ export function TreeContextMenu({ menu, onClose }: { menu: TreeContextMenuState;
             className={`ctx-item${it.danger ? ' danger' : ''}`}
             disabled={it.disabled}
             role="menuitem"
+            title={it.disabled ? it.disabledReason : undefined}
             onClick={() => {
               onClose();
               it.onSelect();

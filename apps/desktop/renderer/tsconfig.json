@@ -49,6 +49,7 @@
     "src/**/*.tsx",
     "vite.config.ts",
     "../src/shared/renderer-types.ts",
-    "../src/shared/ipc-channels.ts"
+    "../src/shared/ipc-channels.ts",
+    "../src/shared/action-catalog.ts"
   ]
 }

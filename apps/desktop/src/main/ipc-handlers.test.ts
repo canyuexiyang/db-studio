@@ -553,6 +553,120 @@ describe('写操作 handler', () => {
     expect(r.data.affected).toBe(2);
   });
 
+  // ---------- T08 / R15：逐条预期行数契约 ----------
+
+  it('🔴 T08：expect=one 但命中 0 行 → 冲突、整批回滚、committed=false', async () => {
+    driver.handler = () => ({
+      rows: [],
+      fields: [],
+      affectedRows: 0,
+      insertId: null,
+      elapsedMs: 1,
+    });
+    const r = await ipc.call(IPC.MUTATION_APPLY, {
+      connId: 'c1',
+      database: 'app_db',
+      statements: [{ sql: 'UPDATE `order` SET title=? WHERE id=?', params: ['x', 1], expect: 'one', kind: 'update' }],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.data.outcome).toBe('conflict');
+    expect(r.data.committed).toBe(false);
+    expect(r.data.affected).toBe(0);
+    expect(r.data.conflicts).toHaveLength(1);
+    expect(r.data.conflicts[0].actual).toBe(0);
+    expect(r.data.conflicts[0].index).toBe(0);
+    // 必须真的回滚（只看返回值不足以区分「没执行」与「执行后回滚」）
+    expect(driver.calls.some((c) => /ROLLBACK/i.test(c.sql))).toBe(true);
+  });
+
+  it('🔴 T08：命中多行 → ambiguous（定位缺陷，绝不能继续）', async () => {
+    driver.handler = () => ({ rows: [], fields: [], affectedRows: 3, insertId: null, elapsedMs: 1 });
+    const r = await ipc.call(IPC.MUTATION_APPLY, {
+      connId: 'c1',
+      database: 'app_db',
+      statements: [{ sql: 'UPDATE `order` SET title=? WHERE id=?', params: ['x', 1], expect: 'one', kind: 'update' }],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.data.outcome).toBe('ambiguous');
+    expect(r.data.conflicts[0].actual).toBe(3);
+  });
+
+  it('🔴 T08：多语句「前面成功、后面冲突」→ 整批回滚，先成功的也撤销', async () => {
+    let seen = 0;
+    driver.handler = (sql) => {
+      const isUpdate = /^UPDATE/i.test(sql.trim());
+      if (isUpdate) seen++;
+      return {
+        rows: [],
+        fields: [],
+        // 第 1 条 UPDATE 命中 1 行（成功），第 2 条命中 0 行（冲突）
+        affectedRows: isUpdate ? (seen === 1 ? 1 : 0) : 0,
+        insertId: null,
+        elapsedMs: 1,
+      };
+    };
+    const r = await ipc.call(IPC.MUTATION_APPLY, {
+      connId: 'c1',
+      database: 'app_db',
+      statements: [
+        { sql: 'UPDATE `order` SET a=? WHERE id=?', params: [1, 1], expect: 'one', kind: 'update' },
+        { sql: 'UPDATE `order` SET b=? WHERE id=?', params: [2, 2], expect: 'one', kind: 'update' },
+      ],
+    });
+    expect(r.data.outcome).toBe('conflict');
+    expect(r.data.conflicts[0].index).toBe(1);
+    // 冲突前已执行 1 条 —— 它也被回滚了（不是「提交了一部分」）
+    expect(r.data.conflicts[0].executedBefore).toBe(1);
+    expect(driver.calls.some((c) => /COMMIT/i.test(c.sql))).toBe(false);
+    expect(driver.calls.some((c) => /ROLLBACK/i.test(c.sql))).toBe(true);
+  });
+
+  it('🔴 T08：mode=ddl 时 DROP 命中 0 行**不算冲突**（DROP IF EXISTS 已删表就是 0）', async () => {
+    driver.handler = () => ({ rows: [], fields: [], affectedRows: 0, insertId: null, elapsedMs: 1 });
+    const r = await ipc.call(IPC.MUTATION_APPLY, {
+      connId: 'c1',
+      database: 'app_db',
+      mode: 'ddl',
+      statements: [{ sql: 'DROP TABLE IF EXISTS `tmp_x`', params: [] }],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.data.outcome).toBe('ok');
+    expect(r.data.committed).toBe(true);
+  });
+
+  it('🔴 T08/p0：grid-write 入口拒绝 DDL（表达式防线不能为 DDL 开口子）', async () => {
+    const r = await ipc.call(IPC.MUTATION_APPLY, {
+      connId: 'c1',
+      database: 'app_db',
+      statements: [{ sql: 'DROP TABLE `tmp_x`', params: [] }],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error.code).toBe(ERROR_CODES.VALIDATION);
+    expect(driver.calls.some((c) => /START TRANSACTION/i.test(c.sql))).toBe(false);
+  });
+
+  it('🔴 T08/p0：ddl 入口只放行 DDL，不允许偷跑 SELECT/INSERT', async () => {
+    const r = await ipc.call(IPC.MUTATION_APPLY, {
+      connId: 'c1',
+      database: 'app_db',
+      mode: 'ddl',
+      statements: [{ sql: 'INSERT INTO `t` (a) VALUES (1)', params: [] }],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error.code).toBe(ERROR_CODES.VALIDATION);
+  });
+
+  it('🔴 T08/p0：ddl 入口仍禁止多语句拼接', async () => {
+    const r = await ipc.call(IPC.MUTATION_APPLY, {
+      connId: 'c1',
+      database: 'app_db',
+      mode: 'ddl',
+      statements: [{ sql: 'DROP TABLE `a`; DROP TABLE `b`', params: [] }],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error.code).toBe(ERROR_CODES.VALIDATION);
+  });
+
   it('🔴 只读连接在 handler 层再拦一次（纵深防御）', async () => {
     await ipc.call(IPC.CONN_DISCONNECT, 'c1');
     await connections.save({ config: cfg({ readOnly: true }), password: 'pwd' });

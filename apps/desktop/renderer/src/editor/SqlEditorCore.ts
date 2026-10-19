@@ -97,6 +97,15 @@ export interface SqlEditorOptions {
    */
   get database(): string | null;
   onChange: (doc: string) => void;
+  /**
+   * T29：选区变化上报（**只报区间，不报全文**）。
+   *
+   * 工具栏要「显式表达执行对象」（全部 / 当前语句 / 选中），而文档刻意不镜像进
+   * React state（每次按键全量 setState 会把输入延迟抬到肉眼可见）。选区不需要全文，
+   * 单独走这条通道 —— 宿主只用 `to > from` 与长度，且值不变时 React 会 bail out，
+   * 不会因为打字触发重渲染。
+   */
+  onSelectionChange?: (sel: { from: number; to: number }) => void;
   onExecute: (mode: 'all' | 'selection') => void;
   onCancel: () => void;
   onExplain: () => void;
@@ -130,6 +139,21 @@ export interface SqlEditorHandle {
    * 走 dispatch 事务而非 setDoc，因此一步 ⌘Z 就能撤回。
    */
   format(): void;
+  /**
+   * T28：右键菜单的剪切 / 复制 / 粘贴，走**命令式**句柄而不是伪造 DOM 事件。
+   *
+   * 为什么不让 React 层自己去操作剪贴板 + setDoc：
+   *  - 剪切要「先写剪贴板、再删选区」，删改用 dispatch 才能进撤销栈；
+   *  - 粘贴要把内容**替换当前选区**（不是 append），也要进撤销栈。
+   *  这些都必须拿到 EditorView 的事务能力，故收在内核里。
+   *
+   * 返回 Promise<boolean>：clipboard API 失败时返回 false（宿主据此 toast），
+   * **绝不静默** —— 剪贴板写失败却什么都不提示，用户会以为「复制成功了」。
+   */
+  cut(): Promise<boolean>;
+  copy(): Promise<boolean>;
+  /** 粘贴读不到剪贴板时通过 onNotice 上报，返回 false */
+  paste(): Promise<boolean>;
   /**
    * B6 错误定位：把文档偏移处滚进视野并把光标挪过去。
    * 纯 UI 动作 —— 只滚动与定位，不改动文档、不触发执行。
@@ -914,20 +938,110 @@ export function createSqlEditor(opts: SqlEditorOptions): SqlEditorHandle {
     });
   };
 
+  // ---------- T28 剪切 / 复制 / 粘贴 ----------
+
+  /**
+   * 取当前选区原文；塌陷选区返回 null。
+   * 三者共用这一处判定 —— 菜单是否可用由 `buildSqlContextMenu` 决定，
+   * 这里再兜一道底（键位/程序化调用都可能绕过菜单）。
+   */
+  const selectedText = (): { from: number; to: number; text: string } | null => {
+    const r = view.state.selection.main;
+    if (r.to <= r.from) return null;
+    return { from: r.from, to: r.to, text: view.state.sliceDoc(r.from, r.to) };
+  };
+
+  const copy = async (): Promise<boolean> => {
+    const sel = selectedText();
+    if (sel === null) return false;
+    try {
+      await navigator.clipboard.writeText(sel.text);
+      return true;
+    } catch {
+      opts.onNotice?.('复制失败：写不进系统剪贴板');
+      return false;
+    }
+  };
+
+  const cut = async (): Promise<boolean> => {
+    const sel = selectedText();
+    if (sel === null) return false;
+    try {
+      await navigator.clipboard.writeText(sel.text);
+    } catch {
+      // 写剪贴板失败就**不删文本** —— 否则「剪切」变成无声的数据丢失
+      opts.onNotice?.('剪切失败：写不进系统剪贴板（未删除选中文本）');
+      return false;
+    }
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: '' },
+      selection: { anchor: sel.from },
+      userEvent: 'delete.cut',
+    });
+    view.focus();
+    return true;
+  };
+
+  const paste = async (): Promise<boolean> => {
+    let text = '';
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      opts.onNotice?.('粘贴失败：读不到系统剪贴板');
+      return false;
+    }
+    if (text === '') {
+      // 空剪贴板是合法状态，不是错误 —— 但也不能什么都不说（点了没反应 = 假 UI）
+      opts.onNotice?.('剪贴板为空，没有可粘贴的内容');
+      return false;
+    }
+    const r = view.state.selection.main;
+    view.dispatch({
+      changes: { from: r.from, to: r.to, insert: text },
+      selection: { anchor: r.from + text.length },
+      userEvent: 'input.paste',
+    });
+    view.focus();
+    return true;
+  };
+
   /**
    * 快捷键（§6.4.1 / §6.4.2，全 Cmd 不用 Ctrl）。
    *
    * 必须放在 defaultKeymap **之前**才能覆盖它；
    * `Mod-Enter` 在 CM 里默认是 insertBlankLine，会被默认键吃掉。
+   *
+   * 🔴 T11/T12（报告 §4.2 裁定）：
+   *  - ⌘R **留给「执行全部」**（会话内最高频）。原先原生菜单「刷新表结构」也是 ⌘R，
+   *    而 macOS 菜单 accelerator 优先于页面 keydown ⇒ 本快捷键实际按不动。
+   *    刷新结构已挪到 ⇧⌘R（见 action-catalog.ts）。
+   *  - 「执行选中」由 ⇧⌘R 改 **⌘⏎**（把 ⇧⌘R 让给刷新结构；⌘⏎ 是 DataGrip/VS Code 惯例）。
+   *  - 「EXPLAIN」由 ⇧⌘E 改 **⇧⌘X**（⇧⌘E 归「导出数据」）。
    */
+  /**
+   * 🔴 T13（§8.3 中文输入）：输入法组合期**一律不执行命令**。
+   *
+   * `run` 只拿得到 `view`、拿不到 `KeyboardEvent`，所以用 CodeMirror 自己的组合状态：
+   *  - `view.compositionStarted`：`compositionstart` 一发生就为真
+   *  - `view.composing`：要等组合**产生过一次输入**才为真
+   *
+   * 确认候选词那一刻正是「compositionStarted=true 但 composing 可能仍为 false」的窗口，
+   * 所以必须用前者。返回 false = 不处理、不 preventDefault，把默认行为留给输入法。
+   */
+  const guardCompose = (fn: () => void) => (view: EditorView): boolean => {
+    if (view.compositionStarted) return false;
+    fn();
+    return true;
+  };
+
   const hotkeys = keymap.of([
-    { key: 'Mod-r', preventDefault: true, run: () => { opts.onExecute('all'); return true; } },
-    { key: 'Mod-Shift-r', preventDefault: true, run: () => { opts.onExecute('selection'); return true; } },
-    { key: 'Mod-.', preventDefault: true, run: () => { opts.onCancel(); return true; } },
-    { key: 'Mod-/', preventDefault: true, run: () => { opts.onToggleComment(); return true; } },
-    { key: 'Mod-Shift-e', preventDefault: true, run: () => { opts.onExplain(); return true; } },
+    { key: 'Mod-r', preventDefault: true, run: guardCompose(() => opts.onExecute('all')) },
+    { key: 'Mod-Enter', preventDefault: true, run: guardCompose(() => opts.onExecute('selection')) },
+    { key: 'Mod-.', preventDefault: true, run: guardCompose(() => opts.onCancel()) },
+    { key: 'Mod-/', preventDefault: true, run: guardCompose(() => opts.onToggleComment()) },
+    { key: 'Mod-Shift-x', preventDefault: true, run: guardCompose(() => opts.onExplain()) },
     // S1：⌘I 格式化。preventDefault 是必须的 —— 否则浏览器/CM 会把它当斜体快捷键
-    { key: 'Mod-i', preventDefault: true, run: () => { format(); return true; } },
+    { key: 'Mod-i', preventDefault: true, run: guardCompose(() => format()) },
   ]);
 
   // ---------- V16 lint 上下文（只在防抖里构建）----------
@@ -1049,12 +1163,31 @@ export function createSqlEditor(opts: SqlEditorOptions): SqlEditorHandle {
         EditorView.domEventHandlers({
           contextmenu(event) {
             event.preventDefault();
+            /**
+             * T28：右键位置若落在当前选区**之外**，把光标挪过去（与原生编辑器同款）。
+             *
+             * 不这样做的话「执行当前语句 / 注释」会作用在右键前的旧光标处 ——
+             * 用户眼里是「我明明点在第三条语句上」。落在选区内则**保留选区**，
+             * 这样右键「执行选中 / 复制」还能拿到用户已经划好的那段。
+             */
+            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (pos !== null) {
+              const main = view.state.selection.main;
+              if (pos < main.from || pos > main.to) {
+                view.dispatch({ selection: { anchor: pos } });
+              }
+            }
             opts.onContextMenu?.({ x: event.clientX, y: event.clientY });
             return true;
           },
         }),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) opts.onChange(u.state.doc.toString());
+          // T29：选区（含打字导致的塌陷）变化时上报区间；值不变时宿主侧 setState 会 bail out
+          if (u.docChanged || u.selectionSet) {
+            const r = u.state.selection.main;
+            opts.onSelectionChange?.({ from: r.from, to: r.to });
+          }
         }),
       ],
     }),
@@ -1074,6 +1207,9 @@ export function createSqlEditor(opts: SqlEditorOptions): SqlEditorHandle {
     },
     statementAtCursor: () => statementAt(view.state.doc.toString(), view.state.selection.main.from)?.text ?? null,
     format,
+    cut,
+    copy,
+    paste,
     revealOffset(offset: number) {
       // 越界夹到文档范围内：调用方给的偏移来自另一时刻的拆分结果，文档可能已被编辑
       const pos = Math.max(0, Math.min(offset, view.state.doc.length));

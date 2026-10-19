@@ -16,6 +16,7 @@ import {
   rowsFromSelection,
   formatNeedsTableContext,
   sqlLiteral,
+  buildInList,
 } from './index.js';
 import type { ColumnMeta } from '@dbstudio/core-schema-cache';
 
@@ -632,5 +633,92 @@ describe('选中区 → 行（rowsFromSelection，⌘C 数据源 A17）', () => 
       focusRow: 0,
     });
     expect(res.rows).toEqual([]);
+  });
+});
+
+/**
+ * T23：单列 IN 清单。
+ *
+ * 这组的断言重点全在「会静默改变查询结果」的地方 —— NULL、去重、截断。
+ * 每一条「不给 X」的断言都配一条「给了 Y」的对照，否则把实现改成恒返回空也能全绿。
+ */
+describe('T23 buildInList（单列 IN 清单）', () => {
+  it('基本形态：字符串加引号、数字不加', () => {
+    const r = buildInList({ column: 'order_no', values: ['A01', 'A02', 7] });
+    expect(r.ok).toBe(true);
+    expect(r.condition).toBe("`order_no` IN ('A01', 'A02', 7)");
+    expect(r.used).toBe(3);
+  });
+
+  it('🔴 NULL 不进 IN 列表，而是补 OR IS NULL（写进 IN 会永远匹配不上）', () => {
+    const r = buildInList({ column: 'note', values: ['a', null, 'b'] });
+    expect(r.ok).toBe(true);
+    expect(r.condition).toBe("(`note` IN ('a', 'b') OR `note` IS NULL)");
+    // 反向对照：NULL 真的没被写进 IN 里
+    expect(r.condition).not.toContain('NULL,');
+    expect(r.nullCount).toBe(1);
+    expect(r.used).toBe(2);
+  });
+
+  it('🔴 全是 NULL → 只给 IS NULL，不产出语法错误的 IN ()', () => {
+    const r = buildInList({ column: 'note', values: [null, null, undefined] });
+    expect(r.ok).toBe(true);
+    expect(r.condition).toBe('`note` IS NULL');
+    expect(r.condition).not.toContain('IN');
+  });
+
+  it('去重：重复值只出现一次，并如实报去重个数', () => {
+    const r = buildInList({ column: 'id', values: [1, 1, 2, 2, 2, 3] });
+    expect(r.condition).toBe('`id` IN (1, 2, 3)');
+    expect(r.used).toBe(3);
+    expect(r.deduped).toBe(3);
+  });
+
+  it('空串与 NULL 严格区分（空串是合法字面量，要进 IN）', () => {
+    const r = buildInList({ column: 'note', values: ['', null] });
+    expect(r.condition).toBe("(`note` IN ('') OR `note` IS NULL)");
+  });
+
+  it('BIGINT 以字符串形态到达 → 按字符串去重、加引号导出（不退化成 number）', () => {
+    const a = '9007199254740993'; // 2^53 + 1，Number 会丢精度
+    const r = buildInList({ column: 'big_no', values: [a, a] });
+    expect(r.condition).toBe(`\`big_no\` IN ('${a}')`);
+    expect(r.deduped).toBe(1);
+    expect(r.used).toBe(1);
+  });
+
+  it('字符串里的引号/反斜杠按 sqlLiteral 口径转义（不另写一套）', () => {
+    const r = buildInList({ column: 'name', values: ["O'Brien", 'a\\b'] });
+    expect(r.condition).toBe("`name` IN ('O\\'Brien', 'a\\\\b')");
+  });
+
+  it('列名里的反引号被翻倍转义（列名本身也是注入面）', () => {
+    const r = buildInList({ column: 'we`ird', values: [1] });
+    expect(r.condition).toBe('`we``ird` IN (1)');
+  });
+
+  it('🔴 上限：到顶截断并显式标记，不静默少给值', () => {
+    const r = buildInList({ column: 'id', values: [1, 2, 3, 4, 5], limit: 3 });
+    expect(r.condition).toBe('`id` IN (1, 2, 3)');
+    expect(r.truncated).toBe(true);
+    expect(r.used).toBe(3);
+    // 反向对照：没到顶时 truncated 必须为 false（否则这条断言退化成恒真）
+    expect(buildInList({ column: 'id', values: [1, 2, 3], limit: 3 }).truncated).toBe(false);
+  });
+
+  it('拒绝：没有列名（行号右键）', () => {
+    const r = buildInList({ column: '  ', values: [1] });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('单列');
+  });
+
+  it('拒绝：一个值都没有', () => {
+    expect(buildInList({ column: 'id', values: [] }).ok).toBe(false);
+  });
+
+  it('拒绝：全是重复项时若同时有 NULL，仍要给出 IS NULL（不算空）', () => {
+    const r = buildInList({ column: 'note', values: [null] });
+    expect(r.ok).toBe(true);
+    expect(r.condition).toBe('`note` IS NULL');
   });
 });

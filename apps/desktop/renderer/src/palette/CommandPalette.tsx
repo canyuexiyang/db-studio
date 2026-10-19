@@ -13,6 +13,7 @@ import {
   type CommandDef,
 } from '@dbstudio/core-command-palette';
 import type { PaletteItem } from '@dbstudio/core-command-palette';
+import { isImeComposing } from '../ui/imeGuard';
 
 export interface CommandPaletteProps {
   items: PaletteItem[];
@@ -134,6 +135,9 @@ export function CommandPalette({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
+            // T13：命令面板里组合期 Enter 会**直接执行高亮命令**（可能是「删除表」）——
+            // 必须先放行给输入法。
+            if (isImeComposing(e)) return;
             const meta = e.metaKey || e.ctrlKey;
             // V6：历史模式专属操作 —— ⌘⌫ 删单条、⌘S 星标切换。
             // 只在 history 模式且宿主接了两个回调时生效，避免误吞其它模式的键。
@@ -185,7 +189,10 @@ export function CommandPalette({
             </li>
           ))}
           {results.length === 0 ? (
-            <li>
+            // 🔴 带 palette-empty 标识：它**不是候选项**。
+            //    不带标识时，`li` 计数会把「没有匹配项」当成 1 个候选，
+            //    让「Enter 执行命令」这类断言在空列表上假绿（写 e2e 时踩过）。
+            <li className="palette-empty">
               <span className="sub">
                 {mode === 'history' && remote === null && historySource ? '搜索历史…' : '没有匹配项'}
               </span>

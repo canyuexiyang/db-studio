@@ -71,6 +71,11 @@ const IPC = {
 
   FILE_PICK_PRIVATE_KEY: 'file:pickPrivateKey',
   FILE_SAVE_BINARY: 'file:saveBinary',
+
+  // T41：SQL 文件编辑闭环（打开/读取/保存&另存为）—— 与 ipc-channels.ts 同值
+  SQL_FILE_PICK: 'sqlfile:pick',
+  SQL_FILE_READ: 'sqlfile:read',
+  SQL_FILE_SAVE: 'sqlfile:save',
 };
 
 /**

@@ -10,8 +10,13 @@ import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect } from 'vitest';
 import { HeaderContextMenu, type HeaderContextMenuProps } from './HeaderContextMenu';
+import { HeaderFilterContext, type HeaderFilterBridge } from './headerFilterBridge';
 
-function render(patch: Partial<HeaderContextMenuProps>): string {
+/**
+ * bridge 参数：undefined = 不套 provider（等同于查询结果网格），
+ * 传对象 = 表网格宿主已接入。
+ */
+function render(patch: Partial<HeaderContextMenuProps>, bridge?: HeaderFilterBridge | null): string {
   const props: HeaderContextMenuProps = {
     menu: { x: 10, y: 20, name: 'status', originalIndex: 2 },
     canSort: true,
@@ -29,7 +34,8 @@ function render(patch: Partial<HeaderContextMenuProps>): string {
     onToggleShowTypes: () => undefined,
     ...patch,
   };
-  return renderToStaticMarkup(h(HeaderContextMenu, props));
+  const el = h(HeaderContextMenu, props);
+  return renderToStaticMarkup(bridge === undefined ? el : h(HeaderFilterContext.Provider, { value: bridge }, el));
 }
 
 describe('V14 菜单项「显示列类型」', () => {
@@ -74,5 +80,48 @@ describe('V19 菜单项「按此列分组着色」', () => {
     const html = render({ groupStripeColumn: null });
     expect(html).toContain('disabled');
     expect(html).toContain('宿主未接线');
+  });
+});
+
+function bridgeOf(canSingle: boolean, canIn: boolean, reason = ''): HeaderFilterBridge {
+  return { capability: () => ({ canSingle, canIn, reason }), openColumnFilter: () => undefined };
+}
+
+/**
+ * 只取某一个 <button> 的标记来判禁用 —— 全串数 `disabled` 的个数会随
+ * 别人新增的禁用项漂移，那样断言就失去针对性了。
+ */
+function itemHtml(html: string, testid: string): string {
+  return html.split('<button').find((s) => s.includes(`data-testid="${testid}"`)) ?? '';
+}
+
+describe('T24 列头快筛入口（按此列筛选 / 此列多值 IN）', () => {
+  it('没有宿主接入（查询结果网格）→ 两个入口都在但禁用，并写明原因', () => {
+    const html = render({});
+    expect(itemHtml(html, 'ctx-header-filter')).toContain('disabled');
+    expect(itemHtml(html, 'ctx-header-filter-in')).toContain('disabled');
+    expect(itemHtml(html, 'ctx-header-filter')).toContain('没有接入表筛选链路');
+    expect(html).toContain('按此列筛选…');
+    expect(html).toContain('此列多值 IN…');
+  });
+
+  it('宿主接入且列支持 → 两个入口都可点（证伪点：加了文案没接回调时这里是 disabled）', () => {
+    const html = render({}, bridgeOf(true, true));
+    expect(itemHtml(html, 'ctx-header-filter')).not.toContain('disabled');
+    expect(itemHtml(html, 'ctx-header-filter-in')).not.toContain('disabled');
+    expect(itemHtml(html, 'ctx-header-filter')).toContain('服务端筛选');
+  });
+
+  it('列不支持 IN（如 BLOB）→ 只禁用 IN 项，原因用宿主给的文案', () => {
+    const html = render({}, bridgeOf(true, false, 'blob 列不支持 IN 筛选（只能判是否为空）'));
+    expect(itemHtml(html, 'ctx-header-filter-in')).toContain('disabled');
+    expect(itemHtml(html, 'ctx-header-filter-in')).toContain('blob 列不支持 IN 筛选');
+    expect(itemHtml(html, 'ctx-header-filter')).not.toContain('disabled');
+  });
+
+  it('宿主把整列判为不可筛选（拿不到元数据）→ 两项都禁用', () => {
+    const html = render({}, bridgeOf(false, false, '拿不到这一列的元数据'));
+    expect(itemHtml(html, 'ctx-header-filter')).toContain('拿不到这一列的元数据');
+    expect(itemHtml(html, 'ctx-header-filter-in')).toContain('disabled');
   });
 });

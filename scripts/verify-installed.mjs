@@ -96,20 +96,60 @@ const wsUrl = await new Promise((resolve, reject) => {
  * 对策：先轮询 HTTP 端点探活，再带重试地 connectOverCDP（每次失败都重新建连）。
  */
 const httpEndpoint = wsUrl.replace(/^ws:\/\//, 'http://').replace(/\/devtools\/browser\/.*$/, '');
+
+/**
+ * 🔴 现场诊断（2026-10-18）：`connectOverCDP` 报 "Timeout 20000ms exceeded" 时，
+ * 早先只打一行超时，三种完全不同的原因长得一模一样：
+ *   a) HTTP 端点不通（进程在但 DevTools 服务没起）；
+ *   b) HTTP 通、ws 握手被拒（主线程忙/协议不匹配）；
+ *   c) 握手通、但**没有 page target**（窗口没建出来）。
+ * 三者处置完全不同（改启动参数 / 看主线程 / 看窗口创建），所以先把事实打出来。
+ */
+async function dumpDevToolsState(tag) {
+  // 🔴 每个请求都要自带超时：后端不响应时（锁屏/主线程卡住）裸 fetch 会一直挂着，
+  //    诊断代码本身变成新的卡点 —— 那是我们刚刚踩过的坑。
+  const signal = () => AbortSignal.timeout(3000);
+  const version = await fetch(`${httpEndpoint}/json/version`, { signal: signal() })
+    .then(async (r) => `HTTP ${r.status} ${(await r.text()).slice(0, 120)}`)
+    .catch((e) => `失败: ${String(e.message).split('\n')[0]}`);
+  const targets = await fetch(`${httpEndpoint}/json/list`, { signal: signal() })
+    .then(async (r) => {
+      const txt = await r.text();
+      try {
+        const arr = JSON.parse(txt);
+        return `HTTP ${r.status} targets=${arr.length} types=${JSON.stringify(arr.map((t) => t.type))} urls=${JSON.stringify(arr.map((t) => String(t.url).slice(0, 40)))}`;
+      } catch {
+        return `HTTP ${r.status} 非 JSON: ${txt.slice(0, 120)}`;
+      }
+    })
+    .catch((e) => `失败: ${String(e.message).split('\n')[0]}`);
+  console.log(`[cdp:${tag}] ${httpEndpoint}`);
+  console.log(`[cdp:${tag}] /json/version → ${version}`);
+  console.log(`[cdp:${tag}] /json/list → ${targets}`);
+}
+
 let browser = null;
 for (let attempt = 1; attempt <= 3 && !browser; attempt++) {
   // 探活：端点能答 200 才开始握手
+  let alive = false;
   for (let i = 0; i < 40; i++) {
-    const alive = await fetch(`${httpEndpoint}/json/version`)
+    // 单次 3s 超时：连不上时快速失败，别让 40 次轮询变成十几分钟的静默等待
+    alive = await fetch(`${httpEndpoint}/json/version`, { signal: AbortSignal.timeout(3000) })
       .then((r) => r.ok)
       .catch(() => false);
     if (alive) break;
     await new Promise((r) => setTimeout(r, 500));
   }
+  if (!alive) {
+    console.log(`[cdp] 探活 20s 未通过（第 ${attempt} 次）`);
+    await dumpDevToolsState('probe-fail');
+    continue;
+  }
   try {
     browser = await chromium.connectOverCDP(wsUrl, { timeout: 20_000 });
   } catch (e) {
     console.log(`[cdp] 第 ${attempt} 次连接失败：${String(e.message).split('\n')[0]}`);
+    await dumpDevToolsState(`fail${attempt}`);
     if (attempt === 3) throw e;
     await new Promise((r) => setTimeout(r, 1500));
   }
@@ -239,7 +279,8 @@ try {
     await page.keyboard.press('Meta+a');
     await page.keyboard.type('SELECT 1 AS ok_col;');
     await page.waitForTimeout(200);
-    await page.locator('.sql-toolbar button:visible').filter({ hasText: /^▶ 执行 ⌘R$/ }).last().click();
+    // 语义钩子（文案会随 T29 演进，别再绑死「▶ 执行 ⌘R」）
+    await page.locator('[data-testid="sql-run-all"]:visible').last().click();
     await page.waitForSelector('.sql-message >> visible=true', { timeout: 20_000 });
     await page.waitForTimeout(400);
     const runMsg = await page.locator('.sql-message:visible').last().innerText();
@@ -334,7 +375,7 @@ try {
   await page.waitForTimeout(300);
   const editorDump = await activePane.locator('.cm-content').innerText().catch(() => '(读取失败)');
   console.log(`   ℹ️ 编辑器实际内容: ${JSON.stringify(editorDump.slice(0, 120))}`);
-  await activePane.locator('.sql-toolbar button').filter({ hasText: /^▶ 执行 ⌘R$/ }).click();
+  await activePane.locator('[data-testid="sql-run-all"]').click();
   await activePane.locator('.sql-message').waitFor({ state: 'visible', timeout: 15_000 });
   await page.waitForTimeout(500);
   const msg = await activePane.locator('.sql-message').innerText();

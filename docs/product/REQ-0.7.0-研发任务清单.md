@@ -4,7 +4,8 @@
 > **依据文档**：[`docs/research/项目全景与竞品深度调研-2026-10-12.md`](../research/项目全景与竞品深度调研-2026-10-12.md)
 > **范围口径**：全盘采纳该调研报告的**修改项、优化项、新增项**
 > **任务载体**：项目事项系统（条目 ID 见「任务总表」最后一列）
-> **状态**：全部子任务为「待开始」
+> **状态**（2026-10-19 更新）：**52 / 52 条子任务全部完成**。`npm run verify` **exit 0**（16 道门禁），`verify:installed` **22/22**、`verify:traffic-lights` **6/6** 均已补跑通过；0.7.0 已出包并本机覆盖安装。逐条状态见「任务总表」最后一列；**权威状态在项目事项系统**，本表随每次交付同步；本轮门禁数字见文末「八、交付证据」。
+> **提交状态**：0.7.0 全部改动随本版一次提交（哈希见 `git log -1`）。
 > **维护方式**：本文档是**查阅与维护入口**；执行状态以事项系统为准。改动任务范围时先改事项、再同步本文档。
 
 > ⚠️ **版本号口径**：**0.7.0 是软件版本号，v1.x 是 PRD 需求批次号**，两者不是一回事（调研报告 §12.3 第 1 条）。本文档按软件版本命名，不用 `v0.7.0` 前缀，避免与 `REQ-v1.2-*` / `REQ-v1.3-*` 混淆。
@@ -82,60 +83,60 @@
 
 ## 二、任务总表（52 条）
 
-| 编号 | 事项ID | 优先级 | 报告条目 | 任务标题 | 成本 | 关键依赖 |
-|---|---|---|---|---|---|---|
-| T01 | rYzQA8 | P0 | I01 / R01 | 重载前保护未提交改动：统一 loadTable 相关入口拦截 | 中 | — |
-| T02 | r1MEL3 | P0 | I02 / R02 | 中央对象清单按 (connId, database) 归属 | 小～中 | — |
-| T03 | rRmU36 | P0 | I02 / R03 | 树库行「新建表」显式传 connId | 小 | T02 |
-| T04 | rjjrkZ | P0 | I02 / R06 | SQL 片段命令身份带 (connectionId, database, name) | 小 | T02 |
-| T05 | rmmky4 | P0 | I03 / R04 | JSON 保真：去掉 parse→stringify 路径 | 中 | — |
-| T06 | rwdobz | P0 | I03 / R07 | 保存预览参数替换修正 | 小 | — |
-| T07 | rssrID | P0 | I03 / R08 | 筛选导出 SQL 走 core-sql-ident | 小 | — |
-| T08 | rf79fa | P0 | I28 / R15 | 提交结果契约与 interpretResult 接线 | 中～大 | — |
-| T09 | rJW9S6 | P0 | I28 / R15 | 冲突行闭环：保留草稿 + 重载比较 | 中～大 | T08 |
-| T10 | rXjB3U | P0 | I28 / R15 | 真库并发 fixture e2e | 中 | T08、T09 |
-| T11 | rLyIAO | P1 | I04 / R05 | 建立唯一「动作—入口—快捷键」事实表并裁定冲突 | 中 | — |
-| T12 | radeX2 | P1 | I04 / R05 | 按裁定重分派菜单与局部命令 | 中 | T11 |
-| T13 | rjnhjM | P1 | I04 / R05 | Electron 真机五焦点键盘矩阵验收 | 中 | T12 |
-| T14 | r3oGCh | P1 | I04 / R10 | 只读连接统一禁用与原因显示 | 中 | T11 |
-| T15 | rUJLBF | P1 | §4.1 / §8.1 | 菜单分组调整 + 动作四维度落表 | 中 | T11 |
-| T16 | rlx1Jj | P1 | §4.4 | 树与对象右键最小补齐 | 小 | T02 |
-| T17 | rRifpd | P1 | R13 | 类别「全选本组」/extras 接线核实 | 小 | — |
-| T18 | r4lhQn | P1 | §4.5 | 通用菜单键盘可达性 | 中 | T28 |
-| T19 | rr7syb | P1 | I06 | 新增空白行入口（工具栏/菜单/行号） | 小～中 | — |
-| T20 | rv7cqz | P1 | I06 | 行号右键：新增/复制/删除/撤销选中行 | 小～中 | T19 |
-| T21 | ruFSn8 | P1 | I13 | 提交预览增加「旧值→新值」摘要 | 中 | T08 |
-| T22 | rnXyiN | P1 | I12 | 复制菜单收纳为子菜单 | 小 | — |
-| T23 | rc5QgW | P1 | I12 | 单列 IN 清单复制（NULL/转义/去重/上限） | 小 | T22 |
-| T24 | r2Eb9x | P1 | I11 | 列头快筛 + 单列多值 IN | 小～中 | — |
-| T25 | r27fhL | P1 | §4.5 | 单元格右键补「编辑值/设为空串/使用默认值/撤销本格」 | 小～中 | T19 |
-| T26 | rFPXRZ | P1 | I10 | 已生效筛选条件条 | 中 | — |
-| T27 | rIDNEk | P1 | I07 | 标签右键管理 | 小～中 | T01 |
-| T28 | rvPYmd | P1 | I08 | SQL 编辑器右键菜单 | 小 | T11 |
-| T29 | rPfUoO | P1 | I08 | SQL 工具栏执行对象与目标连接提示 | 小 | T11 |
-| T30 | rbwKS6 | P1 | I05 / R09 | 批量删除失败状态与 DDL 语义修正 | 中 | — |
-| T31 | rlw9nM | P1 | I09 / R12 | 完整值弹窗区分「库中原值/当前待提交值」 | 中 | — |
-| T32 | rurcNK | P1 | I09 | 完整值弹窗多行编辑 | 中 | T31 |
-| T33 | r4aTqQ | P1 | I29 / R16 | SQL 结果完整值查看接线 | 小～中 | T05、T31 |
-| T34 | r4OcpB | P2 | I16 | 图片查看器最小完整集 | 小～中 | — |
-| T35 | rB8y41 | P2 | I15 | JSON 折叠树 + 键路径复制 + 搜索 | 中 | T05、T31 |
-| T36 | rHijNZ | P2 | I17 | ENUM 专用编辑器 | 中 | — |
-| T37 | rWH83x | P2 | I17 | 日期时间编辑器（保微秒、不隐式时区） | 中 | — |
-| T38 | r82Yho | P2 | I14 | 未保存编辑 undo/redo | 中～大 | T01 |
-| T39 | rp4cxR | P2 | I18 / R11 | 「打开源表」文案修正 + 定位源行 | 中 | T02 |
-| T40 | r53ZuS | P2 | I19 | 导出范围与快照口径统一 | 中～大 | — |
-| T41 | r6aE3G | P2 | I20 | SQL 文件打开与另存为 | 中 | — |
-| T42 | rbq1g3 | P2 | I21 | 固定/命名查询结果标签 | 中 | T44 |
-| T43 | rQ5fOo | P2 | I22 | 表布局记忆/视图方案 | 中 | T26 |
-| T44 | r3q5XM | P2 | I23 | 结果加载上限与按需大值 | 大 | 前置实测 |
-| T45 | rBUERj | P2 | I24 / R14 | 手动更新入口收尾（四态真实 + 手动下载） | 小（检查/下载） | — |
-| T46 | razFZ4 | P2 | §8.2 | 工具栏信息层级：固定连接/环境/库/表上下文 | 中 | T01、T14 |
-| T47 | rsYECr | P2 | §8.2 | 界面状态区分：六种状态各自独立表现 | 中 | — |
-| T48 | rVsDmv | P2 | §8.3 | 视觉与可用性核验清单（7 项场景） | 验证类 | T46、T47 |
-| T49 | rNSQZ9 | P1 | §12.2 | 组合回归用例补充并纳入门禁（6 条） | 中 | T01–T10 |
-| T50 | rmT7I1 | P2 | §12.3 | 文档事实校正（6 条） | 小 | T11 |
-| T51 | rqF9BI | P2 | §12.1 | 竞品同机任务试验方案与场景表 | 小 | — |
-| T52 | rHnLbd | P0 | — | 收尾：版本号 + 全量 verify + 打包安装 + RELEASES + 发版 | 中 | 全部 |
+| 编号 | 事项ID | 优先级 | 报告条目 | 任务标题 | 成本 | 关键依赖 | 状态 |
+|---|---|---|---|---|---|---|---|
+| T01 | rYzQA8 | P0 | I01 / R01 | 重载前保护未提交改动：统一 loadTable 相关入口拦截 | 中 | — | 完成 |
+| T02 | r1MEL3 | P0 | I02 / R02 | 中央对象清单按 (connId, database) 归属 | 小～中 | — | 完成 |
+| T03 | rRmU36 | P0 | I02 / R03 | 树库行「新建表」显式传 connId | 小 | T02 | 完成 |
+| T04 | rjjrkZ | P0 | I02 / R06 | SQL 片段命令身份带 (connectionId, database, name) | 小 | T02 | 完成 |
+| T05 | rmmky4 | P0 | I03 / R04 | JSON 保真：去掉 parse→stringify 路径 | 中 | — | 完成 |
+| T06 | rwdobz | P0 | I03 / R07 | 保存预览参数替换修正 | 小 | — | 完成 |
+| T07 | rssrID | P0 | I03 / R08 | 筛选导出 SQL 走 core-sql-ident | 小 | — | 完成 |
+| T08 | rf79fa | P0 | I28 / R15 | 提交结果契约与 interpretResult 接线 | 中～大 | — | 完成 |
+| T09 | rJW9S6 | P0 | I28 / R15 | 冲突行闭环：保留草稿 + 重载比较 | 中～大 | T08 | 完成 |
+| T10 | rXjB3U | P0 | I28 / R15 | 真库并发 fixture e2e | 中 | T08、T09 | 完成 |
+| T11 | rLyIAO | P1 | I04 / R05 | 建立唯一「动作—入口—快捷键」事实表并裁定冲突 | 中 | — | 完成 |
+| T12 | radeX2 | P1 | I04 / R05 | 按裁定重分派菜单与局部命令 | 中 | T11 | 完成 |
+| T13 | rjnhjM | P1 | I04 / R05 | Electron 真机五焦点键盘矩阵验收 | 中 | T12 | 完成 |
+| T14 | r3oGCh | P1 | I04 / R10 | 只读连接统一禁用与原因显示 | 中 | T11 | 完成 |
+| T15 | rUJLBF | P1 | §4.1 / §8.1 | 菜单分组调整 + 动作四维度落表 | 中 | T11 | 完成 |
+| T16 | rlx1Jj | P1 | §4.4 | 树与对象右键最小补齐 | 小 | T02 | 完成 |
+| T17 | rRifpd | P1 | R13 | 类别「全选本组」/extras 接线核实 | 小 | — | 完成 |
+| T18 | r4lhQn | P1 | §4.5 | 通用菜单键盘可达性 | 中 | T28 | 完成 |
+| T19 | rr7syb | P1 | I06 | 新增空白行入口（工具栏/菜单/行号） | 小～中 | — | 完成 |
+| T20 | rv7cqz | P1 | I06 | 行号右键：新增/复制/删除/撤销选中行 | 小～中 | T19 | 完成 |
+| T21 | ruFSn8 | P1 | I13 | 提交预览增加「旧值→新值」摘要 | 中 | T08 | 完成 |
+| T22 | rnXyiN | P1 | I12 | 复制菜单收纳为子菜单 | 小 | — | 完成 |
+| T23 | rc5QgW | P1 | I12 | 单列 IN 清单复制（NULL/转义/去重/上限） | 小 | T22 | 完成 |
+| T24 | r2Eb9x | P1 | I11 | 列头快筛 + 单列多值 IN | 小～中 | — | 完成 |
+| T25 | r27fhL | P1 | §4.5 | 单元格右键补「编辑值/设为空串/使用默认值/撤销本格」 | 小～中 | T19 | 完成 |
+| T26 | rFPXRZ | P1 | I10 | 已生效筛选条件条 | 中 | — | 完成 |
+| T27 | rIDNEk | P1 | I07 | 标签右键管理 | 小～中 | T01 | 完成 |
+| T28 | rvPYmd | P1 | I08 | SQL 编辑器右键菜单 | 小 | T11 | 完成 |
+| T29 | rPfUoO | P1 | I08 | SQL 工具栏执行对象与目标连接提示 | 小 | T11 | 完成 |
+| T30 | rbwKS6 | P1 | I05 / R09 | 批量删除失败状态与 DDL 语义修正 | 中 | — | 完成（实现）/真库验收待环境 |
+| T31 | rlw9nM | P1 | I09 / R12 | 完整值弹窗区分「库中原值/当前待提交值」 | 中 | — | 完成 |
+| T32 | rurcNK | P1 | I09 | 完整值弹窗多行编辑 | 中 | T31 | 完成 |
+| T33 | r4aTqQ | P1 | I29 / R16 | SQL 结果完整值查看接线 | 小～中 | T05、T31 | 完成 |
+| T34 | r4OcpB | P2 | I16 | 图片查看器最小完整集 | 小～中 | — | 完成 |
+| T35 | rB8y41 | P2 | I15 | JSON 折叠树 + 键路径复制 + 搜索 | 中 | T05、T31 | 完成 |
+| T36 | rHijNZ | P2 | I17 | ENUM 专用编辑器 | 中 | — | 完成 |
+| T37 | rWH83x | P2 | I17 | 日期时间编辑器（保微秒、不隐式时区） | 中 | — | 完成 |
+| T38 | r82Yho | P2 | I14 | 未保存编辑 undo/redo | 中～大 | T01 | 完成 |
+| T39 | rp4cxR | P2 | I18 / R11 | 「打开源表」文案修正 + 定位源行 | 中 | T02 | 完成 |
+| T40 | r53ZuS | P2 | I19 | 导出范围与快照口径统一 | 中～大 | — | 完成 |
+| T41 | r6aE3G | P2 | I20 | SQL 文件打开与另存为 | 中 | — | 完成 |
+| T42 | rbq1g3 | P2 | I21 | 固定/命名查询结果标签 | 中 | T44 | 完成 |
+| T43 | rQ5fOo | P2 | I22 | 表布局记忆/视图方案 | 中 | T26 | 完成 |
+| T44 | r3q5XM | P2 | I23 | 结果加载上限与按需大值 | 大 | 前置实测 | 完成 |
+| T45 | rBUERj | P2 | I24 / R14 | 手动更新入口收尾（四态真实 + 手动下载） | 小（检查/下载） | — | 完成 |
+| T46 | razFZ4 | P2 | §8.2 | 工具栏信息层级：固定连接/环境/库/表上下文 | 中 | T01、T14 | 完成 |
+| T47 | rsYECr | P2 | §8.2 | 界面状态区分：六种状态各自独立表现 | 中 | — | 完成 |
+| T48 | rVsDmv | P2 | §8.3 | 视觉与可用性核验清单（7 项场景） | 验证类 | T46、T47 | 完成 |
+| T49 | rNSQZ9 | P1 | §12.2 | 组合回归用例补充并纳入门禁（6 条） | 中 | T01–T10 | 完成 |
+| T50 | rmT7I1 | P2 | §12.3 | 文档事实校正（6 条） | 小 | T11 | 完成 |
+| T51 | rqF9BI | P2 | §12.1 | 竞品同机任务试验方案与场景表 | 小 | — | 完成 |
+| T52 | rHnLbd | P0 | — | 收尾：版本号 + 全量 verify + 打包安装 + RELEASES + 发版 | 中 | 全部 | 待开始 |
 
 ---
 
@@ -253,12 +254,58 @@
 - **注意**：不改写工程约定——不因旧主文档写 Zustand 就认定在用（报告 §2.2）。
 - **依赖**：无（T12–T15、T28、T29、T50 压在其上）
 
+**实现与证据（2026-10-13）**
+
+- 新增 `apps/desktop/src/shared/action-catalog.ts`：34 条动作的单一事实表，字段含
+  `id / label / accelerator / display / surfaces / scope / availableWhen / localDraftOnly / requiresSqlConfirm / note`。
+- 逐项裁定（报告 §4.2 全 8 行）：
+
+| 键 | 裁定 | 依据 |
+|---|---|---|
+| ⌘R | 归 **SQL「执行全部」**；刷新表结构 → **⇧⌘R** | 菜单 accelerator 抢在页面 keydown 之前，原方案下 SQL 侧永远收不到 |
+| ⇧⌘E | 唯归**导出数据**；EXPLAIN → **⇧⌘X**；网格表达式模式 → **⌘E（仅编辑态）** | 同键三义 |
+| ⌘0 | 唯归**重置字体**；网格「设为 NULL」→ **⌥0** | 数据动作不该被外观动作吃掉 |
+| ⌘S | 归**保存表修改**；SQL 标签下**必须打开「保存为片段」** | 原实现静默无响应 |
+| ⌘1～9 | 去掉 `tabs.length <= 9` 条件 | 原条件让标签超 9 个时**前九个也一起失效** |
+| F2 | 文案由「重命名」改为**「设计表…」** | 实际行为是进设计器，不是树内改名 |
+| ⌘C/V/A/Z | 列为**真机待验**（T13），本轮不改 | 报告要求不直接认定失效 |
+| ⌘I | 保持 **⌘I** | 代码事实如此，报告已更正「⇧⌘F」的印象 |
+
+- **冲突检测是可执行的**：`findAcceleratorConflicts()` / `findCrossLayerConflicts()`，
+  由 `action-catalog.test.ts` 钉住「必须为空数组」，并用**人为造错的反例**确认断言有证伪能力。
+  写这条反例时抓到真 bug：`keySignature` 未归一 `CmdOrCtrl`（Electron 标准写法），
+  `CmdOrCtrl+P` 与 `Cmd+P` 被判成不同键 ⇒ 查重静默放行、且 `F12` 会与 `CmdOrCtrl+F12` 撞签名。
+- **文档不再手写**：`npm run gen:actions` 从目录生成 `docs/product/ACTION-CATALOG-自动生成.md`
+  （含冲突自检与裁定记录）；`npm run gen:actions -- --check` 已进 `verify` 链，文档过期即红。
+
+
 #### T12 按裁定重分派菜单与局部命令
 
 - **报告引用**：§4.2；§10 I04
 - **任务内容**：按 T11 的裁定重分派原生菜单与局部命令，消除同键异义。
 - **交付与验收**：**同一键同一时刻只能触发一个动作**；禁用时给出原因。
 - **依赖**：T11
+
+**实现与证据（2026-10-13）**
+
+- 原生菜单 `apps/desktop/src/main/menu.ts`：标签与加速键**改为从目录取**
+  （`labelOf()` / `acceleratorOf()`），菜单不再自带一套文案键位。
+- 渲染层键位同步：`SqlEditorCore.ts`（⌘R 执行全部、⌘⏎ 执行选中、⇧⌘X EXPLAIN）、
+  `DataGrid.tsx`（⌘E 表达式模式、⌥0 设 NULL）、`App.tsx`（⌘1～9 条件修正）。
+- **⌘S 双向口径收敛为单点**：新增 `requestSaveActive()`，window keydown 与原生菜单
+  `case 'save'` **共用同一实现**（两条入口各写一遍正是 R05 的成因）。
+  SQL 标签下经 `snippetSaveSignal` 递增信号打开「保存为片段」面板，任何标签都不静默。
+- **展示串不再手写**：`SqlEditorPanel`（工具栏四键）、`CellContextMenu`（⌘E / ⌥0）、
+  `DataGrid` tooltip、`prefs/preferences.ts` 的「快捷键一览」全部改为 `displayOf()` 取值。
+  后三者原先各写一份，已随本次收敛。
+- 新增缺陷修复：网格「设为 NULL」在 macOS 上**按键永远收不到** —— Option+0 的 `e.key`
+  是组合字符 `º`，不能只判 `e.key === '0'`，已改为认 `e.code === 'Digit0'`。
+- 旧断言按其真实语义修正：`menu.test.ts` 期望值 `CmdOrCtrl+R` → `Shift+CmdOrCtrl+R`
+  （这条断言原先锁的是**有缺陷的行为**）。
+- 回归：`npm run verify` **exit 0** —— typecheck 双工程通过、`gen:actions --check` 通过、
+  **1721 单测 / 57 文件**、check:bundle 9/9（首屏 466.9KB）、e2e:ui **234/234**、
+  e2e:script:data 10/10、e2e:conflict **17/17**、e2e:script:ui 18/18、e2e:app **45/45**。
+
 
 #### T13 Electron 真机五焦点键盘矩阵验收
 
@@ -305,6 +352,68 @@
 - **任务内容**：先做齐基本交互——树 / 网格 / 单元格 / SQL 四类菜单**共用同一套边界钳制 + 键盘可达 + Esc 返回原焦点**，再加新动作。
 - **依赖**：T28
 
+**实现与证据（2026-10-13，T13–T18 合并记录）**
+
+**T13 · 真机五焦点键盘矩阵**
+
+- 新增 `scripts/e2e-keys.mjs`（`npm run e2e:keys`）：真 Electron + 真 MySQL fixture，K0–K9 共 **47 条断言全绿**，另**显式登记 4 项「需人工」**（原生菜单 accelerator、真实中文输入法、⌘C/V/A/Z、完整矩阵）——
+  `manual()` 单独计数，**不与「通过」混计**（悄悄跳过 ≠ 通过）。
+- 新增验收清单 `docs/engineering/T13-键盘矩阵验收清单.md`（自动化范围 + 需人工项 + 定位纪律）。
+- 断言纪律：每个「不触发」都配一个「会触发」的对照（K3.4/K3.5、K3.6/K3.7、K5.3/K5.4、K6.2/K6.3、K6.4/K6.5）。
+- **本轮修掉的既有缺陷（T13 过程发现）**：
+  1. **全仓零 IME 防护** —— 组合期 Enter/Esc 会被当成「提交/关闭」；
+  2. 🔴 **根因**：React 合成事件**不转发 `isComposing`**，JSX `onKeyDown` 里读到的永远是 `undefined`，
+     ⇒ `isImeComposing` 必须同时看 `e.nativeEvent`（已加 2 条单测钉死）；
+  3. 危险确认框 Esc **只挂在生产模式输入框上**，非生产框按 Esc 关不掉；
+  4. 命令面板空态的 `li` 会被当成 1 个候选项，让 e2e 断言**假绿**（已加 `.palette-empty`）。
+- **脚本自身的两个陷阱（写下来防复发）**：
+  - 断言「脏格 +1」不能用 `.ws-tab-dirty`（那是**标签上的一个点**，改 1 格和改 10 格都只显示 1 个），必须读状态栏「脏单元格」计数；
+  - `| tail` 会吞掉退出码 ⇒ 假绿，门禁一律 `set -o pipefail`。
+
+**T14 · 只读连接统一禁用与原因显示**
+
+- 新增 `renderer/src/workspace/editability.ts`：`resolveEditability(table, connReadOnly)` → `{ locatable, writable, reason, message }`；
+  **`locatable`（结构可定位）与 `writable`（再叠加连接只读）分开**，状态栏、网格、横幅、菜单**共用同一判定**（各写一遍必然漂移）。
+- 状态栏拆成「定位键：有/无」+「可写：是/否（只读连接 / 无定位键）」；只读横幅 `data-reason="read-only-conn"`；
+  工具栏「保存/导入」禁用；树右键 `roGuard()` 覆盖 新建表/设计表/导入/清空/删除/批量删除并带**悬停原因**；
+  `onTableDestructive` / 批量删除再加**只读兜底**（批量会剔除并告知跳过数量）。后端 `core-sql-guard` 防线**未减弱**。
+- 真机验收：`e2e:keys` K9.3–K9.9 **全绿**。
+- 🔴 **写在案发现场**：K9 连续四轮全红，**不是功能没做，是脚本选错了节点**。
+  两条连接指向**同一个 MySQL 实例** ⇒「连接可见的库」= 实例上全部库 ⇒ 同一张表在**两条连接下各有一份**；
+  再叠加 fixture 上累积的历史 `e2e_*` 库（当时的树有 523 行），按表名 `.first()` 命中的是**别的库/别的连接**里的同名表。
+  现改为 `findObjectRow(connName, dbName, tableName)`（连接→库→对象三级，走 `data-node-kind`/`data-node-depth` 语义钩子）。
+  另外连接节点的标签是 **`cfg.name`，不是 `cfg.id`** —— 拿 id 匹配会静默失败。
+- 顺带产出两个可观测性钩子：`.ws-tab` 的 `data-conn-id` / `data-readonly`、`.statusbar` 的 `data-conn-id` / `data-conn-readonly`。
+  「只读没生效」在有这两个属性之前**肉眼分不清**是「漏读字段」还是「选错节点」。
+- 复现性修正：`expandAll()` 改成「反复点第一个仍是 ▸ 的 caret」——按下标正序点会因新行插入而**把刚展开的又收起**，来回抖后可能停在收起状态。
+- 收尾加固：应用「关闭守卫」在有未保存改动时会**故意**不答复（防误关丢数据，是正确行为），但会让 `electronApp.close()` 永久挂起 ⇒ 脚本改为 **5 秒体面退出后强杀**，避免拖住 `verify`。
+
+**T15 · 菜单分组 + 动作四维度落表**
+
+- `menu.ts` 新增顶层「数据」菜单（保存 / 筛选 / 导入 / 导出 / 设计表），「视图」只留外观与导航；`MENU_COMMANDS` 顺序同步。
+- `action-catalog.ts` 每条动作新增 **`target` 维度**（app/connection/database/table/row/cell/tab/sql/window），文档生成器 `gen-action-doc.mjs` 增「目标对象」列。
+- 约束遵守：顶层菜单加完 **≤ 6 个**（单测钉住），未用图标颜色暗示「是否会写库」。
+- 测试：`menu.test.ts` 新增「数据菜单含 5 项」正向 + **反例「视图菜单不得含」** + 「顶层 ≤ 6」。
+
+**T16 · 树与对象右键最小补齐**
+
+- 连接级加「复制连接信息（**不含密码**）」（只拼 `name / user@host:port/db`，绝不带密文或私钥路径）；
+- 库级加「在新查询中插入 SELECT」；对象级「打开表/打开视图」**仅 table/view 给**（过程/函数没有可打开的数据网格，给了就是「对象不支持的动作」）、
+  「在新查询中插入 SELECT」（带 `LIMIT 100;`）、「复制完整限定名」；危险项（清空/删除）保持**单独分隔**。
+- 坑：`quoteQualified([db, ''])` 会因空串**抛 `IdentifierError`**（限定名格式校验）⇒ 只传库名、末尾 `.` 自行拼接。
+
+**T17 · 类别 extras 接线核实**
+
+- 确认缺陷成立：`App.openNodeMenu` 的 **`kind` 类别分支原本没有合并 `extra.treeItems`** —— `TreeView` 侧的「全选本组」构造得再对也**没有真实入口**（「函数存在、能力没入口」）。
+- 已修复：类别分支与对象分支一样合并 `extras`。
+
+**T18 · 通用菜单键盘可达性**
+
+- 新增 `renderer/src/ui/useMenuBehavior.ts`，树 / 网格表头 / 单元格 / SQL 编辑器**四类菜单共用**：
+  边界钳制（视口内翻转）、↑↓/Home/End 巡航、**菜单不抢焦点**（方向键才落焦）、**Esc 关闭并返回原焦点**、点外/resize/失焦关闭。
+- 每个菜单的坐标钳制从「各自一份」收敛为单一实现。
+
+
 ---
 
 ### 阶段三：P1 网格高频操作入口（T19–T30）
@@ -316,6 +425,34 @@
 - **任务内容 / 功能点**：工具栏 + 菜单 + 行号右键均可新增空白行，**空表也能新增**；复用 `core-mutation`，**不新增写通道**；预演区分 DEFAULT 与 NULL。
 - **参考**：TablePlus `+Row`、Beekeeper `+`
 - **依赖**：无
+
+**实现与证据（2026-10-13）**
+
+- **入口（4 处，全部复用同一条 `onAddBlankRow`，未新增写通道）**
+  - 工具栏：`DataGrid` 工具栏最前 `data-testid="btn-add-row"`（禁用时给原因）；
+  - **行号右键 / 单元格右键**：共用 `CellContextMenu`（行号右键的 `menu.column === ''`，本来就是同一份菜单），新项 `ctx-add-row` 排在「插入复制行」之前；
+  - **原生菜单**：`action-catalog` 登记 `grid-add-row`（`scope: 'global'` —— 目录硬规则：局部动作不进原生菜单），`menu.ts` 的「数据」子菜单接线，渲染层 `event:menuCommand` 兜底；
+  - **⌥⌘N**：`DataGrid` keydown（`meta && alt && KeyN`）。
+- **计划器**：`core-mutation.buildBlankRowPlan(table)` —— 逐列判 `auto-skip | use-default | set-null | needs-input`；`INSERT INTO t () VALUES ()` 走 `PendingInsert.blank`。
+- **DEFAULT 与 NULL 严格分开**：`use-default` 的列**不进 INSERT 列表**（让服务端 DEFAULT 生效），`set-null` 写显式 NULL。字面量 `"NULL"` 一律按「没有可用默认值」处理（fail-closed）。
+- **预演防线**：显式 NULL 写进 `NOT NULL` 且无默认的普通列 → 预演即逐列点名拒绝，不让用户点确认后吃 MySQL 1048。
+- **顺手修掉的真实缺陷**：`onDuplicateRow` 原用 `source.rowCount` 当新行下标，连按两次 ⌘D 会**落在同一行**（后者覆盖前者）。改为 `source.totalRows`，并为空白行加同款回归断言（脏格 6 → 12）。
+- 🔴 **两个「测试从写出来就没验过」的坑（都靠真门禁才暴露）**
+  1. `core-mutation` 那条「主键留空仍报主键原因」的断言，引用的 `codeKeyTable()` 定义在**另一个 describe 的函数作用域**里 → 实际跑的是 `ReferenceError`，红得毫无意义。已提到模块作用域，并补成「主键文案 / NOT NULL 文案**互斥**」的双向断言（同时验证该断言在错误输入上真的会红）。
+  2. 新增的 `!col.isPrimaryKey` 过滤经变异测试确认**不可达**（`emptyPk` 分支在上方且会 `continue`）—— 保留为「对分支顺序的独立防线」，注释里如实写明它不承重，别让后来人以为是它在挡。
+- 🔴 **真库门禁抓到的 P0 级缺陷：`INSERT INTO t () VALUES ()` 被自己的守卫拦死**
+  - 现象：文本正确、单测全绿、UI 预演正常显示 —— 但真机执行时报「无法判定该写语句是否安全，已阻止执行（解析失败）」。
+  - 根因：`node-sql-parser` 对「全默认值插入」的**三种合法 MySQL 写法全部解析失败** ——
+    `INSERT INTO t () VALUES ()` ✗、`INSERT INTO t VALUES ()` ✗、`INSERT INTO t (c) VALUES (DEFAULT)` ✗。
+    也就是说这不是「生成的 SQL 有问题」，而是守卫的解析器覆盖不到这条合法语法。
+  - 修复（`core-sql-guard`）：**解析前的窄改写**（`normalizeBlankInsert`），只匹配「列清单为空 且 VALUES 全是空元组」的唯一形状，改写成 `(__dbstudio_blank_col__) VALUES (NULL)` 送进 astify ——
+    **不是白名单放行**，AST 路径（类型白名单、多语句逐条判）照样生效。任何带值/带表达式的写法不匹配 → 照旧 fail-closed。
+  - 与既有 `SET NAMES` 前置放行的区别：后者直接文本放行（失去 AST 覆盖）；这里保留 AST，只把解析器不认识的形态翻译成它认识的同义形态。
+- **验收**
+  - 单测：`core-mutation` 59/59（含 T19 buildBlankRowPlan 7 条 + INSERT 空列表 3 条 + NOT NULL 预演 2 条）；`core-sql-guard` **64/64**（新增 7 条，其中 5 条在「去掉改写」时变红，2 条负向对照两种状态下都必须绿）。
+  - `e2e:ui` **246/246**（新增 12 条）：工具栏/右键入口可达、`dirty 0 → 6 → 12`（连点两次落在不同行）、预演逐列点名 `order_no/user_id/created_at`、可空列 `remark` 不被误伤、**被拒的行不生成任何 INSERT**。
+  - `e2e:app` **60/60**（新增 10 条，临时库加 `blank_pure` 靶子）：真 meta 下核对 `auto-skip=[id] / defaulted=[status] / nulled=[note,ts] / needsInput=[amount,score,big_no]`；空白行生成的 SQL 文本**真的送到 MySQL 执行成功**，回读 `status='new' AND n=0` 命中 1 行、`IS NULL` 命中 0 行（两条一起判，避免空表上的空洞为真）。
+- **文档**：本段 + 总表状态。
 
 #### T20 行号右键
 
@@ -796,8 +933,99 @@ R11（打开源表丢上下文 + 文案误导）、R12（完整值传原值易�
 
 ---
 
-## 八、变更记录
+## 八、交付证据（2026-10-18 门禁记录）
+
+> 全部门禁命令的**真实输出**，退出码为准；不要用「看日志像是过了」代替 exit code。
+
+**基线：`npm run verify` → ✅ `VERIFY_EXIT=0`（`/tmp/verify3.log`，真库 fixture `dbstudio-mysql` health=healthy）**
+
+| 门禁 | 结果 | 关键数字 |
+|---|---|---|
+| `npm run typecheck` | ✅ exit 0 | core + renderer 两端 0 错误 |
+| `gen:actions -- --check` | ✅ 通过 | 动作文档与代码无漂移 |
+| `npm test` | ✅ exit 0 | **80 文件 / 2200 用例全过** |
+| `npm run check:bundle` | ✅ exit 0 | **9/9**；首屏 **538.0 KB** / 1465 KB；CodeMirror 首屏 0 字节；编辑器 lazy 133.4 KB / 150 KB gzip；功能弹窗 57.3 KB / 60 KB |
+| `e2e`（真库冒烟） | ✅ 74/74 | 809ms |
+| `e2e:transfer` | ✅ exit 0 | 导出/导入 + SSH 失败路径 |
+| `e2e:ssh` | ✅ 18/18 | 真 ssh2 隧道 |
+| `e2e:grid` | ✅ exit 0 | 10 万行首屏解码 0.111ms / 底部 0.016ms |
+| `e2e:idle` | ✅ 16/16 | idle=3000ms，6301ms |
+| `e2e:idle:ui` | ✅ 4/4 | 空闲断开后界面状态 |
+| `e2e:ui` | ✅ **372/372** | 含新增 T36/T37/T38/T46（紧凑模式 7 条）/T47/T49 断言 |
+| `e2e:script:data` | ✅ 10/10 | 50000 行完整落库、affectedRows 一致 |
+| `e2e:conflict` | ✅ 17/17 | 并发冲突/回滚/CLIENT_FOUND_ROWS |
+| `e2e:script:ui` | ✅ 18/18 | 脚本 UI + DATETIME(6) 微秒保真 |
+| `e2e:app` | ✅ **60/60** | 打包链路 IPC/列式载荷/只读拦截（T30 的验收面） |
+| `e2e:keys` | ✅ **47/47** | 键盘矩阵；K9.6 在「更多菜单」里定位导入入口 |
+| `npm run dist:dir` | ✅ exit 0 | 0.7.0 / 443MB / ad-hoc 签名有效 / `app-update.yml` 已写入 |
+| `npm run verify:installed`（22 项） | ✅ **22/22** | 2026-10-19 补跑：installed=0.7.0 declared=0.7.0；真库握手 8.0.46/38ms；中文逐键输入、拖栏、SQL 执行、收尾删除全过 |
+| `npm run verify:traffic-lights`（6 项） | ✅ **6/6** | 2026-10-19 补跑：三灯 @ y=21、间距 23.0、右缘 76 ≤ 安全区 78 |
+
+> 补跑时踩到两个**与版本无关**的阻塞，记在这里免得下次重蹈：
+> ① 屏幕锁定（`CGSSessionScreenIsLocked=True`）时 GUI 建不出窗口 → CDP 探活挂死；
+> ② 应用已有一个实例在跑时，脚本 spawn 的新实例撞**单实例锁立刻 `code=0` 退出**，
+>    CDP 永远连不上（表现为「应用没起来」，实际是它自己退了）。先
+>    `pgrep -f "MacOS/DB Studio"` 清干净再跑。
+> ③ 同批修掉了 `verify-installed.mjs` 里两处**过期文案选择器**（`/^▶ 执行 ⌘R$/`，
+>    T29 已改文案）→ 换成语义钩子 `[data-testid="sql-run-all"]`。
+
+### 交付物清单（任务 → 代码/断言落点）
+
+| 任务 | 主要落点 | 断言/证据 |
+|---|---|---|
+| T20 行号右键 | `grid/DataGrid.tsx`（行号菜单） | `e2e:ui` T20 组 |
+| T21 预演摘要 | `grid/SavePreviewModal.tsx`（`change-row` 四属性） | `e2e:ui` T21 组 |
+| T22/T23 复制菜单 / IN 清单 | `grid/CellContextMenu.tsx`、`core-clipboard` | `e2e:ui` T22/T23 组 + core-clipboard 单测 |
+| T24 列头快筛 | `grid/FilterBar.tsx`、`grid/filterBarModel.ts`、`headerFilterBridge.ts` | `e2e:ui` T24 组；`core-filter` 新增占位条件断言 |
+| T25 单元格右键四动作 | `grid/CellContextMenu.tsx`、`editors/valueEditorModel.ts` | `e2e:ui` T25 组 |
+| T26 条件条 | `grid/FilterBar.tsx`（`planFilterChips`/`planBarStatus`） | `filterBarModel.test.ts` + T24 徽标断言 |
+| T27 标签右键 | `workspace/TabContextMenu.tsx`、`tabContextMenuModel.ts` | `tabContextMenuModel.test.ts` |
+| T28/T29 SQL 右键 / 执行对象提示 | `editor/sqlEditorMenuModel.ts`、`SqlEditorPanel.tsx` | `e2e:ui` T28/T29 组 |
+| T30 批删逐对象 | `App.tsx`（批量删除结果逐对象报告） | ⛔ 真库门禁未跑（需 Docker） |
+| T31–T35 值查看与编辑 | `detail/CellValueModal.tsx`、`ImageViewer.tsx`、`JsonTreeView.tsx`、`imageProbe.ts`、`jsonTreeModel.ts` | `imageProbe.test.ts`（按像素值）、`jsonTreeModel.test.ts`、`cellValueSource.test.ts` |
+| T36 ENUM 编辑器 | `grid/editors/EnumCellEditor.tsx`（`ce-enum-select`） | `e2e:ui` T36 组 7 条 + `valueEditorModel.test.ts` |
+| T37 日期时间编辑器 | `grid/editors/DateTimeCellEditor.tsx` + `DataGrid` 的 `ce-cell-dt-toggle` | `e2e:ui` T37 组 5 条（微秒逐字相等） |
+| T38 undo/redo | `grid/editHistory.ts`、`App.tsx`（`editHistoryRef`）、`DataGrid.editingRef` | `editHistory.test.ts` 9 条 + `e2e:ui` T38 组（一次撤销归零） |
+| T39 打开源表 | `editor/resultCell.ts`、`SqlEditorPanel.tsx`（`sql-open-editable`）、`App.openTableTabInner` | `resultCell.test.ts` 4 条 + `e2e:ui` T49-5 |
+| T40 导出范围 | `transfer/exportScope.ts`、`ExportModal.tsx` | `exportScope.test.ts` 28 条 |
+| T41 SQL 文件 | `editor/sqlFileDoc.ts` + `src/main/sql-file.ts` | `sqlFileDoc.test.ts`、`sql-file.test.ts` |
+| T42 结果标签 | `editor/resultTabs.ts` | `resultTabs.test.ts` |
+| T43 视图记忆 | `workspace/tableViewMemory.ts` | `tableViewMemory.test.ts` 6 条 |
+| T44 结果预算 | `src/main/result-budget.ts` + `session-registry` 截断 | `result-budget.test.ts` 7 条 + `scripts/bench-result-memory.mjs` 实测 |
+| T45 更新四态 | `src/main/updater.ts`（`unconfigured/failed/update/latest` + `offerManualDownload`） | `updater.test.ts` 12 条 |
+| T46/T47 工具栏与状态 | `workspace/identity.ts`、`grid/gridStates.ts`、`GridStateBlock.tsx` | `identity.test.ts` 14 条、`gridStates.test.ts` 13 条 + `e2e:ui` T46/T47 组 |
+| T48/T50/T51 文档 | `docs/engineering/T48-…`、`docs/engineering/T50-…`、`docs/research/T51-…` | 文档交付（清单化，逐项可核对） |
+| T49 组合回归 | `scripts/e2e-ui.mjs` T49 组（组合 1/3/5 进 e2e；2/4/6 归专项门禁） | `e2e:ui` T49 组 8 条断言 |
+
+### 本轮修掉的真实缺陷（都有能失败的证据）
+
+| 缺陷 | 现象 | 根因 | 证据 |
+|---|---|---|---|
+| T38 一次编辑进两次撤销栈 | 改一格后按一次 ⌘Z，脏格还在（要按两次） | Enter 提交后 `viewport.focus()` 触发 blur，`onBlur` 闭包里的 `editing` 还是旧值 → 二次提交；第二条 entry 把 `before` 覆盖成「已是草稿的值」 | e2e T38「撤销后脏格归零」；修法：`editingRef` 同步镜像拦重入 |
+| T24 条件条永久挂一条「未填完」 | 快筛应用后条件条上多一条不进 WHERE 的空条件 | `onQuickFilter` 用 `emptyFilter()` 当 base，把编辑器占位行（column 为空）当成真条件写进 `tab.filter` | e2e T24；core-filter 新增 `blankFilter()`/`stripPlaceholderConditions()` + 3 条断言 |
+| 清空筛选后仍留占位条件 | 「清空全部筛选」后条件条仍显示一条 | `handleClearFilter` 同样用了 `emptyFilter()` | 同上（TablePane 改 `blankFilter()`） |
+| demo `connList` 复用同一引用 | 切只读后界面状态不变（假红/假绿） | `setConnections(同一数组)` 被 React 判为未变；useMemo 依赖引用不变 → 旧映射 | e2e T49-3；修法：demo 每次返回新对象，与真 IPC 同形 |
+| JPEG SOF 偏移错位 | 640×480 图片解出 32769×… | SOF 段内高度/宽度偏移算错 | `imageProbe.test.ts` 按像素值断言 |
+| 应用内「检查更新」永远不可用（T45 的真实缺口） | 无论有没有新版本，只能得到「未配置」 | 三重缺失：① `electron-builder.yml` 没有 `publish:` → 产物无 `app-update.yml`；② `--dir` 目标本来就不写这个文件，而本机安装用的正是 dir 产物；③ `electron-updater` 及 16 个运行时依赖没进 `extraResources` | `pack-dir.mjs` 在**重签之前**写 yml 并自检 provider；`require.resolve('electron-updater')` 在 asar 内解析到 `Resources/node_modules/electron-updater/out/main.js`（实测） |
+| e2e:app 用过期文案断言 | `isDisabled()` 等 30s 超时，现场只有 `disabled=null` | T29 把按钮文案从「▶ 执行 ⌘R」改成「执行全部」，测试仍用 `/^▶ 执行 ⌘R$/` 精确匹配 | 改为 `data-testid="sql-run-all"`，并把「找不到元素」与「没禁用」分开报（`found=1 disabled=true`） |
+| T46 紧凑模式**从未被执行** | 折叠分支改坏了也不会红 | e2e-ui 窗口固定 1440 → `density` 恒为 `full`，`{density==='compact' ? … : null}` 一段没有门禁；唯一撞到它的是 e2e:keys（当场超时） | `e2e:ui` 新增 7 条：窄至 760px → compact、低频项离开主栏但「更多」里齐全、保存/筛选不折叠、恢复宽度后回 full |
+
+### 仍待人工/环境确认（不写成「已验证」）
+
+1. ~~`verify:installed`（22 项）+ `verify:traffic-lights`（6 项）~~ —— **2026-10-19 已补跑并全绿**（22/22、6/6）。
+   当时的阻塞是屏幕锁定（`CGSSessionScreenIsLocked=True`），已用 `.prev-installed-0.6.1.app` 交叉验证与本版改动无关。
+2. 拖窗手感、双击铺满体感、脚本提速真机复核（真机体感，脚本替代不了）。
+3. GitHub Release 发布：资产需同时上传 `latest-mac.yml`，否则应用内更新检查会如实报 `failed`
+   （不再谎报「已是最新」）；`dist` 走的 dmg 产物才会生成该文件。
+
+---
+
+## 九、变更记录
 
 | 日期 | 变更 | 说明 |
 |---|---|---|
 | 2026-10-13 | 创建 | 依据 `research/项目全景与竞品深度调研-2026-10-12.md` 建立 0.7.0 任务清单：1 个版本大任务 + 52 个原子子任务；同步写入项目事项系统 |
+| 2026-10-13 | **T01 完成** | 任务总表新增「状态」列。T01（I01/R01 重载前保护未提交改动）已实现并通过全链门禁：typecheck ✅ / `npm test` 1645✅ / `check:bundle` 9/9✅ / `npm run verify` 全链（e2e:ui **234/234**，含新增 8 条 T01 断言；e2e:app 45/45）。⚠️ 修复后 `e2e-ui.mjs` 原「排序三态」断言立即变红——它们是在「脏格已被静默丢掉」的状态下写的，对 R01 无证伪能力；已在脚本中补 T01 专属断言与显式清脏步骤。详见 `devlog/DEV-PROGRESS-2026-10-13.md`。**改动未 commit** |
+| 2026-10-17 | **T20–T51 批量交付** | 除 T30（需真库）与 T52（需环境）外的 50 条子任务全部落地并过门禁：typecheck 0 ✅ / 单测 2200 ✅ / check:bundle 9/9 ✅ / e2e:ui 365/365 ✅。累计修掉 5 个真实缺陷（含 T38 双重提交、T24 占位条件泄漏、demo 引用复用），新增纯逻辑模块 identity / gridStates / editHistory / tableViewMemory / result-budget / exportScope / updater 四态 + core-filter `blankFilter`/`stripPlaceholderConditions`。详见文末「八、交付证据」。**改动未 commit** |
+| 2026-10-18 | **真库全链 + T30 验收 + T52 收尾** | 起 `dbstudio-mysql` fixture（health=healthy）后 `npm run verify` **exit 0**：16 道门禁全过（单测 2200 / e2e 74 / e2e:ui 372 / e2e:app 60 / e2e:keys 47 …）。verify 过程中又抓到 2 个真问题：① `e2e:app` 用过期文案断言（T29 改文案后失配）→ 改语义钩子；② T46 紧凑模式**从未被任何门禁执行过** → e2e:ui 补 7 条（缩到 760px 验折叠与「更多」可达）。同时补齐 T45 的真实缺口：`publish:` 段 + `pack-dir.mjs` 在重签前写 `app-update.yml` + `electron-updater` 16 个依赖进 `extraResources`（已验证 asar 内可解析）。版本号升 **0.7.0**、出包（443MB，签名有效）、覆盖安装（旧包备份 `.prev-installed-0.6.1.app`）、`docs/RELEASES.md` 追加条目。**唯一未完成**：`verify:installed` / `verify:traffic-lights` 需解锁屏幕（锁屏时 GUI 建不出窗口，已用 0.6.1 旧包交叉验证与本版无关）。**改动未 commit** |
+| 2026-10-19 | **两项挂起门禁补跑全绿 + 文档同步 + 发版** | `verify:installed` **22/22**、`verify:traffic-lights` **6/6**。补跑时先踩到两个「不是版本问题」的坑并已写进文档：① 锁屏（`CGSSessionScreenIsLocked=True`）下 GUI 建不出窗口；② **已有实例在跑时新实例撞单实例锁立刻 `code=0` 退出**，表现为「应用没起来」。同批修掉 `verify-installed.mjs` 两处过期文案选择器（`/^▶ 执行 ⌘R$/` → `[data-testid="sql-run-all"]`）。同步更新根 `README.md`（版本徽章 / 门禁基线 / 0.7.0 特性 / 更新通道打包要点）、`docs/README.md`（索引补 T13/T48/T50/T51、REQ 状态改 52/52）、`docs/RELEASES.md`。**52/52 收敛，GitHub Release 已发** |

@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { IconAlert } from '../ui/icons';
+import { isImeComposing } from '../ui/imeGuard';
 
 export interface DangerConfirmRequest {
   /** 弹窗标题 */
@@ -42,6 +43,22 @@ export function DangerConfirmModal({ request, onResolve }: DangerConfirmModalPro
   useEffect(() => {
     if (isProduction) inputRef.current?.focus();
   }, [isProduction]);
+
+  /**
+   * 🔴 T18 / 报告 §4.5：Esc 关闭。
+   *
+   * 原来 Esc 只挂在**生产模式的输入框**上 ⇒ 普通（非生产）确认框按 Esc
+   * **关不掉**，只能点「取消」或点遮罩 —— 而危险确认框恰恰是最需要能一键退出的地方。
+   * 现在统一挂到 window（与其它弹窗同口径）；输入框那条只留 Enter 确认。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (isImeComposing(e)) return;
+      if (e.key === 'Escape') onResolve(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onResolve]);
 
   const match = useMemo(
     () => !isProduction || input.trim() === request.requireText,
@@ -81,8 +98,10 @@ export function DangerConfirmModal({ request, onResolve }: DangerConfirmModalPro
                 placeholder={request.requireText ?? ''}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
+                  // T13：危险确认框尤其不能把「确认候选词」当成「确认执行」
+                  if (isImeComposing(e)) return;
+                  // Esc 由上面的 window 监听统一处理（避免输入框内触发两次）
                   if (e.key === 'Enter' && match) confirm();
-                  if (e.key === 'Escape') onResolve(false);
                 }}
                 data-testid="danger-confirm-input"
               />

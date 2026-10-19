@@ -14,6 +14,7 @@
 
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions } from 'electron';
 import { EVENT_MENU_COMMAND } from '../shared/ipc-channels.js';
+import { labelOf, acceleratorOf } from '../shared/action-catalog.js';
 
 /**
  * 菜单命令枚举 —— 主进程 → 渲染层的全部菜单动作。
@@ -24,13 +25,16 @@ export const MENU_COMMANDS = [
   'new-connection',
   'new-query',
   'close-tab',
-  // 视图
-  'open-palette',
+  // 数据（T15：从「视图」移出的改数据/看数据动作）
   'save',
   'filter',
   'export',
   'import',
   'design-table',
+  // T19：新增空白行（grid-add-row 复用目录里的标签与 ⌥⌘N）
+  'grid-add-row',
+  // 视图（只剩外观与面板）
+  'open-palette',
   'refresh-schema',
   'font-zoom-in',
   'font-zoom-out',
@@ -61,9 +65,19 @@ export interface MenuTemplateInput {
 /**
  * 构建菜单模板（纯函数，macOS 规范结构：应用/文件/编辑/视图/窗口）。
  * 角色项（编辑/窗口的基础动作）直接用 role —— 系统接管行为与本地化文案。
+ *
+ * 🔴 T11/T12：标签与加速键**一律从 action-catalog 取**（`labelOf` / `acceleratorOf`）。
+ *    这份菜单曾经自带一套文案 + 键位，与渲染层局部 keydown 各写一遍，
+ *    于是 ⌘R / ⇧⌘E / ⌘0 三处同键异义（报告 §4.2）。现在键位只有一处定义。
  */
 export function buildMenuTemplate(input: MenuTemplateInput): MenuItemConstructorOptions[] {
   const { appName, send, showAbout } = input;
+  /** 从目录取标签+键位（键位为 null 的项不带 accelerator） */
+  const item = (cmd: MenuCommand): MenuItemConstructorOptions => {
+    const acc = acceleratorOf(cmd);
+    return { label: labelOf(cmd), ...(acc ? { accelerator: acc } : {}), click: () => send(cmd) };
+  };
+
   return [
     {
       // ---- 应用菜单（macOS 第一个菜单，label 由系统接管） ----
@@ -72,10 +86,10 @@ export function buildMenuTemplate(input: MenuTemplateInput): MenuItemConstructor
         { label: '关于 DB Studio', click: () => showAbout() },
         { type: 'separator' },
         // V5：macOS 惯例 —— 应用菜单里的「偏好设置…」（⌘,）
-        { label: '偏好设置…', accelerator: 'CmdOrCtrl+,', click: () => send('open-preferences') },
+        item('open-preferences'),
         { type: 'separator' },
-        // V21：检查更新。加速键不给 —— 低频动作不该占全局键位。
-        { label: '检查更新…', click: () => send('check-update') },
+        // V21：检查更新。目录里标了 accelerator: null —— 低频动作不该占全局键位。
+        item('check-update'),
         { type: 'separator' },
         { role: 'hide' },
         { role: 'hideOthers' },
@@ -88,10 +102,10 @@ export function buildMenuTemplate(input: MenuTemplateInput): MenuItemConstructor
       // ---- 文件 ----
       label: '文件',
       submenu: [
-        { label: '新建连接…', accelerator: 'CmdOrCtrl+N', click: () => send('new-connection') },
-        { label: '新建查询标签', accelerator: 'CmdOrCtrl+T', click: () => send('new-query') },
+        item('new-connection'),
+        item('new-query'),
         { type: 'separator' },
-        { label: '关闭标签', accelerator: 'CmdOrCtrl+W', click: () => send('close-tab') },
+        item('close-tab'),
       ],
     },
     {
@@ -108,22 +122,47 @@ export function buildMenuTemplate(input: MenuTemplateInput): MenuItemConstructor
       ],
     },
     {
-      // ---- 视图 ----
+      /**
+       * ---- 数据 ----
+       *
+       * 🔴 T15（报告 §4.1）：`保存 / 筛选 / 导出 / 导入 / 设计表` 原本混在**视图**菜单里
+       * —— 它们是**改数据或看数据**的动作，与「字体缩放 / 切换主题」不是一类。
+       * 视图菜单里放着「导入数据…」，用户找它时第一反应是去看「文件」或「数据」。
+       *
+       * 约束（报告同段）：**不为了像 Navicat 而一次增加很多顶层菜单**。
+       * 所以只新增这一个「数据」，且视图菜单同步瘦身 —— 顶层菜单总数不变。
+       * 每个动作的四个维度（目标对象 / 是否可用 / 是否只改本地草稿 / 是否需 SQL 确认）
+       * 由 `action-catalog` 单处维护。
+       */
+      label: '数据',
+      submenu: [
+        // 保存是唯一「把草稿变成写库」的入口，永远排第一且单独成组
+        item('save'),
+        { type: 'separator' },
+        // T19：新增空白行（与筛选/导入同组 —— 都是「往表里加东西」的方向）
+        item('grid-add-row'),
+        item('filter'),
+        { type: 'separator' },
+        // 导入（写）与导出（读）方向相反，分开放，避免误点
+        item('import'),
+        item('export'),
+        { type: 'separator' },
+        item('design-table'),
+      ],
+    },
+    {
+      // ---- 视图（只剩「外观 / 面板」，不再混数据动作） ----
       label: '视图',
       submenu: [
-        { label: '命令面板…', accelerator: 'CmdOrCtrl+K', click: () => send('open-palette') },
-        { label: '保存修改…', accelerator: 'CmdOrCtrl+S', click: () => send('save') },
-        { label: '筛选…', accelerator: 'Shift+CmdOrCtrl+F', click: () => send('filter') },
-        { label: '导出数据…', accelerator: 'Shift+CmdOrCtrl+E', click: () => send('export') },
-        { label: '导入数据…', accelerator: 'Shift+CmdOrCtrl+I', click: () => send('import') },
-        { label: '设计表…', accelerator: 'Shift+CmdOrCtrl+D', click: () => send('design-table') },
-        { label: '刷新表结构', accelerator: 'CmdOrCtrl+R', click: () => send('refresh-schema') },
+        item('open-palette'),
+        // 🔴 ⌘R 已归 SQL「执行全部」；刷新结构改用 ⇧⌘R（见 action-catalog 的裁定说明）
+        item('refresh-schema'),
         { type: 'separator' },
-        { label: '字体放大', accelerator: 'CmdOrCtrl+=', click: () => send('font-zoom-in') },
-        { label: '字体缩小', accelerator: 'CmdOrCtrl+-', click: () => send('font-zoom-out') },
-        { label: '重置字体', accelerator: 'CmdOrCtrl+0', click: () => send('font-zoom-reset') },
+        item('font-zoom-in'),
+        item('font-zoom-out'),
+        item('font-zoom-reset'),
         { type: 'separator' },
-        { label: '切换主题', click: () => send('toggle-theme') },
+        item('toggle-theme'),
       ],
     },
     {
@@ -135,12 +174,12 @@ export function buildMenuTemplate(input: MenuTemplateInput): MenuItemConstructor
         { type: 'separator' },
         // V23：把当前标签在新窗口打开（对照查看两张表/两个库）。
         // ⚠️ 用 ⌘⇧N 而不是 ⌘N —— 后者已归「新建连接」，且 macOS 惯例 ⌘N 是新建。
-        { label: '在新窗口打开当前表', accelerator: 'Shift+CmdOrCtrl+N', click: () => send('open-in-new-window') },
+        item('open-in-new-window'),
         { type: 'separator' },
         { role: 'front' },
         { type: 'separator' },
-        { label: '下一个标签', accelerator: 'Ctrl+Tab', click: () => send('next-tab') },
-        { label: '上一个标签', accelerator: 'Ctrl+Shift+Tab', click: () => send('prev-tab') },
+        item('next-tab'),
+        item('prev-tab'),
       ],
     },
   ];

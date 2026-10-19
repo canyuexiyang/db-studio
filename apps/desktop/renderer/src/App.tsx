@@ -16,6 +16,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense, memo } from 'react';
 import { GridDataSource } from './grid/useGridData';
 import { SavePreviewModal } from './grid/SavePreviewModal';
+import { ColumnarReader, type CellValue } from '@dbstudio/core-ipc-codec';
+import { buildRowProbeSql } from './grid/conflictProbe';
+import type { ConflictView, ProbeOutcome } from './grid/SaveConflictModal';
 import { TreeView } from './tree/TreeView';
 import { CommandPalette } from './palette/CommandPalette';
 import { DetailPanel } from './detail/DetailPanel';
@@ -30,9 +33,12 @@ import type { GridForeignKey } from './grid/DataGrid';
 import { ColumnQuickFinder } from './grid/ColumnQuickFinder';
 // V7 目标库选择：组件很小，静态引入（避免弹窗加载间隙布局塌陷，不进 lazy）
 import { ScriptDbPicker } from './transfer/ScriptDbPicker';
-import { buildTree, buildColumnIndex, emptyMemory, saveExpansion, restoreExpansion, type TreeNode } from '@dbstudio/core-tree-view';
+// T27：expandAncestors 用于「标签右键 → 在树中定位」（组节点 key 含成员 id 集合，拼不出来，必须走真实树）
+import { buildTree, buildColumnIndex, expandAncestors, emptyMemory, saveExpansion, restoreExpansion, type TreeNode } from '@dbstudio/core-tree-view';
 import {
   emptyFilter,
+  blankFilter,
+  stripPlaceholderConditions,
   filterableColumns,
   toOpenTableFilter,
   effectiveConditionCount,
@@ -43,12 +49,14 @@ import {
 } from '@dbstudio/core-filter';
 import {
   buildMutationPlan,
+  buildBlankRowPlan,
   buildDuplicateRowPlan,
   isEditable,
   locateColumns,
   locateStrategy,
   validateSqlExpression,
   type EditWithLocate,
+  type ChangeSummary,
 } from '@dbstudio/core-mutation';
 import { applySort, applySortDirection, type RowHeightMode, type SortDirection, type SortSpec } from '@dbstudio/core-grid-view';
 import { planPasteFromText } from '@dbstudio/core-clipboard';
@@ -67,16 +75,25 @@ import {
   IconPlug, IconPower, IconGear, IconX as IconXSmall, IconTable, IconFileCode,
 } from './ui/icons';
 import { TreeContextMenu, type TreeContextMenuState, type ContextMenuItem } from './tree/TreeContextMenu';
+import { resolveEditability } from './workspace/editability';
+// T46：身份条与工具栏密度 / T47：行数口径（两者都是纯函数，单测钉住）
+import { isCollapsed, resolveIdentity, saveButton, toolbarDensity } from './workspace/identity';
+import { rowCountBasis } from './grid/gridStates';
+// T38：未保存改动的撤销栈（纯逻辑，单测在 grid/editHistory.test.ts）
+import { EditHistory, applyMetaTo, clearsFor, statesFor, type CellChange, type EditEntry } from './grid/editHistory';
+// T43：表视图记忆（排序 + 筛选，按 连接:库:表）
+import { loadTableView, saveTableView } from './workspace/tableViewMemory';
 // R1 集成：应用壳（F1 菜单/F2 缩放/F4 会话恢复/F7 空态/D1 断线横幅）
 import { EmptyState } from './workspace/EmptyState';
 import { ObjectBrowser } from './workspace/ObjectBrowser';
 import { ConnStateBanner } from './workspace/ConnStateBanner';
 import { nextZoom, loadFontZoom, saveFontZoom, applyFontZoom } from './workspace/fontZoom';
+import { snippetActionOf, snippetCommandId, snippetOriginLabel, findSnippetByAction } from './workspace/snippetCommand';
 import { serializeSession, loadSessionSnapshot, saveSessionSnapshot, clearSessionSnapshot } from './workspace/sessionSnapshot';
 // R1 集成：树 UX（C5 收藏加权 ⌘K / C2 查看定义）
 import { loadFavorites } from './tree/favorites';
 import type { ShowDefinitionRequest } from './tree/TreeView';
-
+import { isImeComposing } from './ui/imeGuard';
 /**
  * 从树节点 key 解析查询上下文（连接 + 库）。
  * `db:<connId>:<db>` / `kind:<connId>:<db>:<kind>` / `obj:<connId>:<db>:<table>`
@@ -158,6 +175,23 @@ const DangerConfirmModal = lazy(() =>
   import('./danger/DangerConfirmModal').then((m) => ({ default: m.DangerConfirmModal })),
 );
 import type { DangerConfirmRequest } from './danger/DangerConfirmModal';
+
+/**
+ * T01 / R01：重载前未提交改动守卫。
+ * 与 DangerConfirmModal 同策略 lazy —— 只有「带着脏格去排序/筛选/刷新」才出现，
+ * 绝不能为它付首屏字节；外壳样式复用 .modal-mask/.modal，首屏已就位（红线 9）。
+ */
+const DirtyReloadModal = lazy(() =>
+  import('./grid/DirtyReloadModal').then((m) => ({ default: m.DirtyReloadModal })),
+);
+import type { DirtyGuardDecision } from './grid/DirtyReloadModal';
+
+/**
+ * T09 / R15：提交冲突处理弹窗。同样 lazy —— 只在真的撞上并发冲突时才出现。
+ */
+const SaveConflictModal = lazy(() =>
+  import('./grid/SaveConflictModal').then((m) => ({ default: m.SaveConflictModal })),
+);
 
 /**
  * V5 偏好设置面板同样 lazy：macOS ⌘, 是低频动作，绝大多数会话用不到。
@@ -262,14 +296,16 @@ function historyEntryToItem(e: HistoryEntry): HistoryPaletteItem {
   };
 }
 
-function snippetToCommand(s: Snippet): CommandDef {
+function snippetToCommand(s: Snippet, connName?: string): CommandDef {
   return {
-    id: `snip:${s.name}`,
-    action: `snippet:${s.name}`,
+    // T04/R06：id/action 带 (connectionId, database, name) 完整身份 —— 只带 name
+    // 会让两个库里的同名片段在命令面板里互相顶替（应用时命中列表第一个）。
+    id: snippetCommandId(s),
+    action: snippetActionOf(s),
     title: s.name,
-    subtitle: s.description ?? 'SQL 片段 — 回车插入到当前查询标签',
+    subtitle: snippetOriginLabel(s, connName),
     badge: '片段',
-    keywords: ['snippet', '片段', s.name],
+    keywords: ['snippet', '片段', s.name, s.database].filter(Boolean),
   };
 }
 
@@ -470,9 +506,57 @@ export function App() {
   const [preview, setPreview] = useState<{
     tabId: string;
     source: GridDataSource;
-    statements: { sql: string; params: unknown[]; description?: string; hasSqlExpr?: boolean }[];
+    statements: {
+      sql: string;
+      params: unknown[];
+      description?: string;
+      hasSqlExpr?: boolean;
+      /** T08：逐行 DML 必须恰好影响 1 行；DDL/批量用 'any' */
+      expect?: 'one' | 'any';
+      kind?: 'insert' | 'update' | 'delete';
+      /** T09：行身份 + 定位键（冲突后按它回查库中现值做对比） */
+      rowId?: string | null;
+      locateColumns?: string[];
+      locateValues?: unknown[];
+      /** T09：该语句涉及的列「原值 / 待提交值」 */
+      pending?: { column: string; original: unknown; next: unknown }[];
+      /** T21：该语句的「旧值→新值」摘要（对象/行定位/字段/改前改后） */
+      summary?: ChangeSummary;
+    }[];
     rejected: { row: number; column: string; reason: string }[];
   } | null>(null);
+  /**
+   * T09/R15：提交冲突状态。
+   *
+   * 与 preview 分开：preview 关了之后冲突弹窗才出现（提交已发出、结果已回）。
+   * 草稿在此状态下**不清**，由用户决定核对还是放弃。
+   */
+  const [saveConflict, setSaveConflict] = useState<{
+    tabId: string;
+    connId: string;
+    database: string;
+    source: GridDataSource;
+    conflicts: ConflictView[];
+    totalStatements: number;
+    pendingCount: number;
+  } | null>(null);
+  /**
+   * T01 / R01：重载守卫的弹窗状态 + promise 桥。
+   *
+   * 为什么用 ref 存 resolve：守卫发生在 `loadTable` 内部（唯一数据拉取通道），
+   * 而弹窗是 React 渲染 —— 只有把 resolve 挂到 ref，异步的 loadTable 才能
+   * 「await 用户点哪个按钮」。同一时刻最多一个守卫（重载是串行的）。
+   */
+  const [dirtyGuard, setDirtyGuard] = useState<{ tabId: string; title: string; count: number } | null>(null);
+  const dirtyGuardResolveRef = useRef<((d: DirtyGuardDecision) => void) | null>(null);
+  /**
+   * 乐观写入的回滚闭包。
+   *
+   * 排序 / 快速筛选 / 加载更多 都是「先 patch 状态、再由 effect 触发重拉」，
+   * 取消重载时必须把这次的乐观写入撤回，否则列头箭头变了、数据却没重排
+   * ——那是一个比原来的丢数据更难察觉的假状态。
+   */
+  const dirtyGuardRollbackRef = useRef<{ tabId: string; run: () => void } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   /** F5：激活 tab 网格的选中统计（状态栏显示「选中 N 行 / M 格」） */
@@ -547,6 +631,14 @@ export function App() {
     if (fn) injectorsRef.current.set(key, fn);
     else injectorsRef.current.delete(key);
   }, []);
+
+  /**
+   * T12 / I04：⌘S 在查询标签下的去向 —— 向该标签投递「保存为片段」信号。
+   *
+   * 只装一个 `{ tabId, n }`：同一时刻只可能有一个激活查询标签，用 Map 是过度设计。
+   * `n` 递增保证连按 ⌘S 每次都能开窗（数值相等时 React 不重渲染，面板也不会重开门）。
+   */
+  const [snippetReq, setSnippetReq] = useState<{ tabId: string; n: number } | null>(null);
   /**
    * 重渲染触发器。
    *
@@ -623,9 +715,20 @@ export function App() {
    * 缺陷 5：单元格完整值弹窗（原详情面板第三块搬过来的能力）。
    * null = 关闭。table/database 一并存下来 —— 弹窗要按列类型判定二进制、
    * 拼保存文件名，而这些在关闭前都不该随「用户又点了别的表」而变化。
+   *
+   * T31/T32 新增两个字段：
+   *  - pending：脏格的待提交值（openInspectCell 时刻的快照；无脏格 = undefined）
+   *  - editable：表可写时才给「编辑」入口（SQL 结果网格不传）
    */
   const [cellModal, setCellModal] = useState<
-    (CellSelection & { table: TableMeta | null; database: string | null }) | null
+    (CellSelection & {
+      /** 弹窗来自哪个 tab（onCommitDraft 要按它写脏格） */
+      tabId: string;
+      table: TableMeta | null;
+      database: string | null;
+      pending?: { value: string | null; provided: boolean };
+      editable?: boolean;
+    }) | null
   >(null);
 
   // ---- 筛选器（§6.3.3） ----
@@ -875,6 +978,41 @@ export function App() {
    *    调用方手上都有这些上下文，传进来零成本。
    *    keepSort 时的 sorts 同理：排序重拉拿不到新 tab，必须把 next sorts 传下来。
    */
+  /**
+   * T01 / R01：重载前未提交改动守卫 —— 弹三选一并 await 用户决定。
+   *
+   * 放在 loadTable 之前：守卫要长在 loadTable 内部（唯一数据拉取通道），
+   * 这样排序/筛选/刷新/加载更多/外键跳转以及**将来新增**的入口都自动被覆盖，
+   * 不必逐个改调用点（逐个守卫是漏一处的经典来源）。
+   */
+  const requestDirtyDecision = useCallback(
+    (tabId: string, count: number) =>
+      new Promise<DirtyGuardDecision>((resolve) => {
+        dirtyGuardResolveRef.current = resolve;
+        setDirtyGuard({ tabId, title: ws.getTable(tabId)?.title ?? tabId, count });
+      }),
+    [ws],
+  );
+
+  const onDirtyGuardResolve = useCallback((d: DirtyGuardDecision) => {
+    const resolve = dirtyGuardResolveRef.current;
+    dirtyGuardResolveRef.current = null;
+    setDirtyGuard(null);
+    if (d === 'cancel') {
+      // 取消：把这次入口做的乐观写入撤回（列头箭头 / 筛选徽标 / 行上限）
+      dirtyGuardRollbackRef.current?.run();
+      dirtyGuardRollbackRef.current = null;
+    } else if (d === 'discard') {
+      // 明确放弃 → 乐观写入保留（用户本来就要排序/筛选），无需求回滚
+      dirtyGuardRollbackRef.current = null;
+    }
+    // d === 'save'：回滚闭包**继续挂着** —— 预演被取消时要靠它还原列头/筛选
+    resolve?.(d);
+  }, []);
+
+  /** onRequestSave 的 ref 桥：它定义在 loadTable 之后，直接引用会踩 TDZ */
+  const onRequestSaveRef = useRef<((tabId: string, source: GridDataSource) => void) | null>(null);
+
   const loadTable = useCallback(
     async (
       tabId: string,
@@ -900,6 +1038,34 @@ export function App() {
        * （useCallback 的依赖数组在声明处即求值 → 直接引用会 TDZ 抛错），
        * 而它内部只读 ref 与 setState，是稳定引用，桥接不会造成语义漂移。
        */
+      /**
+       * 🔴 T01 / R01：重载前未提交改动守卫。
+       *
+       * 重载会重建 GridDataSource（`useGridDataSource` 按 payload 缓存），
+       * 而脏单元格 Map 以「行下标:列下标」为键 —— 换 payload 就等于把用户的
+       * 未提交输入连根抹掉，且此前**没有任何提示**（真机复现：输入后点列头排序，
+       * 脏格 1→0、输入消失）。
+       *
+       * 放在 ensureConnection 之前：没必要为了一个会被用户取消的重载先去连库。
+       * 三条出口 —— 先保存（走既有预演链路，确认成功后由 onConfirmSave 重拉）/
+       * 明确放弃（清脏标记后照常重载）/ 取消（本次不重载，调用方回滚乐观写入）。
+       */
+      const guardSource = sourcesRef.current.get(tabId)?.source;
+      if (guardSource && guardSource.dirtyCount > 0) {
+        const decision = await requestDirtyDecision(tabId, guardSource.dirtyCount);
+        if (decision === 'cancel') return null;
+        if (decision === 'save') {
+          onRequestSaveRef.current?.(tabId, guardSource);
+          return null;
+        }
+        // discard：清掉脏标记（含状态栏/标签角标），再按调用方意图继续重载
+        guardSource.clearAll();
+        // T38：草稿已被用户明确放弃 → 撤销栈跟着失效（否则 ⌘Z 会「复活」被丢弃的改动）
+        editHistoryRef.current.get(tabId)?.clear();
+        ws.patchTable(tabId, { dirtyCount: 0 });
+        rerender();
+      }
+
       const ensure = await ensureConnectionRef.current?.(ctx.connId);
       if (ensure === 'need-password') {
         // 没有存储密码 → 弹密码框；输完由 pendingAfterConnectRef 重放本次拉取
@@ -912,7 +1078,7 @@ export function App() {
       if (ensure === 'failed') {
         // 失败原因已由 onConnectNode toast（带原始错误）。这里只把 loading 收掉，
         // 否则标签会永久停在「加载中…」—— 一个转不停的假状态比错误提示更糟。
-        ws.patchTable(tabId, { loading: false });
+        ws.patchTable(tabId, { loading: false, loadError: '连接不可用，无法加载数据（原因见连接提示）' });
         return null;
       }
 
@@ -948,6 +1114,18 @@ export function App() {
           sorts: sortsForQuery,
           filter: f,
           loading: false,
+          // T47：成功即清错 —— 否则「重试成功」后仍挂着上一次的红块
+          loadError: null,
+        });
+        /**
+         * T43：把这次真正生效的排序/筛选记成这张表的视图记忆。
+         * 只记「怎么看」，不记数据；空视图（无排序无筛选）会顺手清掉旧记忆。
+         * 落盘前剔掉「连列都没选」的占位条件 —— 那是编辑器空行，
+         * 存进去下次打开就变成条件条上一条永远「未填完」的假条件。
+         */
+        saveTableView(ctx.connId, ctx.database, ctx.tableName, {
+          sorts: sortsForQuery,
+          filter: stripPlaceholderConditions(f),
         });
         /**
          * V9：把行数返回给调用方。
@@ -957,8 +1135,10 @@ export function App() {
          */
         return out.rowCount;
       } catch (e) {
-        setToast(`打开表失败：${e instanceof Error ? e.message : String(e)}`);
-        ws.patchTable(tabId, { loading: false });
+        const msg = e instanceof Error ? e.message : String(e);
+        setToast(`打开表失败：${msg}`);
+        // T47：错误同时落进 tab 状态 —— 空白区要能说出「查挂了」而不是只说零行
+        ws.patchTable(tabId, { loading: false, loadError: msg });
         return null;
       }
     },
@@ -994,6 +1174,14 @@ export function App() {
       const t = ws.getTable(tabId);
       if (!t) return;
       const next = (rowLimits[tabId] ?? TABLE_PAGE_LIMIT) + TABLE_PAGE_LIMIT;
+      // T01：行上限也是乐观写入，取消重载时要退回上一页的量级
+      if ((sourcesRef.current.get(tabId)?.source.dirtyCount ?? 0) > 0) {
+        const prevLimit = rowLimits[tabId] ?? TABLE_PAGE_LIMIT;
+        dirtyGuardRollbackRef.current = {
+          tabId,
+          run: () => setRowLimits((prev) => ({ ...prev, [tabId]: prevLimit })),
+        };
+      }
       setRowLimits((prev) => ({ ...prev, [tabId]: next }));
       // keepSort + 沿用当前筛选：加载更多是同一批数据的延伸，换条件就不再是"更多"
       await loadTable(
@@ -1005,8 +1193,27 @@ export function App() {
     [ws, rowLimits, loadTable],
   );
 
-  // ---- V19 分组着色：状态归宿主（网格不自持，避免两处真相） ----
-  /** tabId → 分组着色列名；缺省 = 关闭（默认关闭） */
+  /**
+   * T46/T47：「刷新数据」的宿主实现 —— 重跑当前条件（排序 + 筛选）重新拉这一页。
+   *
+   * 🔴 与「刷新结构」（`onRefreshSchemas`）**是两件事**，命名必须分开：
+   *    前者只重查数据、保留 tab 与草稿判定（脏格照旧走 T01 守卫），
+   *    后者重建整棵树的表结构快照。报告 §8.2 明确要求拆开叫法。
+   */
+  const reloadTableData = useCallback(
+    async (tabId: string) => {
+      const t = ws.getTable(tabId);
+      if (!t) return;
+      await loadTable(
+        tabId,
+        { connId: t.connId, database: t.database, tableName: t.tableName, table: t.table },
+        { keepSort: true, sorts: t.sorts, filter: t.filter },
+      );
+    },
+    [ws, loadTable],
+  );
+
+  // ---- V19 分组着色：状态归宿主（网格不自持，避免两处真相） ----  /** tabId → 分组着色列名；缺省 = 关闭（默认关闭） */
   const [groupStripeByTab, setGroupStripeByTab] = useState<Record<string, string>>({});
 
   const toggleGroupStripe = useCallback((tabId: string, col: string | null) => {
@@ -1117,16 +1324,84 @@ export function App() {
 
   /** 树/命令面板打开表：复用既有 tab 或新开（假定会话已可用） */
   const openTableTabInner = useCallback(
-    async (connId: string, database: string, tableName: string) => {
+    async (
+      connId: string,
+      database: string,
+      tableName: string,
+      /**
+       * T39：从查询结果「打开源表」时的**行定位**输入。
+       *
+       * `values` = 结果行里各列的原始字符串（列名 → 值）。这里**只认**该表的
+       * 主键/唯一键列（`locateColumns()` 是唯一判定处）；交集为空时**不做定位**
+       * —— 报告 §10 I18 明确要求「无可靠行定位键时不猜行身份」。
+       */
+      locate?: { column: string; value: string | null }[],
+    ) => {
       try {
         const bundle = await backend.schemaGetTable(connId, database, tableName);
         // 🔴 needsLoad 由 openTable 自己算（setTabs 是异步调度，此刻读
         //    tabsRef 拿不到刚建的 tab —— 首开必空白的根因）
         const { id, needsLoad } = ws.openTable(connId, database, bundle.table);
-        // 复用且有数据 → 保留（切换保留状态是 P0-4 核心）；无数据 → 拉数据
-        if (needsLoad) void loadTable(id, { connId, database, tableName, table: bundle.table });
+
+        let filter: FilterModel | null = null;
+        let locateNote = '';
+        if (locate && locate.length > 0) {
+          const keyCols = locateColumns(bundle.table).map((c) => c.name);
+          const hits = locate.filter((v) => keyCols.includes(v.column));
+          if (keyCols.length === 0) {
+            locateNote = '该表没有主键/唯一键，无法定位到具体行（表格已按无条件下打开）';
+          } else if (hits.length === 0) {
+            locateNote = `结果里没有 ${keyCols.join(' / ')} 这些定位列，未做行定位（不猜行身份）`;
+          } else if (hits.some((h) => h.value === null)) {
+            // NULL 不能进 `=` 比较（SQL 里 NULL = NULL 恒为假）—— 如实说明，不静默丢条件
+            locateNote = '定位列在结果里是 NULL，无法用等值定位该行（表格已按无条件下打开）';
+          } else {
+            filter = {
+              groups: [
+                {
+                  id: 'g-locate',
+                  logic: 'AND',
+                  conditions: hits.map((h, i) => ({
+                    id: `c-locate-${i}`,
+                    column: h.column,
+                    operator: 'eq' as const,
+                    value: h.value as string,
+                  })),
+                },
+              ],
+            };
+            locateNote = `已按 ${hits.map((h) => h.column).join(' + ')} 定位到该行`;
+          }
+        }
+
+        // 复用已有 tab 且已加载，但这次带定位条件 → 仍要按条件重查一次
+        if (needsLoad || filter) {
+          /**
+           * T43：首次打开时恢复这张表的**视图记忆**（排序 + 筛选）。
+           * 键是 conn:db:table —— 两连接同名库表不会互相污染。
+           * 恢复的筛选会在条件条（T26）里列出来，用户能看见「为什么只有几行」。
+           * 本次带定位条件（filter != null）时**以定位为准**，不叠加旧筛选
+           * （叠加会让「打开源表定位那一行」定位不到）。
+           */
+          const memory = needsLoad ? loadTableView(connId, database, tableName) : null;
+          // 旧存档可能带着占位条件（历史版本存进去的），恢复前先剔掉：
+          // 否则条件条一打开就挂一条「未填完」，用户以为表被筛了。
+          const useFilter = filter ?? stripPlaceholderConditions(memory?.filter ?? null);
+          const useSorts = memory && memory.sorts.length > 0 ? memory.sorts : null;
+          void loadTable(
+            id,
+            { connId, database, tableName, table: bundle.table },
+            {
+              ...(useFilter ? { filter: useFilter } : {}),
+              ...(useSorts ? { keepSort: true, sorts: useSorts } : {}),
+            },
+          );
+        }
+        if (locateNote) setToast(locateNote);
+        return { ok: true as const, note: locateNote };
       } catch (e) {
         setToast(`打开表失败：${e instanceof Error ? e.message : String(e)}`);
+        return { ok: false as const, note: '' };
       }
     },
     [ws, loadTable],
@@ -1134,17 +1409,23 @@ export function App() {
 
   /** 开表入口：表列表可能来自磁盘快照 —— 先确保会话可用（自动握手）再开 */
   const openTableTab = useCallback(
-    (connId: string, database: string, tableName: string) => {
+    (
+      connId: string,
+      database: string,
+      tableName: string,
+      /** T39：从查询结果打开源表时带上的行定位值（列名 → 原值） */
+      locate?: { column: string; value: string | null }[],
+    ) => {
       void (async () => {
         const ensure = await ensureConnection(connId);
         if (ensure === 'ready') {
-          await openTableTabInner(connId, database, tableName);
+          await openTableTabInner(connId, database, tableName, locate);
           return;
         }
         if (ensure === 'need-password') {
           const cfg = connections.find((c) => c.id === connId);
           if (cfg) setPwdPrompt(cfg);
-          pendingAfterConnectRef.current = () => void openTableTabInner(connId, database, tableName);
+          pendingAfterConnectRef.current = () => void openTableTabInner(connId, database, tableName, locate);
           setToast('该连接要求手动输入密码，输入后将继续打开表');
         }
         // failed：握手失败的真实原因已由连接路径 toast
@@ -1399,6 +1680,11 @@ export function App() {
           : direction
             ? applySortDirection(cur, column, direction)
             : applySort(cur, column, additive);
+      // T01：排序是「先 patch 再重拉」，若守卫生效且用户取消，必须把列头状态还原，
+      // 否则箭头停在新的方向、数据却还是旧的 —— 比丢改动更难察觉的假状态。
+      if ((sourcesRef.current.get(tabId)?.source.dirtyCount ?? 0) > 0) {
+        dirtyGuardRollbackRef.current = { tabId, run: () => ws.patchTable(tabId, { sorts: cur }) };
+      }
       pendingSortRef.current = { tabId, sorts: next };
       ws.patchTable(tabId, { sorts: next });
     },
@@ -1410,8 +1696,11 @@ export function App() {
     (tabId: string, column: string, value: string | null, op: 'eq' | 'ne' | 'contains') => {
       const tab = ws.getTable(tabId);
       if (!tab) return;
-      // 基于当前已生效的筛选追加（不是基于 FilterBuilder 里未应用的编辑态）
-      const base: FilterModel = tab.filter ?? emptyFilter();
+      // 基于当前已生效的筛选追加（不是基于 FilterBuilder 里未应用的编辑态）。
+      // 🔴 base 必须是 blankFilter() 而不是 emptyFilter()：后者带一条占位条件
+      //    （column 为空），追加后会让条件条上永久挂一条「未填完」——
+      //    它不进 WHERE，用户会以为筛选没生效。
+      const base: FilterModel = tab.filter ?? blankFilter();
       const groups = base.groups.length > 0 ? base.groups : [{ id: 'g1', logic: 'AND' as const, conditions: [] as FilterCondition[] }];
       const ids = groups.flatMap((g) => g.conditions.map((c) => c.id));
       const cond: FilterCondition =
@@ -1426,6 +1715,10 @@ export function App() {
       //    真值只有一处，弹开面板自然看到刚加的这条。
       // 乐观写回：loadTable 要等查询返回才 patch，期间工具栏徽标/状态栏会显示
       // 旧条件数（用户点了「筛选」却看不到计数变化 = 以为没生效）。
+      // T01：同理登记回滚 —— 守卫生效且取消时，筛选徽标必须退回去，不能挂着没生效的条件。
+      if ((sourcesRef.current.get(tabId)?.source.dirtyCount ?? 0) > 0) {
+        dirtyGuardRollbackRef.current = { tabId, run: () => ws.patchTable(tabId, { filter: tab.filter }) };
+      }
       ws.patchTable(tabId, { filter: next });
       void loadTable(
         tabId,
@@ -1509,6 +1802,18 @@ export function App() {
       byRow.set(d.row, bucket);
     }
 
+    /**
+     * T19：显式新增的空白行即使**一个脏格都没有**也要进 INSERT。
+     *
+     * 空白行可能全是「自增 / 有默认值」的列（用户什么都不用填），此时脏集合为空；
+     * 若只按脏单元格推导，这一行会被当成不存在 —— 用户点了新增、界面也显示了，
+     * 保存后却凭空消失。所以「这一行要被插入」由数据源单独记账。
+     */
+    for (const row of source.blankRowList()) {
+      if (row < source.rowCount) continue; // 只有追加行才是 INSERT
+      if (!appended.has(row)) appended.set(row, {});
+    }
+
     const plan = buildMutationPlan(tab.database, table, {
       updates: [...byRow.values()],
       // tempId 用 String(row)：SavePreviewModal 靠 Number(rowId) 显示「第 N 行」
@@ -1516,23 +1821,73 @@ export function App() {
         tempId: String(row),
         values,
         valueKinds: appendedKinds.get(row),
+        // T19：显式新增的空白行 —— 一个值都没有时也必须生成 INSERT
+        blank: source.isBlankRow(row),
       })),
     });
+
+    // T09：把行身份 → 定位键/原值/待提交值 编成表，冲突时按语句 refId 反查，
+    // 用来「重载该行并对比」（不依赖语句序号对齐，避免 offset 错位）。
+    const metaByRowId = new Map<string, { locateColumns: string[]; locateValues: unknown[]; pending: { column: string; original: unknown; next: unknown }[] }>();
+    for (const [row, edits] of byRow) {
+      metaByRowId.set(String(row), {
+        locateColumns: locateCols.map((c) => c.name),
+        locateValues: locateCols.map((c) => source.raw(row, columns.indexOf(c.name))),
+        pending: edits.map((e) => ({ column: e.column, original: e.oldValue, next: e.newValue })),
+      });
+    }
 
     setPreview({
       tabId,
       source,
-      statements: plan.statements.map((s) => ({
-        sql: s.sql,
-        params: s.params,
-        description: s.description,
-        // V10：含表达式的语句在预演里显式标注（用户必须知道这段原文即将执行）
-        hasSqlExpr: s.hasSqlExpr,
-      })),
+      statements: plan.statements.map((s) => {
+        const meta = s.refId ? metaByRowId.get(s.refId) : undefined;
+        return {
+          sql: s.sql,
+          params: s.params,
+          description: s.description,
+          // V10：含表达式的语句在预演里显式标注（用户必须知道这段原文即将执行）
+          hasSqlExpr: s.hasSqlExpr,
+          // T08/R15：逐行 DML 声明「恰好 1 行」契约 —— 主进程逐条核对，不符整批回滚
+          kind: s.kind,
+          expect: 'one' as const,
+          rowId: s.refId ?? null,
+          locateColumns: meta?.locateColumns,
+          locateValues: meta?.locateValues,
+          pending: meta?.pending,
+          // T21：把 core-mutation 算好的「旧值→新值」摘要透传给预览弹窗
+          summary: s.summary,
+        };
+      }),
       rejected: plan.rejected.map((r) => ({ row: Number(r.rowId ?? 0), column: r.column, reason: r.reason })),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws]);
+
+  // T01：把 onRequestSave 灌进 ref 桥，供 loadTable 的守卫在待保存时调用
+  onRequestSaveRef.current = onRequestSave;
+
+  /**
+   * T12 / I04：「保存」这一刻的分流（原生菜单 ⌘S 与页面 keydown 共用同一口径）。
+   *
+   * 为什么要抽出来：菜单命令与 window keydown 是两条独立入口，各自写一遍必然漂移
+   * （这正是 R05 的成因）。这里只写一次 —— 表标签存改动、查询标签存片段、
+   * 其余明确提示，**任何情况下都不静默**。
+   */
+  const requestSaveActive = useCallback(() => {
+    if (openTab) {
+      const s = sources.get(openTab.id);
+      if (s) onRequestSave(openTab.id, s);
+      else setToast('当前表没有待保存的改动');
+      return;
+    }
+    if (ws.active?.kind === 'query') {
+      const qid = ws.active.id;
+      setSnippetReq((prev) => ({ tabId: qid, n: (prev?.n ?? 0) + 1 }));
+      return;
+    }
+    setToast('当前标签没有可保存的内容');
+  }, [openTab, sources, onRequestSave, ws, setToast]);
 
   /** 预演确认 → 真写库 */
   const onConfirmSave = useCallback(async () => {
@@ -1547,8 +1902,46 @@ export function App() {
         database: tab.database,
         statements,
       });
+
+      // T08/T09/R15：冲突/定位异常 → 整批已回滚。**绝不清草稿**，改为弹冲突处理弹窗。
+      // 旧实现在这里无条件 clearAll()，用户被告知「影响 N 行」而其中一条根本没落库。
+      if (r.outcome !== 'ok') {
+        dirtyGuardRollbackRef.current = null;
+        setSaveConflict({
+          tabId,
+          connId: tab.connId,
+          database: tab.database,
+          source,
+          totalStatements: statements.length,
+          pendingCount: source.dirtyCells().length,
+          conflicts: r.conflicts.map((c) => {
+            const st = statements[c.index];
+            return {
+              index: c.index,
+              kind: c.kind,
+              actual: c.actual,
+              outcome: c.outcome,
+              reason: c.reason,
+              sql: c.sql,
+              row: st?.rowId != null ? Number(st.rowId) : null,
+              pending: st?.pending ?? [],
+              probe:
+                st?.locateColumns && st.locateColumns.length > 0
+                  ? buildRowProbeSql(tab.database, tab.tableName, st.locateColumns, st.locateValues ?? [])
+                  : null,
+            };
+          }),
+        });
+        setToast(`提交未完成：${r.conflicts.length} 处冲突，整批已回滚（你的改动仍在）`);
+        return;
+      }
+
       source.clearAll();
+      // T38：保存成功后清撤销栈 —— 这些值已经进库，撤销它没有语义
+      editHistoryRef.current.get(tabId)?.clear();
       ws.patchTable(tabId, { dirtyCount: 0 });
+      // T01：改动已落库 → 守卫登记的回滚作废（乐观写入的排序/筛选现在是真的）
+      dirtyGuardRollbackRef.current = null;
       rerender();
       setToast(`已提交：影响 ${r.affected} 行，${r.elapsedMs}ms`);
       // 写完后重新拉，拿到服务端最新值（自增列 / 触发器改动等）
@@ -1562,6 +1955,32 @@ export function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview, ws, loadTable]);
+
+  /**
+   * T09：冲突行重载探测 —— 按原定位键回查库中现值（只读）。
+   * 用列式读取器取值，不解全量行。
+   */
+  const probeConflictRow = useCallback(
+    async (c: ConflictView): Promise<ProbeOutcome | null> => {
+      const ctx = saveConflict;
+      if (!ctx || !c.probe) return null;
+      const out = await backend.queryRun({
+        connId: ctx.connId,
+        sql: c.probe.sql,
+        database: ctx.database,
+      });
+      const reader = new ColumnarReader(out.payload);
+      const row: Record<string, CellValue> = {};
+      if (reader.rowCount > 0) {
+        for (let ci = 0; ci < reader.columnCount; ci++) {
+          row[reader.columnName(ci)] = reader.decodeCell(0, ci);
+        }
+      }
+      return { hits: out.rowCount, row: reader.rowCount > 0 ? row : null };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [backend, saveConflict],
+  );
 
   // ---- A4：复制行 ⌘D —— buildDuplicateRowPlan 构造追加脏行（落库仍走保存预演红线） ----
   const onDuplicateRow = useCallback(
@@ -1581,12 +2000,77 @@ export function App() {
         setToast(plan.rejected);
         return;
       }
-      const newRow = source.rowCount; // 追加到已加载行末尾
+      /**
+       * 🔴 追加位置必须用 `totalRows`（已加载 + 已追加），**不能用 `rowCount`**。
+       *
+       * `rowCount` 只有**已加载**的行数，不含追加行：连续两次追加会算出同一个行号，
+       * 第二次把第一次的脏单元格整个覆盖掉 —— 用户看到「按了两次 ⌘D 只多一行」。
+       * 粘贴路径此前用 `plan.appendedRows` 绕过了这个坑，复制行/新增行没有。
+       */
+      const newRow = source.totalRows;
       for (const e of plan.edits) {
         // needs-input 列（非自增主键）带 reason → 格子标红提示；值保持原始类型
         source.setDirty(newRow, e.col, e.value as string | null, e.reason);
       }
       source.setExtraRows(source.extraRows + 1);
+      // T38：行级动作同样进撤销栈（撤销会连行数一起退回）
+      historyFor(tabId).push({
+        label: '复制行',
+        changes: [],
+        rowDelta: { before: source.extraRows - 1, after: source.extraRows },
+      });
+      ws.patchTable(tabId, { dirtyCount: source.dirtyCount });
+      rerender();
+      setToast(plan.summary);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ws],
+  );
+
+  // ---- T19：新增空白行 —— buildBlankRowPlan 构造一列值都没有的追加行 ----
+  /**
+   * 与「复制行」的关键差别：空白行**没有任何源值可抄**，每一列都得按
+   * 「自增 / 有默认值 / 可空 / 必须填」决定怎么处理，并把 DEFAULT 与 NULL 分开
+   * （DEFAULT 的列**不写进 INSERT**，NULL 的列写显式 NULL）—— 判定全在 core-mutation，
+   * 这里只负责把结论落到脏单元格上。
+   */
+  const onAddBlankRow = useCallback(
+    (tabId: string, source: GridDataSource) => {
+      const tab = ws.getTable(tabId);
+      if (!tab) return;
+      if (!isEditable(tab.table)) {
+        setToast('该表无主键/唯一键，网格只读，不支持新增行');
+        return;
+      }
+      const plan = buildBlankRowPlan(tab.table);
+      if (plan.rejected) {
+        setToast(plan.rejected);
+        return;
+      }
+      const newRow = source.totalRows; // 追加到**当前总行数**末尾
+      source.setExtraRows(source.extraRows + 1);
+      // 「这一行要被插入」独立记账 —— 全部列都交给服务端/默认值时脏集合是空的
+      source.markBlankRow(newRow);
+      // T38：撤销新增行 = 行数退出 + 空白行标记撤掉 + 该行脏格清干净
+      const blankChanges: CellChange[] = [];
+      for (const e of plan.edits) {
+        // auto-skip / use-default 故意**不写**：不写进 INSERT 才能让服务端生成 / 让 DEFAULT 生效
+        if (e.kind === 'auto-skip' || e.kind === 'use-default') continue;
+        // set-null 写显式 NULL；needs-input 留空并带原因（格子标红）
+        source.setDirty(newRow, e.col, null, e.reason);
+        blankChanges.push({
+          row: newRow,
+          col: e.col,
+          before: null,
+          after: { row: newRow, col: e.col, value: null, valueKind: 'literal' },
+        });
+      }
+      historyFor(tabId).push({
+        label: '新增空白行',
+        changes: blankChanges,
+        rowDelta: { before: source.extraRows - 1, after: source.extraRows },
+        blankMarks: [{ row: newRow, before: false, after: true }],
+      });
       ws.patchTable(tabId, { dirtyCount: source.dirtyCount });
       rerender();
       setToast(plan.summary);
@@ -1701,6 +2185,11 @@ export function App() {
           sql: st.sql,
           params: st.params,
           description: st.description,
+          // T08/R15：删除也必须恰好命中 1 行（否则是定位缺陷或行已被删）
+          kind: st.kind,
+          expect: 'one' as const,
+          // T21：删除的摘要（对象 + 行定位）同样透传给预览
+          summary: st.summary,
         })),
         rejected: plan.rejected.map((r) => ({ row: Number(r.rowId ?? 0), column: r.column, reason: r.reason })),
       });
@@ -1745,12 +2234,26 @@ export function App() {
           return;
         }
       }
+      // T38：一次批量动作 = 一条历史（撤销一次退回全部，而不是退 100 次）
+      const batchChanges: CellChange[] = [];
       for (const c of cells) {
         // 追加行（row >= rowCount）不参与批量编辑：它们还没落库，
         // 批量语义是「改已有多行的同一列」，混进来会产生无定位键的 UPDATE
         if (c.row < 0 || c.row >= source.rowCount) continue;
+        // T38：before 必须在 setDirty 之前取，否则撤销会退回「刚写的新值」
+        const before = source.snapshotCell(c.row, c.col);
         source.setDirty(c.row, c.col, c.value, undefined, c.valueKind);
+        batchChanges.push({
+          row: c.row,
+          col: c.col,
+          before: before ? { row: c.row, col: c.col, ...before } : null,
+          after: { row: c.row, col: c.col, value: c.value, valueKind: c.valueKind },
+        });
       }
+      historyFor(tabId).push({
+        label: `批量编辑「${tab.table.columns[cells[0].col]?.name ?? '列'}」${batchChanges.length} 行`,
+        changes: batchChanges,
+      });
       const colName = tab.table.columns[cells[0].col]?.name ?? '';
       const exprTag = cells[0].valueKind === 'sql-expr' ? '（SQL 表达式）' : '';
       ws.patchTable(tabId, { dirtyCount: source.dirtyCount });
@@ -1904,12 +2407,84 @@ export function App() {
     [ws],
   );
 
+  // ---- T38：未保存改动的 undo/redo（每张表一个栈，宿主持有） ----
+  /**
+   * 为什么栈放宿主而不是网格：改动的入口有五处（单元格、批量条、复制行、
+   * 空白行、清除本格），全部落在 `GridDataSource.dirty` 上。栈跟着 source 走，
+   * 任何入口只要 push 一条就能被撤销 —— 入口各自维护必然漏。
+   *
+   * 边界：**保存成功后清栈**（那些值已经进库，撤销它没有语义）；
+   *      重载 discard 时也清（草稿已丢，历史跟着无效）。
+   */
+  const editHistoryRef = useRef(new Map<string, EditHistory>());
+  const historyFor = useCallback((tabId: string): EditHistory => {
+    let h = editHistoryRef.current.get(tabId);
+    if (!h) {
+      h = new EditHistory();
+      editHistoryRef.current.set(tabId, h);
+    }
+    return h;
+  }, []);
+  /** 回放一组状态到 source（撤销与重做共用，方向由调用方给） */
+  const applyEntry = useCallback(
+    (source: GridDataSource, entry: EditEntry, direction: 'undo' | 'redo') => {
+      for (const c of clearsFor(entry, direction)) source.clearCell(c.row, c.col);
+      for (const st of statesFor(entry, direction)) {
+        source.setDirty(st.row, st.col, st.value, undefined, st.valueKind);
+      }
+      // 行级副作用（新增行 / 空白行标记）必须一起回放，否则「撤销新增行」留下空壳行
+      applyMetaTo(entry, direction, source);
+    },
+    [],
+  );
+  const undoEdit = useCallback(
+    (tabId: string) => {
+      const source = sourcesRef.current.get(tabId)?.source;
+      const h = editHistoryRef.current.get(tabId);
+      if (!source || !h) return;
+      const entry = h.undo();
+      if (!entry) return;
+      applyEntry(source, entry, 'undo');
+      ws.patchTable(tabId, { dirtyCount: source.dirtyCount });
+      rerender();
+      setToast(`已撤销：${entry.label}`);
+    },
+    [applyEntry, rerender, setToast, ws],
+  );
+  const redoEdit = useCallback(
+    (tabId: string) => {
+      const source = sourcesRef.current.get(tabId)?.source;
+      const h = editHistoryRef.current.get(tabId);
+      if (!source || !h) return;
+      const entry = h.redo();
+      if (!entry) return;
+      applyEntry(source, entry, 'redo');
+      ws.patchTable(tabId, { dirtyCount: source.dirtyCount });
+      rerender();
+      setToast(`已重做：${entry.label}`);
+    },
+    [applyEntry, rerender, setToast, ws],
+  );
+
   const tablePaneHandlers = useMemo<TablePaneHandlers>(
     () => ({
       onSortChange,
       onCellEdited: (tabId, source, row, col, value, valueKind) => {
+        // T38：先快照 before（撤销时「回到干净」与「留下 NULL 草稿」是两条不同 SQL）
+        const before = source.snapshotCell(row, col);
         // V10：valueKind 必须原样传进脏单元格 —— 它是「保存时该不该转义」的唯一依据
         source.setDirty(row, col, value, undefined, valueKind);
+        historyFor(tabId).push({
+          label: '编辑单元格',
+          changes: [
+            {
+              row,
+              col,
+              before: before ? { row, col, ...before } : null,
+              after: { row, col, value, valueKind: valueKind ?? 'literal' },
+            },
+          ],
+        });
         ws.patchTable(tabId, { dirtyCount: source.dirtyCount });
         rerender();
       },
@@ -1931,17 +2506,32 @@ export function App() {
        *    onCellActivated 用 openTab 是既有实现的历史包袱（激活 pane 才有意义），
        *    但右键菜单可能落在非激活 pane 上（多标签常挂 DOM）。用错 tab 的表现是
        *    「弹窗里显示的是另一张表的值」—— 比不弹更糟。
+       *
+       * T31：value 仍传 source.raw 的库中原值；脏格的待提交值另走 pending。
+       *    两者必须分开传 —— dirty 格的合法值是 string|null（null = 写 SQL NULL），
+       *    合在 value 里就没法区分「待写 NULL」与「没有修改」。
+       *    🔴 必须读弹窗打开那一刻的现场（source.isDirty / source.value），
+       *    不能读 state 快照：弹窗存的是快照，网格脏格此后可能被清除/再改。
+       *    这里把 dirty 读法封在 pending 里，CellValueModal 只消费不判定。
        */
       onInspectCell: (tabId, row, col, value) => {
         const t = ws.getTable(tabId);
         if (!t) return;
+        const s = sources.get(tabId) ?? null;
+        // T31：只读表 / 结果网格没有脏格概念 → pending 传 undefined（弹窗如实说「未提供」）
+        const dirty = s ? s.isDirty(row, col) : false;
         setCellModal({
+          tabId,
           row,
           col,
           column: t.table.columns[col]?.name ?? '',
           value,
           table: t.table,
           database: t.database,
+          // T31：脏格才有待提交值；provided: false 走「宿主未提供」分支（诚实降级）
+          pending: s && dirty ? { value: s.value(row, col) as string | null, provided: true } : undefined,
+          // T32：可写表才给编辑入口（只读连接 / 无定位键的表都不给 —— 不做假 UI）
+          editable: isEditable(t.table) && !readOnlyConns[t.connId],
         });
       },
       // F5：选中统计 → 状态栏（仅激活 pane 回报，见 TablePane 侧实现）
@@ -1953,8 +2543,28 @@ export function App() {
       },
       // A4：⌘D 复制行 → 追加脏行（落库走保存预演）
       onDuplicateRow,
+      // T19：新增空白行（工具栏 / 数据菜单 / 行号右键共用）
+      onAddBlankRow,
       // A22：右键快速筛选
       onQuickFilter,
+      /**
+       * T24/T26：条件条 / 列头快筛对**已生效模型**的修改入口。
+       *
+       * 与弹窗的草稿（filterDraft）不同：这里拿到的是「追加/删除后的完整模型」，
+       * 直接进 loadTable 生效 —— 条件条承诺「不持有状态」，宿主这里就是唯一真值。
+       * note 是给用户的一句话说明（删了哪条 / 忽略了什么），由 toast 说出 ——
+       * 「绝不静默少给」不能只写在返回值里。
+       */
+      onFilterChange: (tabId, next, note) => {
+        const t = ws.getTable(tabId);
+        if (!t) return;
+        if (note) setToast(note);
+        void loadTable(
+          tabId,
+          { connId: t.connId, database: t.database, tableName: t.tableName, table: t.table },
+          { keepSort: true, sorts: t.sorts, filter: next },
+        );
+      },
       // V1：⌘V 粘贴（从网格焦点格落点对齐）
       onPaste: (tabId, s, anchor) => void onPasteRows(tabId, anchor, s),
       // V2：⌘⌫ 删除选中行（走 buildMutationPlan 的 deletes + 保存预演）
@@ -1967,7 +2577,25 @@ export function App() {
       onLookupForeignKeyValues,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onSortChange, onRequestSave, openTab, sources, ws, onDuplicateRow, onQuickFilter, onPasteRows, onDeleteRows, onBatchEdit, onBatchDiscard, onFollowForeignKey, onLookupForeignKeyValues],
+    [onSortChange, onRequestSave, openTab, sources, ws, onDuplicateRow, onAddBlankRow, onQuickFilter, onPasteRows, onDeleteRows, onBatchEdit, onBatchDiscard, onFollowForeignKey, onLookupForeignKeyValues, readOnlyConns],
+  );
+
+  /**
+   * T32：完整值弹窗编辑器「存为待提交值」—— 与 onCellEdited 相同的 setDirty 链路
+   * （valueKind='literal'；text=null 表示写 SQL NULL）。改动只标当前格，落库仍走保存预演。
+   * 🔴 刻意放在 tablePaneHandlers 之外：那个对象的类型是 TablePaneHandlers
+   *    （workspace/TablePane.tsx，本任务不可改），而弹窗提交是 App↔CellValueModal
+   *    的直连通道，不需要网格中转。
+   */
+  const onCellModalCommitDraft = useCallback(
+    (tabId: string, row: number, col: number, text: string | null) => {
+      const s = sources.get(tabId);
+      if (!s) return;
+      s.setDirty(row, col, text, undefined, 'literal');
+      ws.patchTable(tabId, { dirtyCount: s.dirtyCount });
+      rerender();
+    },
+    [sources, ws, rerender],
   );
 
   // ---- 连接编辑器（§6.1）----
@@ -2116,6 +2744,11 @@ export function App() {
    */
   const onTableDestructive = useCallback(
     async (action: 'truncate' | 'drop', connId: string, database: string, table: TableMeta) => {
+      // T14：只读连接不做 DDL。菜单项此时已禁用，这里是**其它路径**（工具栏/命令面板）的兜底。
+      if (connections.some((c) => c.id === connId && c.readOnly === true)) {
+        setToast('该连接已标记为只读，不允许执行 DDL（写语句会被主进程 AST 守卫拦截）');
+        return;
+      }
       const qualified = quoteQualified([database, table.name]);
       const sql = action === 'truncate' ? `TRUNCATE TABLE ${qualified}` : `DROP TABLE ${qualified}`;
       const isProduction = connections.find((c) => c.id === connId)?.colorTag === 'red';
@@ -2133,7 +2766,9 @@ export function App() {
         return;
       }
       try {
-        await backend.mutationApply({ connId, database, statements: [{ sql, params: [] }] });
+        // T08：DDL 入口 —— 走 DDL 白名单，不走网格写语句的表达式白名单
+        // （否则 DROP TABLE 会被「只允许 insert/update/delete」误拒）
+        await backend.mutationApply({ connId, database, statements: [{ sql, params: [] }], mode: 'ddl' });
         setToast(action === 'drop' ? `已删除表 ${database}.${table.name}` : `已清空表 ${database}.${table.name}`);
         void onRefreshConnSchema(connId);
         for (const t of ws.tabs) {
@@ -2171,6 +2806,14 @@ export function App() {
   const onDropTablesBatch = useCallback(
     async (targets: { connId: string; database: string; table: TableMeta }[]) => {
    if (targets.length === 0) return;
+   // T14：只读连接的目标先剔除并如实告知，而不是整批跑到一半被主进程拦下
+   const blocked = targets.filter((t) => connections.some((c) => c.id === t.connId && c.readOnly === true));
+   if (blocked.length > 0) {
+     const readOnlyIds = new Set(blocked.map((t) => t.connId));
+     targets = targets.filter((t) => !readOnlyIds.has(t.connId));
+     setToast(`已跳过 ${blocked.length} 张只读连接上的表（写语句会被主进程 AST 守卫拦截）`);
+     if (targets.length === 0) return;
+   }
 
       // 按连接分组，逐组独立执行 —— 某组失败不该让其它组的成功结果变成未知
       const groups = new Map<string, { connId: string; database: string; tables: TableMeta[] }>();
@@ -2199,32 +2842,55 @@ export function App() {
    return;
       }
 
+      /**
+       * 🔴 T30/R09：逐对象执行 + 逐对象报告。
+       *
+       * 旧实现把整组 DROP 一次发出去，`okCount += g.tables.length` 一次性累加，
+       * 失败时只报「失败 N 组」。两个后果：
+       *  1. **MySQL 的 DDL 是隐式提交的**，一组里第 2 个失败时第 1 个已经删掉了，
+       *     但整组被计入失败 —— 用户以为「都没删」，实际删了一半（反过来，
+       *     若第一个成功第二个失败，旧代码把首个也整组计入失败，更糟）。
+       *  2. 标签关闭用的是**全部 targets**，失败的表标签也被关掉，用户失去重试入口。
+       *
+       * 现在：一张表一条语句，成功才计成功、才登记进 deleted；每张之后刷新真实结构
+       * （失败也可能是「服务端已执行、响应丢失」，不回源比不刷新更误导）。
+       * 这里**不承诺事务回滚全部 DDL** —— MySQL DDL 自动提交，本来就不具备这个语义。
+       */
       let okCount = 0;
       const failures: string[] = [];
+      const deleted = new Set<string>();
       for (const g of groups.values()) {
-        const stmts = g.tables.map((t) => ({
-          sql: `DROP TABLE ${quoteQualified([g.database, t.name])}`,
-          params: [],
-     }));
-        try {
-          await backend.mutationApply({ connId: g.connId, database: g.database, statements: stmts });
-     okCount += g.tables.length;
-          void onRefreshConnSchema(g.connId);
-        } catch (e) {
-          failures.push(`${g.database}：${e instanceof Error ? e.message : String(e)}`);
+        for (const t of g.tables) {
+          const sql = `DROP TABLE ${quoteQualified([g.database, t.name])}`;
+          try {
+            // T08：DDL 入口 —— 走 DDL 白名单（否则 DROP 被表达式白名单误拒）
+            await backend.mutationApply({
+              connId: g.connId,
+              database: g.database,
+              statements: [{ sql, params: [] }],
+              mode: 'ddl',
+            });
+            okCount++;
+            deleted.add(`${g.connId}\u0000${g.database}\u0000${t.name}`);
+          } catch (e) {
+            failures.push(`${g.database}.${t.name}：${e instanceof Error ? e.message : String(e)}`);
+          }
         }
+        // 每组结束回源刷新：核实树的真实状态（成功/失败/响应丢失都以此为准）
+        void onRefreshConnSchema(g.connId);
       }
 
       if (failures.length > 0) {
-    setToast(`已删除 ${okCount} 张，失败 ${failures.length} 组（${failures.join('；')}）`);
+        setToast(`已删除 ${okCount} 张，失败 ${failures.length} 张（${failures.join('；')}）`);
       } else {
         setToast(`已删除 ${okCount} 张表`);
       }
 
-      // 关闭指向已删表的标签 —— 否则标签还在，点保存就会报"表不存在"
-      const dropped = new Set(targets.map((t) => `${t.connId}:${t.database}:${t.table.name}`));
+      // 只关闭「确认已删除」的标签 —— 失败的标签必须留着（重试入口 / 排查现场）
       for (const t of ws.tabs) {
- if (t.kind === 'table' && dropped.has(`${t.connId}:${t.database}:${t.tableName}`)) ws.closeTab(t.id);
+        if (t.kind === 'table' && deleted.has(`${t.connId}\u0000${t.database}\u0000${t.tableName}`)) {
+          ws.closeTab(t.id);
+        }
       }
     },
     [connections, confirmDanger, ws, onRefreshConnSchema],
@@ -2369,6 +3035,22 @@ export function App() {
         opts: Partial<ContextMenuItem> = {},
       ) => items.push({ key, label, icon, onSelect, ...opts });
 
+      /**
+       * 🔴 T14：只读连接下的**写类动作一律禁用并给出原因**。
+       *
+       * 原来的做法是「菜单可点 → 走到最后一步才被主进程 AST 守卫拦下」，用户看到的
+       * 是「明明能点，却报错」。后端防线不因此减弱（core-sql-guard 仍是最后一道），
+       * 这里只负责让入口**诚实地说明能不能做**。
+       */
+      const readOnlyReason = '该连接已标记为只读：写语句会被主进程 AST 守卫拦截';
+      const roGuard = (
+        cid: string,
+        base: Partial<ContextMenuItem> = {},
+      ): Partial<ContextMenuItem> =>
+        connections.find((c) => c.id === cid)?.readOnly === true
+          ? { ...base, disabled: true, disabledReason: readOnlyReason }
+          : base;
+
       if (node.kind === 'connection' && node.connection) {
         const cfg = node.connection;
         const live = connStates[cfg.id]?.state === 'connected' || connStates[cfg.id]?.state === 'busy';
@@ -2381,6 +3063,16 @@ export function App() {
         push('runscript', '运行 SQL 脚本…', <IconFileCode size={12} />, () =>
           void openConnScriptPick(cfg.id, cfg.name),
         );
+        /**
+         * T16（报告 §4.4 最小集）：复制连接信息。
+         * 🔴 **必须脱敏** —— 只拼 name/user@host:port/db，绝不带 passwordEnc / 私钥路径。
+         *    复制出来的字符串经常被贴到聊天窗口或工单里，带上凭据就是事故。
+         */
+        push('copyconn', '复制连接信息（不含密码）', <IconCopy size={12} />, () =>
+          copyText(
+            `${cfg.name}\t${cfg.user}@${cfg.host}:${cfg.port}${cfg.defaultDatabase ? `/${cfg.defaultDatabase}` : ''}`,
+          ),
+        );
         push('refresh', '刷新表结构', <IconRefresh size={12} />, () => void onRefreshConnSchema(cfg.id));
         push('delete', '删除连接…', <IconXSmall size={12} />, () => void onDeleteConnection(cfg), {
           danger: true,
@@ -2391,6 +3083,7 @@ export function App() {
         push('newquery', '新建查询', <IconTerminal size={12} />, () => ws.newQuery(connId, node.database!));
         push('newtable', '新建表…', <IconPlus size={12} />, () =>
           setDesigner({ mode: 'new', database: node.database!, table: null, connId }),
+          roGuard(connId),
         );
         // 运行 SQL 脚本：库级别入口（删库重建 / 导入建表+数据脚本）
         push(
@@ -2398,6 +3091,12 @@ export function App() {
           '运行 SQL 脚本…',
           <IconFileCode size={12} />,
           () => void openScriptModal(connId, node.database!),
+        );
+        // T16：库级也补一条「插入 SELECT」—— 库名常常是「我要查这个库」的起点
+        push('select-in-query', '在新查询中插入 SELECT', <IconTerminal size={12} />, () =>
+          // 🔴 quoteQualified 遇到空串会**抛错**（限定名格式校验），所以这里只传库名，
+          //    末尾的 `.` 由自己拼 —— 它是语法分隔符，不是标识符
+          ws.newQuery(connId, node.database!, `SELECT * FROM ${quoteQualified([node.database!])}.`),
         );
         push('copyname', '复制库名', <IconCopy size={12} />, () => copyText(node.database!));
         push('refresh', '刷新', <IconRefresh size={12} />, () => void onRefreshConnSchema(connId), {
@@ -2408,39 +3107,68 @@ export function App() {
         if (node.objectKind === 'table') {
           push('newtable', '新建表…', <IconPlus size={12} />, () =>
             setDesigner({ mode: 'new', database: node.database!, table: null, connId }),
+            roGuard(connId),
           );
         }
         push('refresh', '刷新', <IconRefresh size={12} />, () => void onRefreshConnSchema(connId));
+        /**
+         * 🔴 T17（报告 §5 R13）：类别节点**必须合并树侧自管项**。
+         *
+         * `TreeView` 已经构造好「全选本组」（`buildGroupMenuItems`），可宿主这里
+         * 一直没接 —— 函数存在、能力却**没有真实入口**，属于「看起来做了」。
+         * 树把 extras 传过来了就一定要合并，否则这一项永远点不到。
+         */
+        if (extra?.treeItems?.length) items.push(...extra.treeItems);
       } else if (node.kind === 'object' && node.table && node.database) {
         const connId = parsed?.connId ?? '';
         const table = node.table;
-        push('open', '打开表', <IconTable size={12} />, () => onOpenObject(node));
+        const qualified = quoteQualified([node.database, table.name]);
+        /**
+         * 🔴 T16（报告 §4.4）：「打开表」这个泛用文案对视图/过程/函数都叫「表」不准确；
+         *    更要紧的是**过程/函数/触发器/事件根本没有可打开的数据网格** ——
+         *    给它们这一项就是「出现对象不支持的动作」。所以只在 table / view 上给。
+         */
+        const openable = table.kind === 'table' || table.kind === 'view';
+        if (openable) {
+          push('open', table.kind === 'table' ? '打开表' : '打开视图', <IconTable size={12} />, () =>
+            onOpenObject(node),
+          );
+          // T16：直接开一个新查询并预填 SELECT —— 比「新建查询 + 手敲表名」少两步
+          push('select-in-query', '在新查询中插入 SELECT', <IconTerminal size={12} />, () =>
+            ws.newQuery(connId, node.database!, `SELECT * FROM ${qualified} LIMIT 100;`),
+          );
+        }
         if (table.kind === 'table') {
           push('design', '设计表…', <IconDesign size={12} />, () =>
             setDesigner({ mode: 'edit', database: node.database!, table, connId }),
+            roGuard(connId),
           );
           push('export', '导出数据…', <IconExport size={12} />, () =>
             setExportTarget({ connId, database: node.database!, table }),
           );
           push('import', '导入数据…', <IconImport size={12} />, () =>
             setImportTarget({ connId, database: node.database!, table }),
+            roGuard(connId),
           );
           // 表级别脚本入口：对本表所在库执行脚本（重建该表 / 补数据等场景）
           push('runscript', '运行 SQL 脚本…', <IconFileCode size={12} />, () =>
             void openScriptModal(connId, node.database!),
           );
         }
-        push('copyname', '复制表名', <IconCopy size={12} />, () => copyText(table.name));
+        push('copyname', table.kind === 'table' ? '复制表名' : '复制名称', <IconCopy size={12} />, () =>
+          copyText(table.name),
+        );
+        // T16：完整限定名（`db`.`table`）—— 贴进 SQL 里可直接用，比裸表名常用得多
+        push('copyqualified', '复制完整限定名', <IconCopy size={12} />, () => copyText(qualified));
         // 合并树侧自管菜单项（查看定义 / 复制 DDL / INSERT 模板 / 收藏）——排在危险项之前
         if (extra?.treeItems?.length) items.push(...extra.treeItems);
 if (table.kind === 'table') {
-      push('truncate', '清空表…', null, () => void onTableDestructive('truncate', connId, node.database!, table), {
-            danger: true,
-            separatorBefore: true,
-       });
-          push('drop', '删除表…', null, () => void onTableDestructive('drop', connId, node.database!, table), {
-          danger: true,
-          });
+      push('truncate', '清空表…', null, () => void onTableDestructive('truncate', connId, node.database!, table),
+            roGuard(connId, { danger: true, separatorBefore: true }),
+       );
+          push('drop', '删除表…', null, () => void onTableDestructive('drop', connId, node.database!, table),
+            roGuard(connId, { danger: true }),
+          );
     /**
        * v0.6.0：多选了 ≥2 张表时，额外给一个批量删除入口。
     *
@@ -2450,10 +3178,9 @@ if (table.kind === 'table') {
           const selectedCount = treeSelection.size;
     if (selectedCount > 1) {
           const n = resolveSelectedTables().length;
-     push('drop-batch', `批量删除 ${n} 张表…`, null, dropSelectedTables, {
-   danger: true,
-            separatorBefore: true,
-   });
+     push('drop-batch', `批量删除 ${n} 张表…`, null, dropSelectedTables,
+            roGuard(connId, { danger: true, separatorBefore: true }),
+   );
         }
         }
       } else if (node.kind === 'group') {
@@ -2462,7 +3189,7 @@ if (table.kind === 'table') {
 
       if (items.length > 0) setCtxMenu({ x, y, title: node.label, items });
     },
-    [connStates, onToggleConnectionNode, onDeleteConnection, onRefreshConnSchema, onOpenObject, ws, copyText, onTableDestructive, openScriptModal, openConnScriptPick, treeSelection, resolveSelectedTables, dropSelectedTables],
+    [connStates, connections, onToggleConnectionNode, onDeleteConnection, onRefreshConnSchema, onOpenObject, ws, copyText, onTableDestructive, openScriptModal, openConnScriptPick, treeSelection, resolveSelectedTables, dropSelectedTables],
   );
 
   /** 树空白区右键：新建连接 */
@@ -2579,6 +3306,24 @@ if (table.kind === 'table') {
   // 只挂网格容器会导致 ⌘S / ⌘K 时灵时不灵（真机实测抓到过）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // T13：输入法组合期的按键整段放行（F12 兜底键也在内 —— 组合期不该开浮层）
+      if (isImeComposing(e)) return;
+      /**
+       * T13：模态打开时，全局快捷键**不进背景**。
+       *
+       * 原实现在偏好设置面板开着时按 ⌘T，会在面板背后新建一个标签（真机 e2e
+       * K5.2 抓到）—— 用户眼前的模态并没有「吃掉」键盘。这里用统一闸门收口：
+       * `.modal-mask` 是全仓模态的唯一外壳类，只要它在，除 Esc 之外一律放行给
+       * 模态自己的 keydown 处理（Esc 仍留给模态关闭，见各弹窗的 onKey）。
+       */
+      if (e.key !== 'Escape' && document.querySelector('.modal-mask')) {
+        // 例外：命令面板已开时，⌘K 仍是它自己的开关（否则开了只能靠 Esc 关）
+        const m = e.metaKey || e.ctrlKey;
+        const paletteOnly =
+          document.querySelectorAll('.modal-mask').length === 1 &&
+          !!document.querySelector('.palette');
+        if (!(paletteOnly && m && e.key.toLowerCase() === 'k')) return;
+      }
       /**
        * V20：⌘F12 打开列快速定位。
        *
@@ -2599,10 +3344,9 @@ if (table.kind === 'table') {
         setPaletteOpen((v) => !v);
         e.preventDefault();
       } else if (k === 's') {
-        if (openTab) {
-          const s = sources.get(openTab.id);
-          if (s) onRequestSave(openTab.id, s);
-        }
+        // T12 / I04 裁定：⌘S 归「保存表修改」；SQL 标签下改为保存片段，
+        // 任何标签下都必须有明确反馈（细节见 requestSaveActive 的注释）。
+        requestSaveActive();
         e.preventDefault();
       } else if (k === 't' && !e.shiftKey) {
         newQueryTab(); // ⌘T 新建查询标签（§9.1）
@@ -2621,14 +3365,16 @@ if (table.kind === 'table') {
         // 页面分支作纯浏览器 demo 兜底 —— 两边最终都落到 setPrefsOpen(true)）
         setPrefsOpen(true);
         e.preventDefault();
-      } else if (/^[1-9]$/.test(k) && !e.shiftKey && ws.tabs.length <= 9) {
+      } else if (/^[1-9]$/.test(k) && !e.shiftKey) {
+        // T12 / 报告 §4.2：原条件带 `ws.tabs.length <= 9`，标签超过 9 个时
+        // **前九个也一起失效**（用户按 ⌘1 莫名其妙没反应）。越界由 jumpTo 自己兜。
         ws.jumpTo(Number(k) - 1);
         e.preventDefault();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newQueryTab, requestCloseTab, ws, openTab, sources, onRequestSave, openColumnFinder]);
+  }, [newQueryTab, requestCloseTab, ws, requestSaveActive, openColumnFinder]);
 
   // ---- 命令面板候选项 ----
   const paletteItems: PaletteItem[] = useMemo(() => {
@@ -2773,8 +3519,11 @@ if (table.kind === 'table') {
 
   // ---- 命令面板：命令集 = 内置 + 片段（P1-3 最小版：列表 + 插入） ----
   const paletteCommands: CommandDef[] = useMemo(
-    () => [...BUILTIN_COMMANDS, ...snippets.map(snippetToCommand)],
-    [snippets],
+    () => {
+      const nameOf = new Map(connections.map((c) => [c.id, c.name]));
+      return [...BUILTIN_COMMANDS, ...snippets.map((s) => snippetToCommand(s, nameOf.get(s.connectionId)))];
+    },
+    [snippets, connections],
   );
 
   /**
@@ -2845,14 +3594,14 @@ if (table.kind === 'table') {
       else if (action === 'fontZoomOut') zoomStep('out');
       else if (action === 'fontZoomReset') zoomStep('reset');
       else if (action.startsWith('snippet:')) {
-        const name = action.slice('snippet:'.length);
-        const s = snippets.find((x) => x.name === name);
+        // T04/R06：按 (connectionId, database, name) 精确回查同名片段
+        const s = findSnippetByAction(snippets, action);
         if (!s) {
-          setToast(`找不到片段：${name}`);
+          setToast('找不到该片段（可能已被删除或归属连接已变更）');
           return;
         }
         fillSqlToEditor(s.sql);
-        setToast(`已插入片段：${s.name}`);
+        setToast(s.database ? `已插入片段：${s.name}（${s.database}）` : `已插入片段：${s.name}`);
       } else setToast(`执行命令：${action}`);
     },
     [openSql, cycleTheme, snippets, fillSqlToEditor, zoomStep, refreshCurrent, toggleReadOnlyCurrent, checkUpdate, openCurrentInNewWindow],
@@ -2872,16 +3621,48 @@ if (table.kind === 'table') {
         case 'new-query': newQueryTab(); break;
         case 'close-tab': if (ws.activeId) requestCloseTab(ws.activeId); break;
         case 'open-palette': setPaletteOpen(true); break;
-        case 'save': if (openTab) { const s = sources.get(openTab.id); if (s) onRequestSave(openTab.id, s); } break;
+        case 'save': requestSaveActive(); break;
+        /**
+         * T19：数据菜单「新增空白行」。
+         * 与工具栏/右键/⌥⌘N 共用 `onAddBlankRow` —— 菜单只负责把上下文送进来
+         * （当前激活表标签的 source），不做第二套判定。
+         */
+        case 'grid-add-row': {
+          // 菜单是 global scope（目录硬规则：局部动作不进原生菜单）⇒ 渲染层按上下文兜底
+          if (!openTab) {
+            setToast('新增空白行需要先打开一张表标签');
+            break;
+          }
+          const s = sources.get(openTab.id);
+          if (!s) {
+            setToast('该表标签还没加载数据，暂时不能新增行');
+            break;
+          }
+          onAddBlankRow(openTab.id, s);
+          break;
+        }
         case 'filter': openFilter(); break;
         case 'export':
           if (openTab) setExportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table });
           break;
         case 'import':
-          if (openTab) setImportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table });
+          // T14：原生菜单项此刻可能还没禁用（菜单动态可用性见 T15），渲染层先兜住
+          if (openTab) {
+            if (readOnlyConns[openTab.connId]) {
+              setToast('该连接已标记为只读，不允许导入数据（写语句会被主进程 AST 守卫拦截）');
+              break;
+            }
+            setImportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table });
+          }
           break;
         case 'design-table':
-          if (openTab) setDesigner({ mode: 'edit', database: openTab.database, table: openTab.table });
+          if (openTab) {
+            if (readOnlyConns[openTab.connId]) {
+              setToast('该连接已标记为只读，不允许改表结构（写语句会被主进程 AST 守卫拦截）');
+              break;
+            }
+            setDesigner({ mode: 'edit', database: openTab.database, table: openTab.table });
+          }
           break;
         case 'refresh-schema': void onRefreshSchemas(); break;
         case 'font-zoom-in': zoomStep('in'); break;
@@ -2896,7 +3677,7 @@ if (table.kind === 'table') {
       }
     });
     return off;
-  }, [newQueryTab, requestCloseTab, ws, openTab, sources, onRequestSave, onRefreshSchemas, cycleTheme, zoomStep, checkUpdate, openCurrentInNewWindow, openFilter]);
+  }, [newQueryTab, requestCloseTab, ws, requestSaveActive, openFilter, onRefreshSchemas, cycleTheme, zoomStep, checkUpdate, openCurrentInNewWindow, onAddBlankRow, openTab, sources, readOnlyConns]);
 
   /**
    * ---- W 板块：答复主进程的关闭询问（原生红按钮 / 菜单「关闭窗口」）----
@@ -2934,8 +3715,52 @@ if (table.kind === 'table') {
 
   // ---- 状态栏：跟随激活 tab ----
   const statusSource = openTab ? sources.get(openTab.id) ?? null : null;
-  const statusEditable = openTab ? isEditable(openTab.table) : false;
+  /**
+   * 🔴 T14：「有定位键」（结构可定位）与「当前可写」（再叠加连接只读）**分开表达**。
+   * 原来只有一个 `statusEditable`，让人以为「可编辑=能写库」，只读连接下会误导。
+   * 判定与 TablePane 共用 `resolveEditability()` —— 两处各写一遍必然漂移。
+   */
+  const statusConnReadOnly = openTab ? readOnlyConns[openTab.connId] === true : false;
+  const statusEdit = resolveEditability(openTab?.table ?? null, statusConnReadOnly);
+  const statusLocatable = statusEdit.locatable;
+  const statusWritable = statusEdit.writable;
+  /** 无激活表时不显示任何原因（否则 title 会挂一句与现状无关的话） */
+  const statusReadOnlyReason = openTab ? statusEdit.message : '';
   const statusStrategy = openTab ? locateStrategy(openTab.table) : 'none';
+
+  // ---- T46：活动区身份条（连接 / 环境 / 库 / 对象） ----
+  /**
+   * 🔴 身份条必须**常驻**且不依赖左树红点：侧栏可被收窄、详情面板可能跟随
+   *    另一个选中对象。同名库/同名表跨连接时，这是唯一固定的上下文来源。
+   */
+  const identity = (() => {
+    const act = ws.active;
+    if (!act) return null;
+    const connId = act.kind === 'table' ? act.connId : act.connId ?? '';
+    const conn = connections.find((c) => c.id === connId) ?? null;
+    if (act.kind === 'table') {
+      return resolveIdentity({
+        connId: act.connId,
+        database: act.database,
+        object: act.tableName,
+        kind: act.table.kind === 'view' ? 'view' : 'table',
+        conn,
+      });
+    }
+    return resolveIdentity({
+      connId,
+      database: act.database ?? '',
+      object: act.title || '查询',
+      kind: 'query',
+      conn,
+    });
+  })();
+  /** T46：保存按钮的文案/可用性（脏计数直接进按钮文案） */
+  const saveBtn = saveButton({
+    dirtyCount: statusSource?.dirtyCount ?? 0,
+    writable: statusWritable && !!openTab,
+    readOnlyReason: statusReadOnlyReason || (openTab ? '' : '当前没有打开表标签'),
+  });
 
   // ---- A14：大表行数估算（information_schema，绝不做全表 COUNT）----
   // 状态栏显示「约 N 行」；失败（权限/视图）静默降级为不显示
@@ -2968,6 +3793,46 @@ if (table.kind === 'table') {
 
   // ---------- 渲染 ----------
   const envTag = hasIpc() ? 'IPC' : 'DEMO';
+
+  /**
+   * T46：工具栏密度按**可用宽度**判定（侧栏/详情面板可拖动，窗口宽度不足以代表）。
+   * 首次测量前按 full 处理 —— 否则进页面会先闪一下「更多」。
+   */
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [toolbarW, setToolbarW] = useState(0);
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      setToolbarW((prev) => (Math.abs(prev - w) < 1 ? prev : w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const density = toolbarDensity(toolbarW);
+  /** T46：紧凑模式「更多」菜单开合 */
+  const [moreOpen, setMoreOpen] = useState(false);
+  // 密度回到 full 时把更多菜单收起，避免它挂在看不见的按钮上
+  useEffect(() => {
+    if (density === 'full') setMoreOpen(false);
+  }, [density]);
+
+  /**
+   * T47：行数口径 —— 精确 / 估算 / 截断分三档（报告 §8.2 第 4 条）。
+   * 过去只有一个「约 N 行」，用户会拿估算值判断「导出是不是全量」。
+   */
+  const statusRowCount = rowCountBasis({
+    rowCount: openTab?.payload?.rowCount ?? 0,
+    estimated: rowsEstimate?.key === estimateKey ? rowsEstimate.rows : null,
+    truncated: openTab?.truncated ?? false,
+    hasPayload: !!openTab?.payload,
+  });
+  /** T47：连接不可用的判定（idle 未连接不算断开，只有这四态才提示） */
+  const connDown = (connId: string): boolean => {
+    const s = connStates[connId]?.state;
+    return s === 'disconnected' || s === 'closed' || s === 'failed';
+  };
   const tableTabs = ws.tabs.filter((t): t is TableTabState => t.kind === 'table');
 
   return (
@@ -2984,7 +3849,7 @@ if (table.kind === 'table') {
           <button
             className="sidebar-btn"
             onClick={() => void onRefreshSchemas()}
-            title="刷新表结构（已连接的连接）"
+            title="刷新结构：重建表/视图清单（不动表里的数据）"
             data-testid="btn-refresh-schema"
           >
             <IconRefresh size={11} />
@@ -3031,10 +3896,9 @@ if (table.kind === 'table') {
             onDeleteRequest={(req) => void onTableDestructive('drop', req.connId, req.database, req.table)}
             // v0.6.0：多选集合回传（批量删除在宿主侧弹危险确认后执行）
             onSelectionChange={setTreeSelection}
-            onNewTable={(database) => {
-              const connId = Object.keys(schemas).find((cid) =>
-                (schemas[cid] ?? []).some((d) => d.name === database),
-              );
+            // T03/R03：库行「新建表」显式带 connId（树节点 key 里的），不再用
+            // 「第一个含同名库的连接」反查 —— 两个连接都有 order_db 时会串环境。
+            onNewTable={(database, connId) => {
               if (!connId) {
                 setToast('找不到该库所属的连接，无法新建表');
                 return;
@@ -3056,9 +3920,50 @@ if (table.kind === 'table') {
           onNewQuery={newQueryTab}
           onBeforeClose={beforeCloseTab}
           readOnlyConns={readOnlyConns}
+          // T27：标签右键菜单的三个宿主能力
+          // 1) 批量关闭：已经过「一次性列出全部脏标签」的确认，不再逐个问
+          onCloseBatch={(ids) => {
+            for (const id of ids) ws.closeTab(id);
+          }}
+          // 2) 在树中定位：选中该节点并展开它的祖先链（组/连接/库/类别）
+          onRevealInTree={(key) => {
+            setActiveKey(key);
+            setExpanded((prev) => expandAncestors(prev, treeRoots, key));
+          }}
+          onToast={setToast}
         />
 
-        <div className="toolbar">
+        <div className="toolbar" ref={toolbarRef} data-density={density} data-more={moreOpen ? '1' : '0'}>
+          {/* T46：身份条 —— 连接 / 环境 / 库 / 对象，四段常驻，永不折叠 */}
+          {identity ? (
+            <div className="tb-identity" data-testid="toolbar-identity" title={identity.ariaLabel} aria-label={identity.ariaLabel}>
+              <span className="tb-id-conn" data-testid="identity-conn">
+                {identity.connName}
+              </span>
+              <span className="tb-id-sep" aria-hidden="true">
+                /
+              </span>
+              <span className="tb-id-env" data-testid="identity-env" data-tone={identity.envTone}>
+                {identity.envLabel}
+              </span>
+              <span className="tb-id-sep" aria-hidden="true">
+                /
+              </span>
+              <span className="tb-id-db" data-testid="identity-db">
+                {identity.database}
+              </span>
+              <span className="tb-id-sep" aria-hidden="true">
+                /
+              </span>
+              <span className="tb-id-object" data-testid="identity-object" data-kind={identity.objectKindLabel}>
+                {identity.object}
+              </span>
+            </div>
+          ) : (
+            <span className="tb-id-empty" data-testid="toolbar-identity-empty">
+              未打开表
+            </span>
+          )}
           <button onClick={() => setPaletteOpen(true)}>
             <IconSearch size={11} />
             命令面板 ⌘K
@@ -3074,50 +3979,137 @@ if (table.kind === 'table') {
                   const s = sources.get(openTab.id);
                   if (s) onRequestSave(openTab.id, s);
                 }}
-                className="primary"
-                disabled={!statusEditable}
+                className={saveBtn.pending ? 'primary' : undefined}
+                disabled={saveBtn.disabled}
+                title={saveBtn.title}
                 data-testid="btn-save"
+                data-pending={saveBtn.pending ? '1' : '0'}
               >
                 <IconSave size={11} />
-                保存 ⌘S
+                {saveBtn.text}
+              </button>
+              {/* T46：刷新数据（重跑当前条件）与刷新结构（重建表清单）分开命名 */}
+              <button
+                onClick={() => void reloadTableData(openTab.id)}
+                title="刷新数据：按当前排序与筛选重新查询（不动表结构）"
+                data-testid="btn-refresh-data"
+              >
+                <IconRefresh size={11} />
+                刷新数据
               </button>
               <button onClick={openFilter} data-testid="btn-filter">
                 <IconFilter size={11} />
                 筛选{filterCount > 0 ? ` (${filterCount})` : ''}
               </button>
-              <button
-                onClick={() =>
-                  setExportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table })
-                }
-                title="导出当前表（含筛选）"
-                data-testid="btn-export"
-              >
-                <IconExport size={11} />
-                导出
-              </button>
-              <button
-                onClick={() =>
-                  setImportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table })
-                }
-                title="从 CSV/Excel 导入（追加 INSERT）"
-                data-testid="btn-import"
-              >
-                <IconImport size={11} />
-                导入
-              </button>
-              <button
-                onClick={() => setDesigner({ mode: 'edit', database: openTab.database, table: openTab.table })}
-                disabled={openTab.table.kind === 'view'}
-                title={openTab.table.kind === 'view' ? '视图不可结构编辑' : '设计表结构（字段/索引/外键）'}
-                data-testid="btn-design"
-              >
-                <IconDesign size={11} />
-                设计
-              </button>
-              <button onClick={() => void onPasteRows()} title="从剪贴板粘贴多行（D2）">
-                <IconPaste size={11} />
-                粘贴
-              </button>
+              {isCollapsed(density, 'export') ? null : (
+                <button
+                  onClick={() =>
+                    setExportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table })
+                  }
+                  title="导出当前表（含筛选）"
+                  data-testid="btn-export"
+                >
+                  <IconExport size={11} />
+                  导出
+                </button>
+              )}
+              {isCollapsed(density, 'import') ? null : (
+                <button
+                  onClick={() =>
+                    setImportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table })
+                  }
+                  // T14：只读连接不带导入入口 —— 禁用 + 说明原因，而不是让用户走完向导才报错
+                  disabled={statusConnReadOnly}
+                  title={
+                    statusConnReadOnly
+                      ? '该连接已标记为只读，不允许导入数据（写语句会被主进程 AST 守卫拦截）'
+                      : '从 CSV/Excel 导入（追加 INSERT）'
+                  }
+                  data-testid="btn-import"
+                >
+                  <IconImport size={11} />
+                  导入
+                </button>
+              )}
+              {isCollapsed(density, 'design') ? null : (
+                <button
+                  onClick={() => setDesigner({ mode: 'edit', database: openTab.database, table: openTab.table })}
+                  disabled={openTab.table.kind === 'view'}
+                  title={openTab.table.kind === 'view' ? '视图不可结构编辑' : '设计表结构（字段/索引/外键）'}
+                  data-testid="btn-design"
+                >
+                  <IconDesign size={11} />
+                  设计
+                </button>
+              )}
+              {isCollapsed(density, 'paste') ? null : (
+                <button onClick={() => void onPasteRows()} title="从剪贴板粘贴多行（D2）">
+                  <IconPaste size={11} />
+                  粘贴
+                </button>
+              )}
+              {/* T46：窄屏时低频操作收进「更多」，核心项（身份/保存/筛选）永不折叠 */}
+              {density === 'compact' ? (
+                <div className="tb-more">
+                  <button
+                    onClick={() => setMoreOpen((v) => !v)}
+                    title="更多操作"
+                    data-testid="btn-more"
+                    aria-haspopup="menu"
+                    aria-expanded={moreOpen}
+                  >
+                    更多 ▾
+                  </button>
+                  {moreOpen ? (
+                    <div className="tb-more-pop" role="menu" data-testid="tb-more-pop">
+                      <button
+                        role="menuitem"
+                        data-testid="more-export"
+                        onClick={() => {
+                          setMoreOpen(false);
+                          setExportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table });
+                        }}
+                      >
+                        导出…
+                      </button>
+                      <button
+                        role="menuitem"
+                        data-testid="more-import"
+                        disabled={statusConnReadOnly}
+                        title={statusConnReadOnly ? '该连接已标记为只读，不允许导入数据' : undefined}
+                        onClick={() => {
+                          setMoreOpen(false);
+                          setImportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table });
+                        }}
+                      >
+                        导入…
+                      </button>
+                      <button
+                        role="menuitem"
+                        data-testid="more-design"
+                        disabled={openTab.table.kind === 'view'}
+                        title={openTab.table.kind === 'view' ? '视图不可结构编辑' : undefined}
+                        onClick={() => {
+                          setMoreOpen(false);
+                          setDesigner({ mode: 'edit', database: openTab.database, table: openTab.table });
+                        }}
+                      >
+                        设计表…
+                      </button>
+                      <button
+                        role="menuitem"
+                        data-testid="more-paste"
+                        onClick={() => {
+                          setMoreOpen(false);
+                          void onPasteRows();
+                        }}
+                      >
+                        粘贴多行
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </>
           ) : null}
           <select
@@ -3140,17 +4132,20 @@ if (table.kind === 'table') {
             <option value="dark">外观：深色</option>
           </select>
           {openTab ? (
-            <span style={{ color: 'var(--text-dim)' }}>
-              {openTab.database}.{openTab.tableName} · 定位策略：
+            <span style={{ color: 'var(--text-dim)' }} data-testid="toolbar-locate-strategy">
+              定位策略：
               {statusStrategy === 'none' ? '无（只读）' : statusStrategy === 'pk' ? '主键' : '唯一键'}
             </span>
-          ) : (
-            <span style={{ color: 'var(--text-dim)' }}>未打开表</span>
-          )}
+          ) : null}
           <span className="spacer" />
           {openTab?.queryMs != null ? (
-            <span style={{ color: 'var(--text-dim)' }}>
-              {openTab.payload?.rowCount ?? 0} 行 / {openTab.queryMs}ms{openTab.truncated ? '（已截断）' : ''}
+            <span
+              style={{ color: 'var(--text-dim)' }}
+              data-testid="toolbar-row-count"
+              data-basis={statusRowCount.basis}
+              title={statusRowCount.exact ? '精确行数' : '非精确：估算值或被行上限截断'}
+            >
+              {statusRowCount.label} / {openTab.queryMs}ms
             </span>
           ) : null}
           <span className="env-tag">{envTag}</span>
@@ -3176,6 +4171,14 @@ if (table.kind === 'table') {
             estimatedRows={rowsEstimate?.key === estimateKey ? rowsEstimate.rows : null}
             rowLimit={rowLimits[t.id] ?? TABLE_PAGE_LIMIT}
             onLoadMore={loadMoreRows}
+            // T47：连接不可用时空白区说「已断开」而不是「零行」
+            disconnected={connDown(t.connId)}
+            onReload={reloadTableData}
+            // T38：撤销/重做（栈按 tab 一个，按钮可用状态随 rerender 刷新）
+            canUndo={editHistoryRef.current.get(t.id)?.canUndo ?? false}
+            canRedo={editHistoryRef.current.get(t.id)?.canRedo ?? false}
+            onUndo={undoEdit}
+            onRedo={redoEdit}
             // V19：分组条纹（状态在 App，默认关闭）
             groupStripeColumn={groupStripeByTab[t.id] ?? null}
             onToggleGroupStripe={toggleGroupStripe}
@@ -3203,6 +4206,8 @@ if (table.kind === 'table') {
                   readOnlyConn={readOnlyConn}
                   registerInjector={registerInjectorWithPending}
                   injectorKey={t.id}
+                  // T12：⌘S 在查询标签下直达「保存为片段」（0 = 无请求，挂载不弹窗）
+                  snippetSaveSignal={snippetReq?.tabId === t.id ? snippetReq.n : 0}
                   // B7：查询结果一键导出（sql/columns 由编辑器面板回传）
                   onExportResult={(req) => {
                     const cid = t.connId ?? sqlConnId;
@@ -3218,10 +4223,10 @@ if (table.kind === 'table') {
                       columns: req.columns,
                     });
                   }}
-                  // A12：单表 SELECT 结果 → 打开该表的可编辑表格视图（写回走既有保存预演）
+                  // A12/T39：单表 SELECT 结果 → 打开**源表**（文案不再暗示继承查询条件）；
+                  // 带上结果行的主键/唯一键值做安全定位，无键则如实说明不猜行身份
                   onOpenEditableResult={(req) => {
-                    openTableTab(req.connId, req.database, req.table);
-                    setToast(`已在表格中打开 ${req.database}.${req.table}（改动保存前仍会逐条预演 SQL）`);
+                    openTableTab(req.connId, req.database, req.table, req.locate);
                   }}
                 />
               </Suspense>
@@ -3279,15 +4284,49 @@ if (table.kind === 'table') {
           onDismiss={() => undefined}
         />
 
-        <div className="statusbar">
+        {/* e2e 可观测性：状态栏的「归属连接 / 是否只读判定为真 / 脏计数」——
+            「连接只读但界面没禁用」这类缺陷靠肉眼分不清，必须能直接读到判定输入；
+            脏计数同理：断言不该去正则解析「脏单元格：N」这种文案（T19） */}
+        <div
+          className="statusbar"
+          data-conn-id={openTab?.connId ?? ''}
+          data-conn-readonly={statusConnReadOnly ? '1' : '0'}
+          data-dirty-count={statusSource?.dirtyCount ?? 0}
+          /**
+           * T38：脏格的**坐标**（row:col,row:col）。
+           *
+           * 撤销/重做断言只读计数时，两种完全不同的缺陷会得出同一个数：
+           *  · 「撤销清错了格」→ 计数不变；
+           *  · 「撤销后另一格被重新标脏」→ 计数也不变。
+           * 坐标能把它们分开（本次 e2e 就是靠它定性的）。
+           */
+          data-dirty-cells={(statusSource?.dirtyCells() ?? []).map((c) => `${c.row}:${c.col}`).join(',')}
+        >
           <span>标签：{ws.tabs.length}</span>
           <span>脏单元格：{statusSource?.dirtyCount ?? 0}</span>
-          <span>可编辑：{statusEditable ? '是' : '否'}</span>
+          {/* T14：两项分开 —— 有定位键 ≠ 当前可写 */}
+          <span title={statusLocatable ? '有主键/唯一键，可安全定位到行' : '该表没有主键/唯一键，无法安全定位行'}>
+            定位键：{statusLocatable ? '有' : '无'}
+          </span>
+          <span title={statusReadOnlyReason || undefined} data-testid="status-writable">
+            可写：{openTab ? (statusWritable ? '是' : '否') : '—'}
+            {!openTab || statusWritable ? '' : `（${statusConnReadOnly ? '只读连接' : '无定位键'}）`}
+          </span>
           <span>排序：{openTab?.sorts.map((s) => `${s.column} ${s.direction}`).join(', ') || '无'}</span>
           {selectionSummary ? <span>选中 {selectionSummary.rows} 行 / {selectionSummary.cells} 格</span> : null}
-          {openTab && rowsEstimate?.key === estimateKey && rowsEstimate.rows != null ? (
-            <span title="information_schema 估算值，不做全表 COUNT">
-              约 {rowsEstimate.rows.toLocaleString('zh-CN')} 行
+          {statusRowCount.basis !== 'none' ? (
+            <span
+              data-testid="status-row-count"
+              data-basis={statusRowCount.basis}
+              title={
+                statusRowCount.exact
+                  ? '精确行数：当前已加载的行全部来自结果集'
+                  : statusRowCount.basis === 'truncated'
+                    ? '已被行上限截断：这不是全表总数'
+                    : 'information_schema 估算值，不做全表 COUNT'
+              }
+            >
+              {statusRowCount.label}
             </span>
           ) : null}
           {filterCount > 0 ? <span>筛选：{filterCount} 条</span> : null}
@@ -3319,6 +4358,11 @@ if (table.kind === 'table') {
           database={cellModal.database}
           onClose={() => setCellModal(null)}
           onToast={setToast}
+          // T31：脏格待提交值（undefined = 无脏格，弹窗如实说明展示的是库中原值）
+          pending={cellModal.pending}
+          // T32：可写表才有「编辑」入口；提交走与 onCellEdited 相同的 setDirty 链路
+          editable={cellModal.editable}
+          onCommitDraft={(text) => onCellModalCommitDraft(cellModal.tabId, cellModal.row, cellModal.col, text)}
         />
       ) : null}
 
@@ -3358,11 +4402,38 @@ if (table.kind === 'table') {
         </Suspense>
       ) : null}
 
+      {dirtyGuard ? (
+        <Suspense fallback={null}>
+          <DirtyReloadModal
+            title={dirtyGuard.title}
+            count={dirtyGuard.count}
+            onResolve={onDirtyGuardResolve}
+          />
+        </Suspense>
+      ) : null}
+
+      {saveConflict ? (
+        <Suspense fallback={null}>
+          <SaveConflictModal
+            conflicts={saveConflict.conflicts}
+            totalStatements={saveConflict.totalStatements}
+            pendingCount={saveConflict.pendingCount}
+            onProbe={probeConflictRow}
+            onClose={() => setSaveConflict(null)}
+          />
+        </Suspense>
+      ) : null}
+
       {preview ? (
         <SavePreviewModal
           statements={preview.statements}
           rejected={preview.rejected}
-          onCancel={() => setPreview(null)}
+          onCancel={() => {
+            // T01：预演被取消 = 保存没发生，把守卫登记的回滚补上（列头/筛选退回原样）
+            dirtyGuardRollbackRef.current?.run();
+            dirtyGuardRollbackRef.current = null;
+            setPreview(null);
+          }}
           onConfirm={() => void onConfirmSave()}
         />
       ) : null}

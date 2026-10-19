@@ -4,6 +4,8 @@ import {
   suggestMultiSelect,
   enumOptions,
   emptyFilter,
+  blankFilter,
+  stripPlaceholderConditions,
   isFilterEmpty,
   conditionCount,
   effectiveConditionCount,
@@ -369,5 +371,47 @@ describe('快捷筛选', () => {
       columns: [col('a'), col('b', { dataType: 'blob' })],
     };
     expect(filterableColumns(t).map((c) => c.name)).toEqual(['a']);
+  });
+
+  /**
+   * T24 回归：`emptyFilter()` 自带的占位条件**只能**给筛选器当种子。
+   * 一旦它被追加进已生效模型，条件条上就会永久挂一条「未填完」——
+   * 它不进 WHERE，用户会以为筛选没生效（本次 e2e 就是这么红的）。
+   */
+  it('blankFilter 不带占位条件（不像 emptyFilter）', () => {
+    expect(conditionCount(blankFilter())).toBe(0);
+    expect(effectiveConditionCount(blankFilter())).toBe(0);
+    // 正向对照：emptyFilter 就是带一条占位行的种子模型
+    expect(conditionCount(emptyFilter())).toBe(1);
+    expect(effectiveConditionCount(emptyFilter())).toBe(0);
+  });
+
+  it('stripPlaceholderConditions 剔掉空列条件、保留「有列但未填完」的条件', () => {
+    const model = {
+      groups: [
+        {
+          id: 'g1',
+          logic: 'AND' as const,
+          conditions: [
+            { id: 'c1', column: '', operator: 'eq' as const, value: '' },
+            { id: 'c2', column: 'status', operator: 'eq' as const, value: 'paid' },
+          ],
+        },
+      ],
+    };
+    const out = stripPlaceholderConditions(model);
+    expect(out?.groups[0].conditions.map((c) => c.id)).toEqual(['c2']);
+    // 负向对照：不清洗时 buildWhere 会静默跳过占位条件，但条件计数会多算
+    expect(conditionCount(model)).toBe(2);
+    expect(effectiveConditionCount(model)).toBe(1);
+  });
+
+  it('stripPlaceholderConditions 全是占位条件时返回 null（等价于没有筛选）', () => {
+    expect(stripPlaceholderConditions(emptyFilter())).toBeNull();
+    expect(stripPlaceholderConditions(null)).toBeNull();
+    expect(stripPlaceholderConditions(blankFilter())).toBeNull();
+    // 有列但值为空 —— 用户写了一半的条件，不能被当成占位剔掉
+    const half = model([{ id: 'c1', column: 'status', operator: 'eq' as const, value: '' }]);
+    expect(stripPlaceholderConditions(half)?.groups[0].conditions).toHaveLength(1);
   });
 });

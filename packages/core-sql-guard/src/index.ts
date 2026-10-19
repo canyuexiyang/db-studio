@@ -26,6 +26,7 @@ export type RejectReason =
   | 'empty'
   | 'parse-failed'          // 解析失败 → fail-closed
   | 'not-in-whitelist'      // 语句类型不在白名单
+  | 'not-in-ddl-whitelist'  // T08：DDL 入口只放行结构变更语句
   | 'forbidden-select-modifier' // SELECT 带写副作用（INTO OUTFILE / FOR UPDATE / LOCK IN SHARE MODE）
   | 'unsafe-set'            // SET 了有副作用的变量
   | 'missing-where'         // V10：网格写语句的 UPDATE/DELETE 缺 WHERE（= 全表改删）
@@ -94,6 +95,39 @@ function reject(
 }
 
 /**
+ * T19：把「全默认值 INSERT」改写成解析器认识的等价写法。
+ *
+ * 🔴 为什么需要这一步：`INSERT INTO t () VALUES ()` 是**合法 MySQL**，但
+ *    `node-sql-parser` 对它**任何**写法都解析失败 —— 实测三种形式全部报语法错：
+ *      `INSERT INTO t () VALUES ()`  ✗
+ *      `INSERT INTO t VALUES ()`     ✗
+ *      `INSERT INTO t (c) VALUES (DEFAULT)`  ✗（DEFAULT 关键字也不认）
+ *    后果不是「报个小错」而是**功能被自己的守卫拦死**：T19 的空白行生成的正是这条 SQL，
+ *    用户点确认后拿到「解析失败已阻止执行」。单测只断 SQL 文本、UI 预演只显示文本，
+ *    两边都发现不了 —— 只有真库门禁（e2e:app）能暴露。
+ *
+ * 处理方式是**解析前的等价改写**，不是白名单放行：
+ *   - 只匹配「列清单为空 且 VALUES 里全是空元组」这一种形状（见正则），
+ *     任何带表达式/子查询/多余内容的写法都不匹配 → 照旧 fail-closed；
+ *   - 改写后的文本里没有任何来自用户的值（凭空补的列名只存在于解析副本中，
+ *     真实执行的仍是原文），所以 AST 白名单那一步照样生效、照样拦非白名单类型。
+ *
+ * 与 `SET NAMES` 那处前置放行的区别：那里是文本白名单直接放行（失去 AST 覆盖），
+ * 这里保留了 AST 路径，只是把解析器不认识的字面形态翻译成它认识的同义形态。
+ */
+const BLANK_INSERT_RE =
+  /(^|;)(\s*)INSERT\s+INTO\s+((?:`[^`]+`|[\w$\u4e00-\u9fa5]+)(?:\s*\.\s*(?:`[^`]+`|[\w$\u4e00-\u9fa5]+))?)\s*\(\s*\)\s*VALUES\s*(\(\s*\)(?:\s*,\s*\(\s*\))*)(?=\s*;|\s*$)/gi;
+
+function normalizeBlankInsert(sql: string): string {
+  return sql.replace(BLANK_INSERT_RE, (_m, sep: string, gap: string, table: string, groups: string) => {
+    const n = groups.split(',').length;
+    const rows = Array.from({ length: n }, () => '(NULL)').join(', ');
+    // 列名刻意用不会与真实列冲突的占位 —— 它只活在解析副本里
+    return `${sep}${gap}INSERT INTO ${table} (__dbstudio_blank_col__) VALUES ${rows}`;
+  });
+}
+
+/**
  * 把 SQL 拆成多条语句。
  *
  * 优先交给解析器（astify 在多条时返回数组），因为手写按分号切分会在
@@ -101,7 +135,9 @@ function reject(
  */
 function parseStatements(sql: string, dialect: Dialect): { asts: any[] } | { error: string } {
   try {
-    const ast = parser.astify(sql, { database: dialect === 'mysql' ? 'MySQL' : 'PostgreSQL' });
+    const ast = parser.astify(normalizeBlankInsert(sql), {
+      database: dialect === 'mysql' ? 'MySQL' : 'PostgreSQL',
+    });
     return { asts: Array.isArray(ast) ? ast : [ast] };
   } catch (e: any) {
     return { error: String(e?.message ?? e) };
@@ -502,3 +538,57 @@ export function checkMutationStatement(sql: string, dialect: Dialect = 'mysql'):
 }
 
 export { STATEMENT_WHITELIST, SAFE_SET_VARS, MUTATION_WHITELIST };
+
+// ---------- T08 配套：DDL 结构白名单（与网格写语句分开） ----------
+
+/**
+ * 允许由「DDL 入口」执行的语句类型（结构变更，不写行数据）。
+ *
+ * 🔴 为什么必须与 `MUTATION_WHITELIST` 分开：
+ *
+ * 网格写链路（保存预演）里 UPDATE/DELETE 的 SET 段可能含**原样嵌入的表达式**，
+ * 所以那条链路要 fail-closed 地只放行 insert/update/delete。但 `mutationApply`
+ * 这个入口**同时**承载树右键的「删除表 / 清空表」——它们是 DDL，
+ * 类型是 drop/truncate，于是被上一条白名单拒之门外，
+ * 结果「删除表」按钮点了直接报「语句类型「drop」不允许由网格保存链路执行」。
+ *
+ * 这不是放宽安全，而是**把两类语义分开**：
+ *  - grid-write：走 MUTATION_WHITELIST（防表达式注入全表写）；
+ *  - ddl       ：走本表 + 单语句约束（DDL 无法把值写进行里，注入面是语句拼接，
+ *                而拼接在调用侧已由 core-sql-ident 的标识符转义封住）。
+ *
+ * 两条链路都仍然要过只读守卫；都不允许多语句拼接。
+ */
+const DDL_WHITELIST = new Set(['drop', 'truncate', 'create', 'alter', 'rename']);
+
+/**
+ * DDL 入口的结构校验。
+ *
+ * 判定（fail-closed）：
+ *  1. 必须恰好一条语句 —— 分号拼第二条同样是注入的最短路径；
+ *  2. 类型必须在 DDL 白名单里 —— 不允许从 DDL 入口偷跑 SELECT/INSERT 等。
+ */
+export function checkDdlStatement(sql: string, dialect: Dialect = 'mysql'): GuardResult {
+  if (!sql || !sql.trim()) return reject('empty', '空语句');
+
+  const parsed = parseStatements(sql, dialect);
+  if ('error' in parsed) {
+    return reject('parse-failed', `无法判定该 DDL 语句是否安全，已阻止执行（解析失败：${parsed.error.slice(0, 120)}）`);
+  }
+
+  const asts = parsed.asts;
+  if (asts.length !== 1) {
+    return reject('multi-statement-rejected', `只允许单条 DDL 语句，收到 ${asts.length} 条，已阻止执行`, {
+      statementTypes: asts.map((a) => String(a?.type ?? 'unknown')),
+    });
+  }
+
+  const type = String(asts[0]?.type ?? 'unknown');
+  if (!DDL_WHITELIST.has(type)) {
+    return reject('not-in-ddl-whitelist', `语句类型「${type}」不允许由 DDL 入口执行，已阻止`, {
+      statementType: type,
+    });
+  }
+
+  return ok([type]);
+}

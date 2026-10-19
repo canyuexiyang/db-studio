@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import type { ColumnMeta } from '@dbstudio/core-schema-cache';
 import { rankColumns } from './columnFinder';
 import { IconSearch } from '../ui/icons';
+import { isImeComposing } from '../ui/imeGuard';
 
 export interface ColumnQuickFinderProps {
   columns: readonly ColumnMeta[];
@@ -121,6 +122,8 @@ export function ColumnQuickFinder({
    */
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>): void {
     e.stopPropagation();
+    // T13：组合期放行（Enter 确认候选词不该直接采纳高亮项）
+    if (isImeComposing(e)) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       move(1);

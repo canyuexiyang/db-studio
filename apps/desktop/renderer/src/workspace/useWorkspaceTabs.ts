@@ -33,6 +33,14 @@ export interface TableTabState {
   truncated: boolean;
   queryMs: number | null;
   loading: boolean;
+  /**
+   * T47：最近一次加载的**真实错误**（null = 没出错）。
+   *
+   * 为什么进 tab 状态而不是只 toast：空白区要能区分「零行」与「查挂了」。
+   * 只靠 toast 的话，用户关掉提示后面对空白网格无从判断，切走再切回来
+   * 更是完全看不到失败过。
+   */
+  loadError: string | null;
   /** 脏单元格计数（关闭拦截用） */
   dirtyCount: number;
 }
@@ -121,6 +129,7 @@ export function useWorkspaceTabs(): WorkspaceTabsApi {
         truncated: false,
         queryMs: null,
         loading: false,
+        loadError: null,
         dirtyCount: 0,
       };
       setTabs((ts) => [...ts, tab]);

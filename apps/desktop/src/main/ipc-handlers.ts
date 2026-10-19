@@ -30,12 +30,18 @@ import {
   type ForeignKeyDto,
   type ReferencedValuesRequest,
   type ReferencedValuesDto,
+  // T41：SQL 文件编辑闭环
+  type SqlFileReadResult,
+  type SqlFileSaveRequest,
+  type SqlFileSaveResult,
 } from '../shared/ipc-channels.js';
+import { readSqlFile, writeSqlFile, statSqlFile, detectExternalChange } from './sql-file.js';
 import type { ConnectionConfig } from '@dbstudio/core-connection';
 import type { HistoryStore } from '@dbstudio/core-history';
 import { isValidSnippetName, snippetNameTooLongMessage } from '@dbstudio/core-history/snippet-name';
 import type { SecretStore } from '@dbstudio/core-secret';
 import type { ConnectionStore, SaveConnectionInput } from './connection-store.js';
+import type { MutationApplyRequest } from '../shared/ipc-channels.js';
 import type { SessionRegistry, QueryOutcome, DriverFactory } from './session-registry.js';
 import type { TransferManager } from './transfer-manager.js';
 import type { WindowManager } from './window-manager.js';
@@ -392,14 +398,14 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
 
   // ---------- 写操作 ----------
 
-  ipcMain.handle(IPC.MUTATION_APPLY, (_e, req: { connId: string; database: string; statements: { sql: string; params: unknown[] }[] }) =>
+  ipcMain.handle(IPC.MUTATION_APPLY, (_e, req: MutationApplyRequest) =>
     wrap(async () => {
       // 纵深防御：即使渲染层已经预演过，这里再拦一次只读
       const cfg = connections.get(req.connId);
       if (cfg?.readOnly) {
         throw Object.assign(new Error('只读连接不允许写操作'), { code: ERROR_CODES.READ_ONLY });
       }
-      const r = await sessions.applyMutation(req.connId, req.database, req.statements);
+      const r = await sessions.applyMutation(req.connId, req.database, req.statements, req.mode);
       // 写操作也进历史，便于回溯"我刚才到底改了什么"
       for (const st of req.statements) {
         recordHistory({
@@ -506,7 +512,11 @@ ipcMain.handle(IPC.SNIPPET_LIST, () => wrap(async () => history.listSnippets()))
   );
 
   // V21：手动检查更新（菜单 / 命令面板）。启动期静默检查在 main.ts 里排期。
-  ipcMain.handle(IPC.APP_CHECK_UPDATE, () => wrap(async () => checkForUpdate(deps.getWindow())));
+  // T45：手动路径带 interactive —— 未接入发布通道时要给出「打开下载页」的入口；
+  //       启动期静默检查不带，避免每次开机弹框。
+  ipcMain.handle(IPC.APP_CHECK_UPDATE, () =>
+    wrap(async () => checkForUpdate(deps.getWindow(), { interactive: true })),
+  );
 
   // V23：在新窗口打开一张表。失败原因（如超上限）直接回中文消息给渲染层展示。
   ipcMain.handle(IPC.APP_OPEN_WINDOW, (_e, req: { connId: string; database: string; table: string }) =>
@@ -588,6 +598,89 @@ ipcMain.handle(IPC.SNIPPET_LIST, () => wrap(async () => history.listSnippets()))
         // 无 GUI 会话（CI/自动化）弹不出对话框 → 等同用户取消
         return null;
       }
+    }),
+  );
+
+  // ---------- T41：SQL 文件编辑闭环（打开 / 读 / 保存&另存为） ----------
+
+  /**
+   * ⚠️ 与「运行 SQL 脚本」（SCRIPT_*）是两条完全不同的链路，别混：
+   *    SCRIPT_* 是**执行**文件里的语句（要确认、要进历史、可能改数据）；
+   *    本组只做**编辑** —— 打开不执行、保存不执行，一个字节的语义都不重叠。
+   */
+  ipcMain.handle(IPC.SQL_FILE_PICK, () =>
+    wrap<string | null>(async () => {
+      const win = getWindow();
+      if (!win || win.isDestroyed()) return null;
+      try {
+        const res = await dialog.showOpenDialog(win, {
+          title: '打开 SQL 文件',
+          properties: ['openFile', 'showHiddenFiles'],
+          filters: [
+            { name: 'SQL 脚本', extensions: ['sql'] },
+            { name: '文本', extensions: ['txt', 'md'] },
+            { name: '全部文件', extensions: ['*'] },
+          ],
+        });
+        if (res.canceled || res.filePaths.length === 0) return null;
+        return res.filePaths[0];
+      } catch {
+        // 无 GUI 会话弹不出对话框 → 等同用户取消（与 pickPrivateKey 同口径）
+        return null;
+      }
+    }),
+  );
+
+  ipcMain.handle(IPC.SQL_FILE_READ, (_e, path: string) =>
+    wrap<SqlFileReadResult>(async () => {
+      if (typeof path !== 'string' || path === '') {
+        throw codedError(ERROR_CODES.VALIDATION, '没有给出文件路径');
+      }
+      return readSqlFile(path);
+    }),
+  );
+
+  ipcMain.handle(IPC.SQL_FILE_SAVE, (_e, req: SqlFileSaveRequest) =>
+    wrap<SqlFileSaveResult>(async () => {
+      /**
+       * 保存流程（顺序不能换）：
+       *  ① 没路径 → 弹保存框拿一个（另存为）；
+       *  ② 有基线 → 先 stat 比对，**发现被外部改过就直接返回冲突、一个字节都不写**；
+       *  ③ 才真正写盘（原子写），回新的戳给渲染层当下次的基线。
+       */
+      let target = typeof req?.path === 'string' && req.path !== '' ? req.path : null;
+      if (target === null) {
+        const win = getWindow();
+        if (!win || win.isDestroyed()) throw codedError(ERROR_CODES.VALIDATION, '当前环境弹不出保存对话框');
+        let picked: string | undefined;
+        try {
+          const res = await dialog.showSaveDialog(win, {
+            title: '另存为 SQL 文件',
+            defaultPath: req?.suggestedName || 'untitled.sql',
+            filters: [{ name: 'SQL 脚本', extensions: ['sql'] }],
+          });
+          picked = res.canceled ? undefined : res.filePath;
+        } catch {
+          picked = undefined;
+        }
+        if (!picked) throw codedError(ERROR_CODES.CANCELLED, '已取消保存');
+        target = picked;
+      }
+
+      const current = await statSqlFile(target);
+      // 目标不存在时（新文件 / 原文件被删）没有可比对象 —— 不算冲突
+      if (current !== null && req?.force !== true) {
+        const change = detectExternalChange(req?.baseline ?? null, current);
+        if (change !== 'none') {
+          return {
+            conflict: true,
+            path: target,
+            current,
+          };
+        }
+      }
+      const stamp = await writeSqlFile(target, typeof req?.content === 'string' ? req.content : '');
+      return { conflict: false, path: target, stamp };
     }),
   );
 

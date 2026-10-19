@@ -73,6 +73,15 @@ if (!(await fixtureAlive())) {
 
 // ---------- 先用真驱动准备临时库（写操作隔离）----------
 const { MySqlDriver } = await import('../packages/core-driver-mysql/src/index.ts');
+/**
+ * T19：计划器要拿真 meta 走一遍。
+ *
+ * 🔴 这里刻意 import **真实实现**而不是另写一份断言逻辑 —— `buildBlankRowPlan` 的
+ *    「哪一列要用户填」完全建立在 `TableMeta.defaultValue / nullable / autoIncrement`
+ *    上，而这些字段的真值是 MySQL 给的（information_schema）。手写替身只能验证
+ *    「我们的逻辑」，验证不了「对方上报的形态」—— 与 safeStorage 那次的事故同源。
+ */
+const { buildBlankRowPlan, buildMutationPlan } = await import('../packages/core-mutation/src/index.ts');
 
 const results = [];
 function ok(name, pass, detail = '') {
@@ -104,6 +113,20 @@ try {
       city VARCHAR(32) NOT NULL
     )
   `);
+  /**
+   * T19 专用靶子：**每一列都能自动填**（自增 + 有默认值）。
+   *
+   * 只有这种表才能走到 `INSERT INTO t () VALUES ()` 那条分支 —— 也就是
+   * 「空白行什么都不填也能插进去」的真实场景。`order` 表做不到（amount/score/big_no
+   * 都是 NOT NULL 无默认值），所以必须单独造一张。
+   */
+  await admin.query(`
+    CREATE TABLE blank_pure (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      status VARCHAR(16) NOT NULL DEFAULT 'new',
+      n INT NOT NULL DEFAULT 0
+    )
+  `);
   // 造 5000 行：够验证虚拟滚动与 3000 行截断提示
   const rows = [];
   for (let i = 0; i < 5000; i++) {
@@ -114,7 +137,7 @@ try {
       `INSERT INTO \`order\` (status, amount, note, score, big_no, ts) VALUES ${rows.slice(i, i + 500).join(',')}`,
     );
   }
-  console.log(`\n【准备】临时库 ${dbName}（order 5000 行 + no_key_table）`);
+  console.log(`\n【准备】临时库 ${dbName}（order 5000 行 + no_key_table + blank_pure）`);
 } finally {
   await admin.close().catch(() => {});
 }
@@ -389,6 +412,125 @@ try {
     verify.ok ? `rowCount=${verify.data.rowCount}` : verify.error?.message);
   void noteVal;
 
+  // ---------- 6.5 T19 新增空白行（真 meta + 真 SQL 被真库接受）----------
+  /**
+   * 这一段补的是单测覆盖不到的缝：
+   *  - 单测喂的是**手写 TableMeta**；这里喂的是 MySQL 真上报的 meta。
+   *    若 information_schema 的 defaultValue / nullable 与我们的假设不一致，
+   *    buildBlankRowPlan 的分类就会分错 —— 只有真 meta 能发现。
+   *  - 单测只断 SQL **文本**；这里把文本真的送到 MySQL 执行，证明
+   *    `INSERT INTO t () VALUES ()` 不是我们臆想出来的语法。
+   */
+  console.log('\n【6.5】T19 新增空白行（真 meta + 真库执行）');
+  {
+    const pureMeta = await page.evaluate(
+      (t) => window.dbStudio.schemaGetTable('e2e-conn', t.db, 'blank_pure'),
+      { db: dbName },
+    );
+    const orderMeta = await page.evaluate(
+      (t) => window.dbStudio.schemaGetTable('e2e-conn', t.db, 'order'),
+      { db: dbName },
+    );
+
+    if (!pureMeta.ok || !orderMeta.ok) {
+      ok('T19 取到真表 meta', false, pureMeta.error?.message ?? orderMeta.error?.message);
+    } else {
+      // --- (a) 全自增/默认值列的表：什么都不填也能插 ---
+      const purePlan = buildBlankRowPlan(pureMeta.data.table);
+      ok('T19 全默认值表可新增（不被整体拒绝）', purePlan.rejected === null, purePlan.rejected ?? '');
+      ok('T19 自增列交给服务端（auto-skip）', purePlan.autoSkipped.join(',') === 'id',
+        `autoSkipped=[${purePlan.autoSkipped.join(',')}]`);
+      ok('T19 有 DEFAULT 的列走默认值而不是写 NULL（真 meta 上报的默认值）',
+        purePlan.defaulted.join(',') === 'status,n' && purePlan.nulled.length === 0,
+        `defaulted=[${purePlan.defaulted.join(',')}] nulled=[${purePlan.nulled.join(',')}]`);
+      ok('T19 该表无需用户填值', purePlan.needsInput.length === 0, `needsInput=[${purePlan.needsInput.join(',')}]`);
+
+      const pureSql = buildMutationPlan(dbName, pureMeta.data.table, {
+        inserts: [{ tempId: 'blank', values: {}, blank: true }],
+      });
+      const blankStmt = pureSql.statements[0];
+      ok('T19 生成 INSERT INTO t () VALUES ()',
+        blankStmt?.sql === `INSERT INTO \`${dbName}\`.\`blank_pure\` () VALUES ()`,
+        blankStmt?.sql ?? `（没有语句；rejected=${JSON.stringify(pureSql.rejected)}）`);
+
+      // 真执行：文本 → 真 IPC → 真 MySQL
+      if (blankStmt) {
+        const applied = await page.evaluate(
+          (args) =>
+            window.dbStudio.mutationApply({
+              connId: 'e2e-conn',
+              database: args.db,
+              statements: [{ sql: args.sql, params: [] }],
+            }),
+          { db: dbName, sql: blankStmt.sql },
+        );
+        ok('T19 🔴 真 MySQL 接受该 SQL 并写入 1 行',
+          applied.ok === true && applied.data.affected === 1,
+          applied.ok ? `affected=${applied.data.affected}` : applied.error?.message);
+
+        /**
+         * 回读不用 COUNT 取标量（列式载荷里取值要额外解码，徒增脆性），
+         * 改成**条件计数**：命中 1 行 = 默认值真的生效。
+         *
+         * 🔴 下面两条必须**一起**判，缺一条就是假绿：
+         *    上一版先写了「NULL 行数为 0」那条 —— 插入失败、表还是空的，
+         *    `... IS NULL` 当然返回 0 行，断言照样绿。空表上的计数类断言
+         *    天生是空洞为真（vacuous truth），必须用前一条的「确实插进去了」把它钉住。
+         */
+        const hit = await page.evaluate(
+          () => window.dbStudio.queryRun({
+            connId: 'e2e-conn',
+            sql: "SELECT id FROM `blank_pure` WHERE status = 'new' AND n = 0",
+          }),
+        );
+        const hitRows = hit.ok ? hit.data.payload.rowCount : -1;
+        ok('T19 回读：默认值真的生效（status=new / n=0 / id 自增）', hitRows === 1,
+          hit.ok ? `命中 ${hitRows} 行` : hit.error?.message);
+
+        const wroteNull = await page.evaluate(
+          () => window.dbStudio.queryRun({
+            connId: 'e2e-conn',
+            sql: 'SELECT id FROM `blank_pure` WHERE status IS NULL OR n IS NULL',
+          }),
+        );
+        const nullRows = wroteNull.ok ? wroteNull.data.payload.rowCount : -1;
+        ok('T19 🔴 有默认值的列没有被写成 NULL（DEFAULT 与 NULL 分开了）',
+          hitRows === 1 && nullRows === 0,
+          `非默认值行数=${hitRows}（期望 1） NULL 行数=${nullRows}（期望 0）`);
+      }
+
+      // --- (b) 真 meta 上核对「哪些列必须用户填」---
+      const orderPlan = buildBlankRowPlan(orderMeta.data.table);
+      ok('T19 真 meta：自增主键 auto-skip',
+        orderPlan.autoSkipped.join(',') === 'id', `[${orderPlan.autoSkipped.join(',')}]`);
+      ok('T19 真 meta：NOT NULL DEFAULT 列走默认值（不是写 NULL）',
+        orderPlan.defaulted.join(',') === 'status', `[${orderPlan.defaulted.join(',')}]`);
+      ok('T19 真 meta：可空无默认列写显式 NULL',
+        orderPlan.nulled.join(',') === 'note,ts', `[${orderPlan.nulled.join(',')}]`);
+      ok('T19 真 meta：NOT NULL 无默认列要求用户填值',
+        orderPlan.needsInput.join(',') === 'amount,score,big_no', `[${orderPlan.needsInput.join(',')}]`);
+
+      // --- (c) 预演防线：把这些「待填」列原样当 NULL 提交 → 必须在预演里被逐列点名 ---
+      const rejectSql = buildMutationPlan(dbName, orderMeta.data.table, {
+        inserts: [{
+          tempId: 'blank', blank: true,
+          values: { amount: null, score: null, big_no: null, note: null, ts: null },
+        }],
+      });
+      ok('T19 🔴 真 meta 下空白行预演即拒（不让用户确认后吃 1048）',
+        rejectSql.statements.length === 0 && rejectSql.rejected.length === 1,
+        `statements=${rejectSql.statements.length} rejected=${rejectSql.rejected.length}`);
+      ok('T19 拒绝原因逐列点名 amount/score/big_no',
+        /amount/.test(rejectSql.rejected[0]?.reason ?? '') &&
+          /score/.test(rejectSql.rejected[0]?.reason ?? '') &&
+          /big_no/.test(rejectSql.rejected[0]?.reason ?? ''),
+        (rejectSql.rejected[0]?.reason ?? '（没有拒绝原因）').slice(0, 90));
+      // 反向对照：可空列（note/ts）不该出现在 NOT NULL 拒绝名单里
+      ok('T19 可空列不被 NOT NULL 规则误伤',
+        !/note|ts/.test(rejectSql.rejected[0]?.column ?? ''), `column=${rejectSql.rejected[0]?.column}`);
+    }
+  }
+
   // ---------- 7. 历史 ----------
   console.log('\n【7】查询历史');
   const histRes = await page.evaluate(() => window.dbStudio.historyList('e2e-conn', 20));
@@ -564,12 +706,20 @@ try {
      * 所以这里断言的是「按钮在无连接时被正确禁用」，
      * 而"执行出结果"这条链路已经在 e2e-ui（有 demo 连接）里覆盖。
      */
-    const execDisabled = await page
-      .locator('.sql-toolbar button')
-      .filter({ hasText: /^▶ 执行 ⌘R$/ })
-      .isDisabled()
-      .catch(() => null);
-    ok('无连接时执行按钮被禁用（安全行为）', execDisabled === true, `disabled=${execDisabled}`);
+    /**
+     * 🔴 用语义钩子定位，不用文案（T29 已把按钮文案改成「执行全部」）。
+     * 而且必须**分开报**「元素不存在」与「没禁用」：早先 `isDisabled()`
+     * 找不到元素时被 `.catch(() => null)` 吞成 null，`null === true` 为假
+     * 但现场只留下一个 `disabled=null`，看不出是 UI 变了还是选择器烂了。
+     */
+    const runAllBtn = page.locator('[data-testid="sql-run-all"]');
+    const runAllCount = await runAllBtn.count();
+    const execDisabled = runAllCount === 1 ? await runAllBtn.isDisabled().catch(() => null) : null;
+    ok(
+      '无连接时执行按钮被禁用（安全行为）',
+      runAllCount === 1 && execDisabled === true,
+      `found=${runAllCount} disabled=${execDisabled}`,
+    );
   } catch (e) {
     // e2e 失败先 dump 现场，别对着一句 timeout 猜 —— 这条是项目方法论
     const dump = await page

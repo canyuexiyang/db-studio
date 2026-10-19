@@ -11,16 +11,22 @@
  *    所以非激活 pane 只剩一份 payload 引用 + 脏单元格 Map（R8 内存有界）。
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { DataGrid, type GridColumn, type GridForeignKey } from '../grid/DataGrid';
 import type { GridDataSource } from '../grid/useGridData';
+import { FilterBar } from '../grid/FilterBar';
+import { HeaderFilterContext, type HeaderFilterBridge, type ColumnFilterMode } from '../grid/headerFilterBridge';
+import { columnFilterCapability, removeConditionFromModel } from '../grid/filterBarModel';
+import { blankFilter, type FilterModel } from '@dbstudio/core-filter';
 import { openTableSqlPreview } from '../filter/preview';
 import {
-  isEditable,
   locateColumns as mutationLocateColumns,
   locateStrategy,
   type LocateStrategy,
 } from '@dbstudio/core-mutation';
+import { resolveEditability } from './editability';
+import { GridStateBlock } from '../grid/GridStateBlock';
+import { needsStateBlock, resolveGridState } from '../grid/gridStates';
 import type { RowHeightMode, SortDirection, SortSpec } from '@dbstudio/core-grid-view';
 import type { TableTabState } from './useWorkspaceTabs';
 
@@ -43,7 +49,7 @@ export interface TablePaneHandlers {
    */
   onInspectCell?: (tabId: string, row: number, col: number, value: unknown) => void;
   /**
-   * A2：本格脏改动被清除（⌘0 幂等清除 / 右键「清除本格改动」）。
+   * A2：本格脏改动被清除（⌥0 幂等清除 / 右键「清除本格改动」）。
    * App 侧刷新 dirtyCount 角标（source.clearCell 已由网格执行）。
    */
   onCellCleared?: (tabId: string, source: GridDataSource, row: number, col: number) => void;
@@ -54,11 +60,33 @@ export interface TablePaneHandlers {
    */
   onDuplicateRow?: (tabId: string, source: GridDataSource, row: number) => void;
   /**
+   * T19（报告 §5 D16）：新增**空白行**（工具栏 / 数据菜单 / 行号右键）。
+   * App 侧用 core-mutation 的 `buildBlankRowPlan` 逐列判定「服务端生成 / 用默认值 /
+   * 写 NULL / 必须填」，并把这一行登记为「必须插入」；落库仍走既有保存预演。
+   */
+  onAddBlankRow?: (tabId: string, source: GridDataSource) => void;
+  /**
    * A22：单元格右键快速筛选。App 侧把它并进该 tab 的 FilterModel 并按既有
    * loadTable({ filter }) 链路重拉（WHERE 值仍走 ? 占位参数）。
    * value = null 表示本格是 NULL（映射为 isNull 条件）。
    */
   onQuickFilter: (tabId: string, column: string, value: string | null, op: 'eq' | 'ne' | 'contains') => void;
+  /**
+   * T24/T26：条件条与列头快筛**共用**的写入通道（删单条件 / 清空 / 快筛应用都走它）。
+   *
+   * 🔴 真值只有一处：这里只把「新模型」交给宿主，由它写 `tab.filter` 并重查。
+   *    条件条自己**不持有**任何筛选状态 —— 否则「改了草稿又取消」之后，
+   *    条上会留着一个从未生效的条件（这正是旧实现「取消变成空按钮」的成因）。
+   *
+   * note = 给用户看的一句说明（去重 / 截断 / 忽略空片段…），由宿主 toast ——
+   * 「绝不静默少给」要在界面上说出来，不能只写在返回值里。
+   */
+  onFilterChange: (tabId: string, next: FilterModel, note?: string) => void;
+  /**
+   * T24：「在完整筛选器中编辑」—— 宿主打开既有筛选构建器并预选该列。
+   * 未接 = 该入口在浮层里禁用并写明原因（不许出现点了没反应的按钮）。
+   */
+  onOpenFilterBuilder?: (tabId: string, column: string) => void;
   /**
    * V1：⌘V 粘贴多行。anchor = 网格焦点单元格（从这格按列对齐）。App 侧读剪贴板 →
    * planPasteFromText → 脏单元格；不可编辑表在此给明确提示（不允许静默失效）。
@@ -143,6 +171,32 @@ export interface TablePaneProps {
   groupStripeColumn?: string | null;
   /** V19：切换分组着色列（null = 取消）。未接 = 列头菜单项禁用，功能保持关闭 */
   onToggleGroupStripe?: (tabId: string, col: string | null) => void;
+
+  // ---- T26 草稿 ----
+  /**
+   * T26：筛选弹窗里的草稿（**弹窗没开时必须传 null**）。
+   * 条件条拿它和 `tab.filter` 逐条对比，标出「改了但还没应用」的条目 ——
+   * 不传就是「没有草稿」，条上不会出现任何草稿标记。
+   */
+  filterDraft?: FilterModel | null;
+
+  // ---- T47 六态 ----
+  /**
+   * T47：该 tab 的连接当前是否不可用（未连接 / 断线重连 / 已断开 / 握手失败）。
+   *
+   * 缺省 undefined = **不知道**，按「可用」处理 —— 首次连接状态还没回来时
+   * 就把网格说成「已断开」会制造一次假告警。
+   */
+  disconnected?: boolean;
+  /** T47：失败态的重试入口（App 侧重新执行当前查询条件） */
+  onReload?: (tabId: string) => void | Promise<void>;
+
+  // ---- T38 撤销/重做 ----
+  /** 该 tab 的未保存改动是否可以撤销 / 重做（栈在 App 侧，按 tab 一个） */
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: (tabId: string) => void;
+  onRedo?: (tabId: string) => void;
 }
 
 export function TablePane({
@@ -160,12 +214,25 @@ export function TablePane({
   onLoadMore,
   groupStripeColumn,
   onToggleGroupStripe,
+  filterDraft = null,
+  disconnected,
+  onReload,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }: TablePaneProps) {
   const table = tab.table;
 
   // ---- 可编辑性：B5 红线，只有 isEditable() 说了算，本组件不自己判主键 ----
   const strategy: LocateStrategy = useMemo(() => locateStrategy(table), [table]);
-  const editable = useMemo(() => isEditable(table), [table]);
+  /**
+   * 🔴 T14：可编辑性判定下沉到 `resolveEditability()`（与本页状态栏同一口径）。
+   * 它把「有定位键」（结构性）与「当前可写」（再叠加连接只读）分成两项 ——
+   * 只读连接下的表不能再显示成「可编辑」。
+   */
+  const edit = useMemo(() => resolveEditability(table, !!readOnly), [table, readOnly]);
+  const writable = edit.writable;
 
   // A20：UPDATE 复制的定位列 —— 判定只在 core-mutation 一处（与保存预演同源）
   const locateColumnNames = useMemo(() => mutationLocateColumns(table).map((c) => c.name), [table]);
@@ -184,6 +251,68 @@ export function TablePane({
   );
 
   const filterPreview = useMemo(() => openTableSqlPreview(tab.filter), [tab.filter]);
+
+  // ---- T26：条件条 / T24：列头快筛 ----
+  /**
+   * 列头快筛浮层的受控开关。
+   *
+   * 状态放在这里而不是 FilterBar：入口是**列头右键菜单**（经 context 上抛列名），
+   * 而浮层要渲染在网格上方那条 bar 里 —— 两者分居 DataGrid 内外，
+   * 只有本组件同时够得着。
+   */
+  const [quickFilter, setQuickFilter] = useState<{ column: string; mode: ColumnFilterMode } | null>(null);
+
+  /**
+   * T24：列头右键菜单的入口桥。
+   *
+   * 走 context 而不是让 DataGrid 透传 prop —— DataGrid 不在本次改动范围内。
+   * 能力判定用本组件的列元数据（数值列没有「包含」、BLOB 不能 IN），
+   * 于是列头菜单里的禁用态与浮层里的选项**同源**，不会对不上。
+   */
+  const headerFilterBridge = useMemo<HeaderFilterBridge>(
+    () => ({
+      capability: (column) => {
+        const meta = table.columns.find((c) => c.name === column);
+        const cap = columnFilterCapability(meta);
+        return {
+          canSingle: cap.operators.length > 0,
+          canIn: cap.canIn,
+          reason: cap.operators.length === 0 ? `列「${column}」不在这张表的元数据里，无法筛选` : cap.inReason,
+        };
+      },
+      openColumnFilter: (column, mode) => setQuickFilter({ column, mode }),
+    }),
+    [table],
+  );
+
+  /** 删一条条件：改模型 → 宿主重查（不是只藏起徽标） */
+  const handleRemoveCondition = useCallback(
+    (condId: string) => {
+      const r = removeConditionFromModel(tab.filter ?? blankFilter(), condId);
+      if (!r.removed) return;
+      handlers.onFilterChange(tab.id, r.model, `已删除条件：${r.removed.column}`);
+    },
+    [handlers, tab.filter, tab.id],
+  );
+
+  const handleClearFilter = useCallback(() => {
+    // 清空 = 真的没有条件：不能落一条占位行（那会在条件条上显示「未填完」）
+    handlers.onFilterChange(tab.id, blankFilter(), '已清空全部筛选条件');
+  }, [handlers, tab.id]);
+
+  /** 快筛应用：FilterBar 已把「追加后的完整模型」算好，这里只负责交给宿主 */
+  const handleApplyQuickModel = useCallback(
+    (next: FilterModel, note: string) => {
+      handlers.onFilterChange(tab.id, next, note);
+      setQuickFilter(null);
+    },
+    [handlers, tab.id],
+  );
+
+  const handleOpenBuilder = useCallback(
+    (column: string) => handlers.onOpenFilterBuilder?.(tab.id, column),
+    [handlers, tab.id],
+  );
 
   // A21：列头左键三态 / 右键菜单显式方向（direction 由 DataGrid 透传，null = 清空）
   const handleSort = useCallback(
@@ -218,6 +347,24 @@ export function TablePane({
   );
 
   // V9：外键跳转与候选值（App 侧有连接/库上下文与 backend）
+  /**
+   * T47：六态判定下沉到 `resolveGridState()`（纯函数，单测钉住优先级）。
+   * 只有 ready 才把整块区域交回网格；其余五态各自渲染独立占位块，
+   * 不再共用一块空白。
+   */
+  const gridState = resolveGridState({
+    disconnected: disconnected === true,
+    loading: tab.loading,
+    error: tab.loadError ?? null,
+    hasPayload: !!tab.payload,
+    rowCount: tab.payload?.rowCount ?? 0,
+  });
+  const showStateBlock = needsStateBlock(gridState);
+  const handleReload = useCallback(() => {
+    void onReload?.(tab.id);
+  }, [onReload, tab.id]);
+  const handleUndo = useCallback(() => onUndo?.(tab.id), [onUndo, tab.id]);
+  const handleRedo = useCallback(() => onRedo?.(tab.id), [onRedo, tab.id]);
   const handleFollowFk = useCallback(
     (fk: GridForeignKey, row: number, value: string | null) => {
       handlers.onFollowForeignKey?.(tab.id, fk, row, value);
@@ -275,6 +422,12 @@ export function TablePane({
     [handlers, source, tab.id],
   );
 
+  // T19：新增空白行上抛（App 侧用 buildBlankRowPlan 逐列判定）
+  const handleAddBlankRow = useCallback(() => {
+    if (!source) return;
+    handlers.onAddBlankRow?.(tab.id, source);
+  }, [handlers, source, tab.id]);
+
   // A22：右键快速筛选（App 并进 FilterModel 后走既有重拉）
   const handleQuickFilter = useCallback(
     (column: string, value: string | null, op: 'eq' | 'ne' | 'contains') => {
@@ -313,33 +466,57 @@ export function TablePane({
 
   // 复制 / 粘贴 / 删除行：App 层统一实现（需要 columns + table 上下文）
   return (
+    /**
+     * T24：桥的 Provider 直接挂在 pane 根上（同一次渲染里 useMemo 已算好）。
+     * HeaderContextMenu 在 DataGrid 里按 context 取 —— 没有这个 Provider 的
+     * 宿主（比如别的组件直接渲染 DataGrid）自动落到「禁用 + 原因」。
+     */
+    <HeaderFilterContext.Provider value={headerFilterBridge}>
     <div
       className={`ws-tab-pane${active ? '' : ' hidden'}`}
       data-testid={`pane-${tab.tableName}`}
       data-tab-id={tab.id}
     >
-      {filterPreview.where ? (
-        <div className="filter-bar">
-          <span className="preview" title={filterPreview.label}>
-            {filterPreview.label}
-          </span>
+      {/*
+        T26：条件条。
+        🔴 渲染条件刻意保持「有已生效条件才出现」—— 无筛选时不凭空多一条 bar，
+           （scripts/e2e-ui.mjs 断言快速筛选后 .filter-bar 恰好一个）。
+        快筛浮层打开时也要渲染：浮层就挂在这条 bar 里。
+      */}
+      {filterPreview.where || quickFilter ? (
+        <FilterBar
+          // 真值只有 tab.filter 一处
+          applied={tab.filter}
+          draft={filterDraft}
+          loading={tab.loading}
+          previewLabel={filterPreview.label}
+          columns={table.columns}
+          onRemoveCondition={handleRemoveCondition}
+          onClearAll={handleClearFilter}
+          onApplyModel={handleApplyQuickModel}
+          // 未接线的宿主 → 浮层里该按钮禁用并说明
+          onOpenBuilder={handlers.onOpenFilterBuilder ? handleOpenBuilder : null}
+          quick={quickFilter}
+          onCloseQuick={() => setQuickFilter(null)}
+        />
+      ) : null}
+
+      {!writable ? (
+        <div className="readonly-banner" data-testid="readonly-banner" data-reason={edit.reason}>
+          {edit.message}
         </div>
       ) : null}
 
-      {!editable ? (
-        <div className="readonly-banner">
-          该表无主键/唯一键，无法安全定位行，请使用 SQL 编辑。网格已置为只读。
-        </div>
+      {showStateBlock ? (
+        <GridStateBlock state={gridState} onRetry={onReload ? handleReload : null} />
       ) : null}
 
-      {tab.loading ? <div className="banner">加载中…</div> : null}
-
-      {source && columns.length > 0 ? (
+      {showStateBlock ? null : source && columns.length > 0 ? (
         <DataGrid
           source={source}
           columns={columns}
           rowHeightMode={rowHeightMode}
-          editable={editable}
+          editable={writable}
           editWarning={strategy === 'unique' ? '可空唯一键定位，存在歧义风险' : null}
           sorts={tab.sorts}
           onSortChange={handleSort}
@@ -351,6 +528,13 @@ export function TablePane({
           onInspectCell={handlers.onInspectCell ? handleInspect : undefined}
           onCellCleared={handleCellCleared}
           onDuplicateRow={handleDuplicateRow}
+          // T19：新增空白行（工具栏 / 数据菜单 / 行号右键共用这一个入口）
+          onAddBlankRow={handlers.onAddBlankRow ? handleAddBlankRow : undefined}
+          // T38：撤销/重做（栈在 App，网格只做按钮与快捷键）
+          onUndo={onUndo ? handleUndo : undefined}
+          onRedo={onRedo ? handleRedo : undefined}
+          canUndo={canUndo}
+          canRedo={canRedo}
           // A17：INSERT/UPDATE 复制格式的限定名上下文
           database={tab.database}
           tableName={tab.tableName}
@@ -382,5 +566,15 @@ export function TablePane({
         />
       ) : null}
     </div>
+    </HeaderFilterContext.Provider>
   );
 }
+
+/**
+ * T24 的 Provider 包裹（同文件底部组件，避免 TablePane 主体再缩进一层）。
+ *
+ * 设计取舍见 `headerFilterBridge.ts`：DataGrid / HeaderContextMenu 不在
+ * 本次改动范围，桥走 context 穿透 —— 没挂 Provider 时（例如别的宿主直接渲染
+ * DataGrid）菜单项自动落到「禁用 + 原因」，不会静默失效。
+ */
+

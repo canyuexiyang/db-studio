@@ -45,7 +45,8 @@ export const DEMO_TABLE_META: TableMeta = {
     col('user_id', { dataType: 'bigint', nullable: false, comment: '下单用户 ID（关联 user.id）' }),
     col('amount', { dataType: 'decimal(12,2)', nullable: false, comment: '订单金额（元，含税）' }),
     col('status', { dataType: "enum('paid','unpaid','refunded')", nullable: false, comment: '支付状态：已付/未付/已退款' }),
-    col('created_at', { dataType: 'datetime', nullable: false, comment: '下单时间' }),
+    // T37：刻意用 datetime(6) 且**带微秒** —— 日期控件的保真断言需要一个会丢微秒的靶子
+    col('created_at', { dataType: 'datetime(6)', nullable: false, comment: '下单时间（含微秒）' }),
     col('remark', { dataType: 'varchar(255)', comment: '买家备注，可为空' }),
   ],
 };
@@ -62,7 +63,8 @@ export function buildDemoPayload(n: number) {
       String(1000 + (r % 900)),
       (r % 5000) === 0 ? null : ((r * 37) % 100000 / 100).toFixed(2),
       STATUSES[r % 3],
-      `2026-09-${String(1 + (r % 28)).padStart(2, '0')} 15:04:05`,
+      // 微秒随行号递增，任何「过一遍 Date」的实现都会把它抹成 .000 或四舍五入到毫秒
+      `2026-09-${String(1 + (r % 28)).padStart(2, '0')} 15:04:05.${String(r % 1_000_000).padStart(6, '0')}`,
       r % 17 === 0 ? null : r % 5 === 0 ? '' : `备注 ${r}`,
     ];
   }

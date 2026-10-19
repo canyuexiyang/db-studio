@@ -196,8 +196,43 @@ export interface FilterModel {
   groups: FilterGroup[];
 }
 
+/**
+ * 编辑器种子的空模型：**带一条占位行**，供筛选器打开时直接开始填。
+ *
+ * 🔴 占位行是「草稿」，不是已生效条件 —— 只有筛选器应该用它。
+ *    任何「往已生效模型里追加条件」的代码都必须用 `blankFilter()`：
+ *    否则占位行会被当成真条件写进 `tab.filter`，条件条上永久挂着一条
+ *    「未填完」（它不会进 WHERE，用户会以为筛选没生效）。
+ */
 export function emptyFilter(): FilterModel {
   return { groups: [{ id: 'g1', logic: 'AND', conditions: [{ id: 'c1', column: '', operator: 'eq', value: '' }] }] };
+}
+
+/** 空模型：一个空 AND 组，**不带占位条件**（用于程序化追加条件） */
+export function blankFilter(): FilterModel {
+  return { groups: [{ id: 'g1', logic: 'AND', conditions: [] }] };
+}
+
+/**
+ * 去掉「连列都没选」的占位条件 —— 它是编辑器里的空行，不是条件。
+ *
+ * 与 `isConditionComplete` 的「未填完」刻意不同：
+ *  · `column` 有值但值没填 → 是**用户写了一半的条件**，条件条要如实显示「未填完」；
+ *  · `column` 为空 → 连筛哪一列都没定，它对 WHERE 无意义、对用户无信息，
+ *    留着只会让条件条上永久挂一条「未填完」（`emptyFilter()` 的占位行就是这么漏进去的）。
+ *
+ * 返回 null = 清洗后没有任何条件（等价于「没有筛选」），调用方据此删键、
+ * 而不是存一条空模型。
+ */
+export function stripPlaceholderConditions(model: FilterModel | null): FilterModel | null {
+  if (!model) return null;
+  const groups = (model.groups ?? [])
+    .map((g) => ({
+      ...g,
+      conditions: (g.conditions ?? []).filter((c) => (c.column ?? '').trim() !== ''),
+    }))
+    .filter((g) => g.conditions.length > 0);
+  return groups.length === 0 ? null : { groups };
 }
 
 export function isFilterEmpty(model: FilterModel): boolean {

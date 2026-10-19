@@ -35,12 +35,20 @@ import {
 } from '@dbstudio/core-driver-mysql';
 import { ConnectionRuntime, systemClock, type Clock, type ConnectionState } from '@dbstudio/core-connection';
 import { SchemaCache, type DatabaseMeta, type TableMeta, type ObjectKind } from '@dbstudio/core-schema-cache';
-import { checkReadOnly, checkMutationStatement, extractSingleTable } from '@dbstudio/core-sql-guard';
+import { checkReadOnly, checkMutationStatement, checkDdlStatement, extractSingleTable } from '@dbstudio/core-sql-guard';
 import { encodeColumnar, type ColumnarPayload } from '@dbstudio/core-ipc-codec';
 import type { ConnectionConfig, SslConfig } from '@dbstudio/core-connection';
-import type { SqlStatement } from '@dbstudio/core-mutation';
-import type { ForeignKeyDto, ReferencedValuesDto } from '../shared/ipc-channels.js';
+import { interpretResult } from '@dbstudio/core-mutation';
+import type {
+  ForeignKeyDto,
+  ReferencedValuesDto,
+  MutationApplyRequest,
+  MutationApplyResult,
+  MutationConflict,
+} from '../shared/ipc-channels.js';
 import { schemaShapeChanged } from './schema-shape.js';
+// T44：编码前的硬预算（按字节 + 行数双阈值，实测依据见 scripts/bench-result-memory.mjs）
+import { applyResultBudget } from './result-budget.js';
 
 /** 网格默认加载行数（PRD §6.3.1） */
 export const DEFAULT_PAGE_SIZE = 3000;
@@ -1020,13 +1028,22 @@ export class SessionRegistry {
       // JOIN 结果的列头才能告诉用户「这一列来自哪张表」。
       // 只传列名的写法会把这个信息静默丢掉（且不会报错，正是最难查的那类）。
       const descriptors = res.fields.map((f) => ({ name: f.name, typeCode: f.type ?? 0, sourceTable: f.sourceTable ?? null }));
-      const payload = encodeColumnar(res.rows, descriptors, opts.columnTypes);
+      /**
+       * T44：编码前的硬预算。
+       *
+       * 🔴 必须在 `encodeColumnar` **之前**：一旦编码，主进程与渲染层会同时
+       *    持有这份结果（IPC 还会再复制一次），那时再截断内存已经付过了。
+       *    预算按字节 + 行数双阈值（依据见 scripts/bench-result-memory.mjs 实测）。
+       *    截断是**显式**的：`truncated` 会一路传到结果标签的「结果已截断」。
+       */
+      const budget = applyResultBudget(res.rows);
+      const payload = encodeColumnar(budget.rows, descriptors, opts.columnTypes);
       return {
         payload,
         elapsedMs,
-        rowCount: res.rows.length,
+        rowCount: budget.rows.length,
         cancelled,
-        truncated: false,
+        truncated: budget.truncated,
         queryId,
         // A12：单表 SELECT 检测。解析失败的语句返回 null（fail-closed），
         // 结果集保持只读；这里只做判定，真正写回仍走 mutationApply 全链路
@@ -1077,12 +1094,23 @@ export class SessionRegistry {
    *
    * 单事务执行：任何一条失败就整体回滚。
    * 只读连接在这里【再拦一次】 —— 纵深防御，不依赖调用方自觉。
+   *
+   * 🔴 T08/R15：逐条核对预期影响行数。
+   *
+   * 旧实现只把 `affectedRows` **求和**返回。于是一行 UPDATE 因为原值冲突命中 0 行时，
+   * 它只是让总数少 1，其余语句照常 COMMIT —— 用户看到「影响 N 行」，其中一条改动
+   * **根本没落库却被告知成功**。
+   *
+   * 现在：语句可声明 `expect: 'one'`，执行后逐条用 `interpretResult` 判定
+   * （1 → ok；0 → conflict；>1 → ambiguous）。任一不符 → 立即回滚整批，返回
+   * 结构化冲突明细（不抛异常），由渲染层保留草稿并引导用户处理。
    */
   async applyMutation(
     connId: string,
     database: string,
-    statements: Pick<SqlStatement, 'sql' | 'params'>[],
-  ): Promise<{ affected: number; elapsedMs: number; insertIds: (number | null)[] }> {
+    statements: MutationApplyRequest['statements'],
+    mode: MutationApplyRequest['mode'] = 'grid-write',
+  ): Promise<MutationApplyResult> {
     const s = this.sessions.get(connId);
     if (!s) throw new SessionError('NOT_CONNECTED', '连接未建立');
     if (!s.driver) throw new SessionError('NOT_CONNECTED', '连接未建立');
@@ -1092,7 +1120,7 @@ export class SessionRegistry {
     }
 
     if (statements.length === 0) {
-      return { affected: 0, elapsedMs: 0, insertIds: [] };
+      return { affected: 0, elapsedMs: 0, insertIds: [], outcome: 'ok', conflicts: [], committed: true };
     }
 
     /**
@@ -1104,9 +1132,13 @@ export class SessionRegistry {
      *
      * 这里在事务开始【之前】全量校验：任一条不合规 → 整批拒绝、一条都不执行
      * （与保存预演「一轮保存 = 单事务、任一失败整轮回滚」的语义一致）。
+     *
+     * T08 补充：DDL 入口（树右键删除/清空表）走 `checkDdlStatement`，否则
+     * `DROP TABLE` 会被表达式白名单误拒 —— 那是把两类语义混用造成的既有缺陷。
      */
     for (const st of statements) {
-      const guard = checkMutationStatement(st.sql, 'mysql');
+      const guard =
+        mode === 'ddl' ? checkDdlStatement(st.sql, 'mysql') : checkMutationStatement(st.sql, 'mysql');
       if (!guard.allowed) {
         // VALIDATION 而不是 READ_ONLY：这不是「连接只读」，是语句结构不合规
         throw new SessionError('VALIDATION', `写语句被安全校验拒绝：${guard.message}`);
@@ -1128,9 +1160,38 @@ export class SessionRegistry {
           await s.driver.query('USE ' + quoteDb(database));
           s.currentDb = database;
         }
-        for (const st of statements) {
+        for (let idx = 0; idx < statements.length; idx++) {
+          const st = statements[idx];
           const res = await s.driver.query(st.sql, st.params ?? []);
-          affected += res.affectedRows ?? 0;
+          const rows = res.affectedRows ?? 0;
+
+          // T08：只有声明了 expect:'one' 的语句才核对行数（DDL 缺省 'any'）
+          if ((st.expect ?? 'any') === 'one') {
+            const verdict = interpretResult(rows);
+            if (verdict.kind !== 'ok') {
+              const conflict: MutationConflict = {
+                index: idx,
+                kind: st.kind ?? 'update',
+                expect: 'one',
+                actual: rows,
+                outcome: verdict.kind,
+                reason: verdict.reason,
+                sql: st.sql,
+                executedBefore: insertIds.length,
+              };
+              await s.driver.query('ROLLBACK');
+              return {
+                affected: 0,
+                elapsedMs: Date.now() - startedAt,
+                insertIds: [],
+                outcome: verdict.kind,
+                conflicts: [conflict],
+                committed: false,
+              };
+            }
+          }
+
+          affected += rows;
           insertIds.push(res.insertId ?? null);
         }
         await s.driver.query('COMMIT');
@@ -1143,7 +1204,7 @@ export class SessionRegistry {
         }
         throw e;
       }
-      return { affected, elapsedMs: Date.now() - startedAt, insertIds };
+      return { affected, elapsedMs: Date.now() - startedAt, insertIds, outcome: 'ok', conflicts: [], committed: true };
     } catch (e) {
       // 事务中途断线同样要推进断线状态机（否则死连接顶着 connected 的牌位）
       this.noteDriverFailure(s, e);

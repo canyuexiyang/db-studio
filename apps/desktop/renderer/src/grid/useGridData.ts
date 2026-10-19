@@ -41,6 +41,15 @@ export function cellKey(row: number, col: number): string {
 export class GridDataSource {
   readonly reader: ColumnarReader;
   private readonly dirty = new Map<string, DirtyCell>();
+  /**
+   * T19：**显式新增的空白行**（行号 ≥ 已加载行数）。
+   *
+   * 为什么不能靠「有脏单元格」隐式表达：空白行可能一个可填的列都没有
+   * （自增 + 有默认值），此时它必须仍然出现在 INSERT 里 —— 但脏单元格集合是空的，
+   * 保存预演就会把这一行当成「不存在」（用户点了新增、界面上也看到了，保存后却没了）。
+   * 所以「这一行要被插入」必须是**独立事实**，不能从值里反推。
+   */
+  private readonly blankRows = new Set<number>();
   private rowOffset = 0;
 
   constructor(payload: ColumnarPayload) {
@@ -109,8 +118,40 @@ export class GridDataSource {
     this.dirty.delete(cellKey(row, col));
   }
 
+  /**
+   * T38：快照某格**当前**的待提交状态；返回 null = 该格干净（不是「值是 NULL」）。
+   *
+   * 撤销栈靠它拿到 before —— 这是「撤销后回到干净」与「撤销后留下一个 NULL 草稿」
+   * 的唯一区别，两者在预览里是两条不同的 SQL。
+   */
+  snapshotCell(row: number, col: number): { value: string | null; valueKind: 'literal' | 'sql-expr' } | null {
+    const d = this.dirty.get(cellKey(row, col));
+    if (!d) return null;
+    return { value: d.value, valueKind: d.valueKind === 'sql-expr' ? 'sql-expr' : 'literal' };
+  }
+
   clearAll(): void {
     this.dirty.clear();
+    this.blankRows.clear();
+  }
+
+  /** T19：把某一行标记为「显式新增的空白行」——保存时必须插入 */
+  markBlankRow(row: number): void {
+    this.blankRows.add(row);
+  }
+
+  /** T38：撤销「新增空白行」时把标记一并撤掉（只清脏格会留下空壳行） */
+  unmarkBlankRow(row: number): void {
+    this.blankRows.delete(row);
+  }
+
+  isBlankRow(row: number): boolean {
+    return this.blankRows.has(row);
+  }
+
+  /** 升序的空白行行号（保存预演据此补出「一个值都没有」的 INSERT） */
+  blankRowList(): number[] {
+    return [...this.blankRows].sort((a, b) => a - b);
   }
 
   get dirtyCount(): number {

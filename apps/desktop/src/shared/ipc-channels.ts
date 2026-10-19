@@ -100,6 +100,18 @@ export const IPC = {
   FILE_PICK_PRIVATE_KEY: 'file:pickPrivateKey',
   /** BLOB/图片另存到磁盘（A10）：渲染层传数据，主进程弹保存框并写文件 */
   FILE_SAVE_BINARY: 'file:saveBinary',
+
+  // T41：SQL 文件编辑闭环（打开 / 读取 / 保存&另存为）。
+  // ⚠️ 这三条只做【文件读写】，与「执行 SQL」是两件事 —— 打开不执行、保存不执行。
+  /** 弹打开框选 .sql 文件，返回绝对路径（取消返回 null） */
+  SQL_FILE_PICK: 'sqlfile:pick',
+  /** 读文件正文（主进程做编码探测与回退，返回给渲染层的永远是解好的文本） */
+  SQL_FILE_READ: 'sqlfile:read',
+  /**
+   * 保存 / 另存为。
+   * path 为 null → 弹保存框（另存为）；带 baseline → 先比对是否被外部改过。
+   */
+  SQL_FILE_SAVE: 'sqlfile:save',
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];
@@ -249,13 +261,64 @@ export interface RunQueryRequest {
 export interface MutationApplyRequest {
   connId: string;
   database: string;
-  statements: { sql: string; params: unknown[] }[];
+  /**
+   * T08：入口语义。缺省 `'grid-write'`。
+   *
+   * - `'grid-write'` —— 网格保存预演：语句可能含**原样嵌入的表达式**，走
+   *   `checkMutationStatement`（只放行 insert/update/delete + 强制 WHERE）。
+   * - `'ddl'` —— 树右键「删除表 / 清空表」等结构变更：走 `checkDdlStatement`
+   *   （只放行 DDL 白名单 + 单语句）。
+   *
+   * 🔴 拆开的理由：同一个入口承载两类语义，用一把白名单卡死会导致
+   *    「删除表」这类正常功能被表达式防线误伤（v0.6.1 实际缺陷）。
+   */
+  mode?: 'grid-write' | 'ddl';
+  /**
+   * T08/R15：写语句 + 逐条「预期影响行数」契约。
+   *
+   * - `expect: 'one'` —— 逐行 DML（编辑 UPDATE / DELETE、单行 INSERT）。主进程会
+   *   逐条核对 `affectedRows === 1`；不符则**整批回滚**并返回冲突明细，绝不当作成功。
+   * - `expect: 'any'`（缺省）—— DDL / 批量语句（DROP、批量删表等）。不做行数核对，
+   *   因为它们本来就可能影响 0 行（`DROP TABLE IF EXISTS` 已删除时返回 0）。
+   *
+   * 不能对**所有** mutation 都要求「恰好 1 行」—— 同一入口同时承载 DDL，那会把
+   * 正常的 DDL 判成失败；契约必须由调用方（知道自己发的是哪种语句）声明。
+   */
+  statements: {
+    sql: string;
+    params: unknown[];
+    expect?: 'one' | 'any';
+    kind?: 'insert' | 'update' | 'delete';
+  }[];
+}
+
+/** T08：一条未满足预期行数的语句（提交已回滚） */
+export interface MutationConflict {
+  /** 语句在本次提交中的序号（从 0 起） */
+  index: number;
+  kind: string;
+  expect: 'one' | 'any';
+  actual: number;
+  /** core-mutation.interpretResult 的判定：0 行 → conflict；多行 → ambiguous */
+  outcome: 'conflict' | 'ambiguous';
+  reason: string;
+  sql: string;
+  /** 已成功执行、但随本次提交一起被回滚的语句数 */
+  executedBefore: number;
 }
 
 export interface MutationApplyResult {
   affected: number;
   elapsedMs: number;
   insertIds: (number | null)[];
+  /**
+   * T08：整批结果的判定。`'conflict'` / `'ambiguous'` 时**整批已回滚**，
+   * `affected === 0`、`committed === false`，草稿必须保留。
+   */
+  outcome: 'ok' | 'conflict' | 'ambiguous';
+  conflicts: MutationConflict[];
+  /** 是否已提交落库（outcome === 'ok' 才为 true） */
+  committed: boolean;
 }
 
 export interface TableBundle {
@@ -395,6 +458,55 @@ export interface ReferencedValuesDto {
   /** 命中数超过 limit（UI 提示"仅显示前 N 条，请继续输入过滤"） */
   truncated: boolean;
 }
+
+// ---------- T41：SQL 文件编辑闭环 ----------
+
+/**
+ * 文件戳 —— 「外部有没有动过这个文件」的唯一判据。
+ *
+ * 两个字段都要：mtime 在部分文件系统上只有秒级精度，size 是独立的第二证据。
+ * 判定逻辑只在主进程 `main/sql-file.ts` 的 `detectExternalChange` 一处。
+ */
+export interface SqlFileStamp {
+  mtimeMs: number;
+  size: number;
+}
+
+export interface SqlFileReadResult {
+  path: string;
+  /** 已解好的正文（编码问题在主进程解决，渲染层绝不自己猜字节） */
+  text: string;
+  /** 识别出的编码名（'utf-8' / 'utf-8-bom' / 'utf-16le' / 'gb18030' / 'latin1' …） */
+  encoding: string;
+  /** 是否由 BOM 判定 */
+  bom: boolean;
+  /** 是否走了回退（非 UTF-8）—— true 时 note 必非空，UI 必须展示 */
+  fallback: boolean;
+  note: string | null;
+  stamp: SqlFileStamp;
+}
+
+export interface SqlFileSaveRequest {
+  /** 目标路径；null = 弹保存框（另存为） */
+  path: string | null;
+  content: string;
+  /** 另存为时的默认文件名 */
+  suggestedName?: string | null;
+  /** 打开 / 上次保存时记下的戳；给了就先比对，不给表示不检查 */
+  baseline?: SqlFileStamp | null;
+  /** 用户在冲突弹窗里明确选择「仍然覆盖」 */
+  force?: boolean;
+}
+
+/**
+ * 保存结果。
+ *
+ * 🔴 `conflict: true` 时**文件一个字节都没写** —— 先发现再写，
+ *    绝不是「写了再告诉用户覆盖错了」。
+ */
+export type SqlFileSaveResult =
+  | { conflict: false; path: string; stamp: SqlFileStamp }
+  | { conflict: true; path: string; current: SqlFileStamp | null };
 
 // ---------- 导入/导出（D3 + §6.6） ----------
 
@@ -618,6 +730,14 @@ export interface DbStudioApi {
 
   /** BLOB/图片另存（A10）：弹保存框并写入磁盘，返回实际路径；取消返回 null */
   saveBinary(req: { suggestedName: string; data: ArrayBuffer }): Promise<IpcResult<string | null>>;
+
+  // ---- T41：SQL 文件（打开只装载内容，不执行；保存只写文件，不执行）----
+  /** 弹打开框选 .sql 文件（取消返回 null） */
+  sqlFilePick(): Promise<IpcResult<string | null>>;
+  /** 读文件正文（含编码探测与回退） */
+  sqlFileRead(path: string): Promise<IpcResult<SqlFileReadResult>>;
+  /** 保存 / 另存为；被外部改过且未 force 时返回 conflict=true 且不写盘 */
+  sqlFileSave(req: SqlFileSaveRequest): Promise<IpcResult<SqlFileSaveResult>>;
 
   /**
    * W 板块：答复主进程的关闭询问。

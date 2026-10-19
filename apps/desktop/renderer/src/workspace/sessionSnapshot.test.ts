@@ -31,6 +31,8 @@ function tableTab(over: Partial<TableTabState> = {}): TableTabState {
     truncated: false,
     queryMs: null,
     loading: false,
+    // T47：加载错误也属于 tab 状态的一部分（序列化不该碰它）
+    loadError: null,
     dirtyCount: 0,
     ...over,
   };

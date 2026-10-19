@@ -110,6 +110,11 @@ contextBridge.exposeInMainWorld('dbStudio', {
   // BLOB/图片另存（A10）
   saveBinary: (req) => invoke(IPC.FILE_SAVE_BINARY, req),
 
+  // ---- T41：SQL 文件编辑闭环（打开不执行、保存不执行）----
+  sqlFilePick: () => invoke(IPC.SQL_FILE_PICK, null),
+  sqlFileRead: (path) => invoke(IPC.SQL_FILE_READ, path),
+  sqlFileSave: (req) => invoke(IPC.SQL_FILE_SAVE, req),
+
   // ---- 订阅 ----
   on: subscribe,
 

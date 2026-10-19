@@ -16,6 +16,14 @@
 // ⚠️ 走 renderer-types.ts 而不是 ipc-channels.ts：前者只 re-export 类型，
 //    不带任何实现。直接引 ipc-channels 有把 electron 拖进渲染层 bundle 的风险
 //    （S2 硬约束：首屏 ≤1.5MB）。
+//    T41 新加的 SqlFile* 三个 DTO 还没进 renderer-types 的导出清单（那份清单
+//    本轮不让改），所以这里用**相对路径的 type-only import** —— 与
+//    SqlEditorPanel 引 action-catalog 的写法同族，编译后被完全擦除，零运行时成本。
+import type {
+  SqlFileReadResult,
+  SqlFileSaveRequest,
+  SqlFileSaveResult,
+} from '../../src/shared/ipc-channels.js';
 import type {
   DbStudioApi,
   ConnListResult,
@@ -153,6 +161,13 @@ export interface Backend {
   pickPrivateKey(): Promise<string | null>;
   /** BLOB/图片另存（A10）：弹保存框写盘，返回实际路径（取消返回 null） */
   saveBinary(suggestedName: string, data: ArrayBuffer): Promise<string | null>;
+  // ---- T41：SQL 文件编辑闭环（打开不执行 / 保存不执行）----
+  /** 弹打开框选 .sql 文件（取消返回 null） */
+  sqlFilePick(): Promise<string | null>;
+  /** 读文件正文（编码探测与回退都在主进程完成） */
+  sqlFileRead(path: string): Promise<SqlFileReadResult>;
+  /** 保存 / 另存为；被外部改过且未 force → 返回 conflict=true 且未写盘 */
+  sqlFileSave(req: SqlFileSaveRequest): Promise<SqlFileSaveResult>;
   /** 订阅连接状态变化（D1 断线横幅）。返回退订函数 */
   onConnState(cb: (p: { id: string; state: string; lastError?: string | null }) => void): () => void;
   /**
@@ -240,6 +255,10 @@ export const ipcBackend: Backend = {
   secretState: () => unwrap(api().secretState()),
   pickPrivateKey: () => unwrap(api().pickPrivateKey()),
   saveBinary: (suggestedName, data) => unwrap(api().saveBinary({ suggestedName, data })),
+  // T41：SQL 文件（与「执行脚本」是两条链路：这里只读写文件，不执行任何语句）
+  sqlFilePick: () => unwrap(api().sqlFilePick()),
+  sqlFileRead: (path) => unwrap(api().sqlFileRead(path)),
+  sqlFileSave: (req) => unwrap(api().sqlFileSave(req)),
   // 推送通道：连接状态（D1 断线横幅的信号源）。
   // ⚠️ 字符串与 ipc-channels.ts 的 EVENT_CONN_STATE_CHANNEL 同值——
   //    渲染层不能 value-import shared 的实现（会把 electron 拖进 bundle），所以这里用字面量
@@ -317,8 +336,17 @@ const demoSnippets = new Map<string, Snippet>();
 const demoBackend: Backend = {
   kind: 'demo',
 
+  /**
+   * 🔴 每次都要返回**新对象/新数组**（与真 IPC 一致）。
+   *
+   * demo 里 `DEMO_CONNECTIONS` 是可变的内存源：如果直接把同一个数组/同一个
+   * 连接对象交给 React，`setConnections(sameRef)` 会被判定为「状态没变」而不
+   * 重渲染；而 `readOnlyConns` 这类 useMemo 也会因为依赖引用没变而**继续返回
+   * 旧映射**。现象：命令面板切了只读、连接配置真的改了，但界面里的只读状态
+   * 一直是旧的（e2e T49-3 就是这么红的）。
+   */
   connList: async () => ({
-    connections: DEMO_CONNECTIONS,
+    connections: DEMO_CONNECTIONS.map((c) => ({ ...c })),
     states: Object.fromEntries(DEMO_CONNECTIONS.map((c) => [c.id, { state: 'connected' as const, lastError: null }])),
     schemas: Object.fromEntries(DEMO_CONNECTIONS.map((c) => [c.id, DEMO_DATABASES])),
     stale: {},
@@ -465,6 +493,9 @@ const demoBackend: Backend = {
     affected: req.statements.length,
     elapsedMs: 5,
     insertIds: req.statements.map(() => null),
+    outcome: 'ok' as const,
+    conflicts: [],
+    committed: true,
   }),
 
   // demo：导出/导入模拟（浏览器 dev 模式下至少 UI 流程可走）
@@ -531,6 +562,18 @@ const demoBackend: Backend = {
   // 不能返回假路径让用户以为选成功了
   pickPrivateKey: async () => null,
   saveBinary: async () => null,
+  /**
+   * T41：demo（浏览器）模式没有主进程文件系统 —— **明确说做不到**，
+   * 而不是返回一个假路径或假成功（那会让用户以为文件已经存盘了）。
+   * 与 pickPrivateKey / saveBinary 的降级口径一致：读写都必须是真的。
+   */
+  sqlFilePick: async () => null,
+  sqlFileRead: async () => {
+    throw new Error('浏览器演示模式没有本地文件系统，打开/保存 SQL 文件需要桌面应用环境');
+  },
+  sqlFileSave: async () => {
+    throw new Error('浏览器演示模式没有本地文件系统，打开/保存 SQL 文件需要桌面应用环境');
+  },
   onConnState: () => () => {},
   onSchema: () => () => {},
 

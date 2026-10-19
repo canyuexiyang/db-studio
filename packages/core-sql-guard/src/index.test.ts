@@ -192,3 +192,58 @@ describe('V10 checkMutationStatement（网格保存链路结构校验）', () =>
     expect(checkMutationStatement('SELECT * FROM t WHERE id=1').allowed).toBe(false);
   });
 });
+
+/**
+ * T19：`INSERT INTO t () VALUES ()`（全默认值插入）的解析器兼容。
+ *
+ * 🔴 这组用例的由来是一次**真库门禁抓到的缺陷**，不是补测：
+ *    T19 的空白行生成 `INSERT INTO t () VALUES ()`，文本正确、单测全绿、UI 预演也正常，
+ *    但真机执行时被自己的守卫拦死 —— `node-sql-parser` 对「全默认值插入」的
+ *    **三种合法写法全部解析失败**（`() VALUES ()` / `VALUES ()` / `(c) VALUES (DEFAULT)`）。
+ *    也就是说：单测断「SQL 文本对不对」和 UI 断「页面上能不能点」都覆盖不到
+ *    「这条文本能不能过解析器」—— 只有把文本真的送进执行链路才暴露。
+ */
+describe('T19 全默认值 INSERT：解析前的等价改写', () => {
+  it('单行空插入放行（改写的存在意义）', () => {
+    const r = checkMutationStatement('INSERT INTO `db`.`t` () VALUES ()');
+    expect(r.allowed).toBe(true);
+    expect(r.statementType).toBe('insert');
+  });
+
+  it('多行空插入（脚本合并后可能出现）同样放行', () => {
+    expect(checkMutationStatement('INSERT INTO `db`.`t` () VALUES (), ()').allowed).toBe(true);
+  });
+
+  it('未加反引号的表名与空白差异不影响', () => {
+    expect(checkMutationStatement('insert   into t()values()').allowed).toBe(true);
+    expect(checkMutationStatement('INSERT INTO db.t () VALUES ()').allowed).toBe(true);
+  });
+
+  it('🔴 反例必须仍被拒：列清单为空但 VALUES 里有值（形状非法）', () => {
+    // 改写只认「全是空元组」这一种形状；带值的必须照旧 fail-closed，
+    // 否则等于修一个解析器兼容问题顺手开了个语法后门。
+    const r = checkMutationStatement('INSERT INTO `db`.`t` () VALUES (1)');
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('parse-failed');
+  });
+
+  it('🔴 反例必须仍被拒：空插入后面拼第二条语句（改写不能吞掉多语句）', () => {
+    const r = checkMutationStatement('INSERT INTO `db`.`t` () VALUES (); DROP TABLE `db`.`x`');
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('multi-statement-rejected');
+  });
+
+  it('🔴 反例必须仍被拒：只读模式下空插入依然是写语句', () => {
+    // 改写让解析**成功**了，所以拒绝原因从 parse-failed 变成 not-in-whitelist ——
+    // 这正是要盯的点：改写后仍必须落在白名单之外。
+    const r = checkReadOnly('INSERT INTO `db`.`t` () VALUES ()', M);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('not-in-whitelist');
+    expect(r.statementType).toBe('insert');
+  });
+
+  it('🔴 反例必须仍被拒：改写不能把别的非法语句顺便救活', () => {
+    expect(checkMutationStatement('INSERT INTO `db`.`t` () VALUES () SELECT 1').allowed).toBe(false);
+    expect(checkReadOnly('SELCT * FROM t', M).reason).toBe('parse-failed');
+  });
+});

@@ -75,6 +75,109 @@ export function sqlLiteral(v: CellValue): string {
 
 export type CopyFormat = 'tsv' | 'csv' | 'json' | 'markdown' | 'insert' | 'update';
 
+/**
+ * T23：单列 IN 清单的上限。
+ *
+ * MySQL 本身对 IN 列表长度没有硬上限，但语句体积与解析成本是实打实的：
+ * 超过这个量级，用户真正该做的是把它写成一个临时表 / 子查询，而不是粘一条巨型 IN。
+ * 所以到顶就**截断并如实报告**，不悄悄少给几个值（少给 = 查询结果静默变窄，最危险的那种错）。
+ */
+export const IN_LIST_LIMIT = 1_000;
+
+export interface InListInput {
+  /** 列名（已转义前的原始名；空串 = 无法确定单列 → 直接判不可用） */
+  column: string;
+  /** 该列的原始值，按行序 */
+  values: readonly CellValue[];
+  /** 上限，默认 IN_LIST_LIMIT */
+  limit?: number;
+  /** 是否把列名用反引号包起来（默认 true；列名含特殊字符时必需） */
+  quoteColumn?: boolean;
+}
+
+export interface InListResult {
+  /** 是否产出了可直接粘进 SQL 的条件 */
+  ok: boolean;
+  /** 完整条件，如 `` `id` IN (1, 2) `` / `` (`id` IN (1) OR `id` IS NULL) `` */
+  condition: string;
+  /** 实际进入 IN 列表的值个数（去重后、截断后） */
+  used: number;
+  /** 去重丢掉的值个数 */
+  deduped: number;
+  /** NULL 的个数（它们**不在** IN 列表里，见下方规则） */
+  nullCount: number;
+  /** 是否因上限被截断 */
+  truncated: boolean;
+  /** ok=false 时的中文原因 */
+  reason?: string;
+}
+
+/**
+ * 由**单列**的值生成可直接使用的 IN 条件（T23 / 报告 §5 D20、§10 I12）。
+ *
+ * 规则是显式的，因为它们全都会静默改变查询结果：
+ *  - **NULL 绝不进 IN 列表**：SQL 里 `x IN (NULL)` 的结果是 UNKNOWN，永远匹配不上，
+ *    写了等于没写，而且用户会以为「NULL 也被选中了」。所以 NULL 单独计数，
+ *    有 NULL 时把条件改成 `(col IN (…) OR col IS NULL)` —— 这才是「我选中的值全都要」。
+ *  - **全部是 NULL** → `col IS NULL`（不产出 `IN ()` 这种语法错误）。
+ *  - **去重**：IN 里重复值只影响可读性，但用户复制 100 行 ID 时重复很常见；
+ *    去重按 SameValueZero（BIGINT 以字符串形态到达，按字符串比较，不会退化成数字）。
+ *  - **上限**：到顶截断，`truncated=true` + 文案提示，绝不静默少给。
+ *  - **转义**：一律走既有的 `sqlLiteral`（NULL/空串/引号/反斜杠/BIGINT/二进制同一个口径），
+ *    这里不另写一套 —— 两套字面量规则迟早分叉，而分叉的那一侧就是注入面。
+ */
+export function buildInList(input: InListInput): InListResult {
+  const limit = input.limit ?? IN_LIST_LIMIT;
+  const col = input.column.trim();
+  const quoteColumn = input.quoteColumn !== false;
+  const fail = (reason: string): InListResult => ({
+    ok: false,
+    condition: '',
+    used: 0,
+    deduped: 0,
+    nullCount: 0,
+    truncated: false,
+    reason,
+  });
+
+  if (!col) return fail('只支持单列：请在某一个数据列上右键（行号列上没有「哪一列」可言）');
+  if (limit <= 0) return fail('上限设置无效');
+  if (input.values.length === 0) return fail('没有可用来生成 IN 清单的值');
+
+  const colRef = quoteColumn ? `\`${col.replace(/`/g, '``')}\`` : col;
+  const seen = new Set<unknown>();
+  const literals: string[] = [];
+  let nullCount = 0;
+  let deduped = 0;
+  let truncated = false;
+
+  for (const v of input.values) {
+    if (v === null || v === undefined) {
+      // 同一个 NULL 只计一次 —— 「有几个 NULL」对调用方没有意义，有没有才是关键
+      if (nullCount === 0) nullCount = 1;
+      continue;
+    }
+    if (seen.has(v)) {
+      deduped++;
+      continue;
+    }
+    if (literals.length >= limit) {
+      truncated = true;
+      break;
+    }
+    seen.add(v);
+    literals.push(sqlLiteral(v));
+  }
+
+  if (literals.length === 0 && nullCount === 0) return fail('选中的值都是重复项，没有可用内容');
+  if (literals.length === 0) {
+    return { ok: true, condition: `${colRef} IS NULL`, used: 0, deduped, nullCount, truncated: false };
+  }
+
+  const inPart = `${colRef} IN (${literals.join(', ')})`;
+  const condition = nullCount > 0 ? `(${inPart} OR ${colRef} IS NULL)` : inPart;
+  return { ok: true, condition, used: literals.length, deduped, nullCount, truncated };
+}
 export const COPY_FORMATS: readonly CopyFormat[] = ['tsv', 'csv', 'json', 'markdown', 'insert', 'update'];
 
 export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = {

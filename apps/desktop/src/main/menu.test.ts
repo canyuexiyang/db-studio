@@ -89,7 +89,9 @@ describe('buildMenuTemplate：命令枚举一致性', () => {
     expect(acc('导出数据…')).toBe('Shift+CmdOrCtrl+E');
     expect(acc('导入数据…')).toBe('Shift+CmdOrCtrl+I');
     expect(acc('设计表…')).toBe('Shift+CmdOrCtrl+D');
-    expect(acc('刷新表结构')).toBe('CmdOrCtrl+R');
+    // T11/R05：⌘R 已让位给 SQL「执行全部」（菜单层会抢在页面 keydown 之前，
+    // 老写法让 SQL 侧永远收不到 ⌘R）；刷新结构改用 macOS「重新加载」惯例键 ⇧⌘R
+    expect(acc('刷新表结构')).toBe('Shift+CmdOrCtrl+R');
     expect(acc('字体放大')).toBe('CmdOrCtrl+=');
     expect(acc('字体缩小')).toBe('CmdOrCtrl+-');
     expect(acc('重置字体')).toBe('CmdOrCtrl+0');
@@ -126,6 +128,40 @@ describe('buildMenuTemplate：命令枚举一致性', () => {
     expect(item?.click).toBeTruthy();
     item!.click!();
     expect(about).toBe(1);
+  });
+});
+
+/**
+ * T15（报告 §4.1）：菜单分组。
+ *
+ * 这组断言的**证伪能力**来自「反例那一条」：只断言「数据菜单里有这些项」是不够的
+ * —— 有人把 `导入数据…` 同时留在视图菜单里，正向断言照样绿。必须同时钉住
+ * 「视图菜单里**不得再有**」。
+ */
+describe('T15 菜单分组', () => {
+  const build = (): TestItem[] =>
+    buildMenuTemplate({ appName: 'DB Studio', send: () => undefined, showAbout: () => undefined }) as TestItem[];
+
+  const DATA_LABELS = ['保存修改…', '新增空白行', '筛选…', '导入数据…', '导出数据…', '设计表…'];
+
+  it('改数据 / 看数据的动作归「数据」菜单', () => {
+    const tpl = build();
+    const data = leaves(tpl.find((m) => m.label === '数据')?.submenu ?? []).map((it) => it.label);
+    for (const l of DATA_LABELS) expect(data, `「数据」菜单应含 ${l}`).toContain(l);
+  });
+
+  it('🔴 反例：「视图」菜单里不得再出现这些数据动作（否则正向断言会假绿）', () => {
+    const tpl = build();
+    const view = leaves(tpl.find((m) => m.label === '视图')?.submenu ?? []).map((it) => it.label);
+    for (const l of DATA_LABELS) expect(view, `「视图」菜单不该含 ${l}`).not.toContain(l);
+    // 视图只留「面板 + 外观」
+    expect(view).toContain('命令面板…');
+    expect(view).toContain('刷新表结构');
+    expect(view).toContain('切换主题');
+  });
+
+  it('顶层菜单数量不因分组而膨胀（报告 §4.1 的明确约束）', () => {
+    expect(build().length).toBeLessThanOrEqual(6);
   });
 });
 

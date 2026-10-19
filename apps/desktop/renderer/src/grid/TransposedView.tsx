@@ -33,6 +33,7 @@ import { rowsFromSelection, serializeCopy, cellToDisplay } from '@dbstudio/core-
 import { IconX, IconCopy } from '../ui/icons';
 import type { GridColumn } from './DataGrid';
 import type { GridDataSource } from './useGridData';
+import { isImeComposing } from '../ui/imeGuard';
 
 /** 转置视图里「一条数据行」占的列宽（固定值：转置是查看模式，不做逐列宽记忆） */
 const TRANSPOSED_COL_WIDTH = 180;
@@ -170,6 +171,8 @@ export function TransposedView({
    */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // T13：输入法组合期一律放行（Enter/Esc 是确认/取消候选词，不是提交/关闭）
+      if (isImeComposing(e)) return;
       if (e.key !== 'Escape') return;
       onClose();
       e.preventDefault();

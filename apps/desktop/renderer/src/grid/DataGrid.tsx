@@ -21,7 +21,7 @@
  *  - F5  选中统计回调 onSelectionSummary
  *
  * 网格 B 追加（编辑态，2026-09-26）：
- *  - A2  ⌘0 设 NULL：再按一次 = 清除本格脏改动（幂等语义，见 setCellNull 注释）
+ *  - A2  ⌥0 设 NULL：再按一次 = 清除本格脏改动（幂等语义，见 setCellNull 注释）
  *  - A3  单元格右键菜单（grid/CellContextMenu.tsx）
  *  - A4  ⌘D 插入复制行：经 onDuplicateRow 上抛，App 侧用 core-mutation 构造脏行
  *  - A17 ⌘C 复制改为组件内处理：选中区（无选区退化聚焦行），默认 TSV，
@@ -72,13 +72,23 @@ import {
   type SelectionAggregate,
 } from '@dbstudio/core-grid-view';
 import { validateSqlExpression } from '@dbstudio/core-mutation';
-import { rowsFromSelection, serializeCopy, cellToDisplay, type CopyFormat } from '@dbstudio/core-clipboard';
-import { IconSearch, IconColumns, IconWrap, IconJumpDown, IconX, IconCopy, IconFreeze, IconTranspose, IconFn, IconLink, IconBatchEdit } from '../ui/icons';
+import {
+  rowsFromSelection,
+  serializeCopy,
+  cellToDisplay,
+  buildInList,
+  IN_LIST_LIMIT,
+  type CopyFormat,
+} from '@dbstudio/core-clipboard';
+import { IconSearch, IconColumns, IconWrap, IconJumpDown, IconX, IconCopy, IconFreeze, IconTranspose, IconFn, IconLink, IconBatchEdit, IconPlus, IconClock, IconUndo, IconRedo } from '../ui/icons';
+// T11/T50：键位展示串的唯一来源（本文件的 ⇧⌘E / ⌘0 副本已按裁定改掉）
+import { displayOf } from '../../../src/shared/action-catalog.js';
 import { CellContextMenu, type CellContextMenuState } from './CellContextMenu';
 import { HeaderContextMenu, type HeaderContextMenuState } from './HeaderContextMenu';
 import { TransposedView } from './TransposedView';
 import { ForeignKeyPicker } from './ForeignKeyPicker';
 import { buildGroupStripes, stripeClassAt, type GroupStripeClass } from './groupStripe';
+import { isImeComposing } from '../ui/imeGuard';
 import {
   columnValues,
   columnTypeText,
@@ -89,16 +99,62 @@ import {
   sourceTableOf,
   type GridDataSource,
 } from './useGridData';
+import { ValueEditorPopover } from './editors/ValueEditorPopover';
+import { EnumCellEditor } from './editors/EnumCellEditor';
+import {
+  acceptsEmptyString,
+  canDiscardCell,
+  canEditValue,
+  canUseDefault,
+  describeDefaultAction,
+  resolveColumnTypeInfo,
+  resolveValueEdit,
+  type CellEditContext,
+  type CellValueAction,
+  type ColumnTypeInfo,
+  type MenuItemState,
+} from './editors/valueEditorModel';
+
+/**
+ * T11/T50：表达式模式的键位展示串从动作目录取。
+ * 手写副本必然漂移 —— 本文件先前到处写着 ⇧⌘E，已被 T11 裁定让位给「导出数据」。
+ *
+ * （「设为 NULL」的 ⌥0 展示串挂在 CellContextMenu 里，用同一条目录数据。）
+ */
+const EXPR_MODE_KEY = displayOf('grid-expr-mode') ?? '⌘E';
+
+/**
+ * T36：拿不到类型信息时的兜底 —— 模块级常量（每次渲染新建会让 useMemo 全失效）。
+ */
+const UNKNOWN_COLUMN_INFO: ColumnTypeInfo = { kind: 'unknown', base: '', enumValues: null };
+
+/** T25：菜单还没打开时的占位状态（禁用 + 空原因） */
+const DISABLED_STATE: MenuItemState = { enabled: false, reason: '' };
 
 
 export interface GridColumn {
   name: string;
-  /** 用于右键/详情面板展示 */
+  /** 用于右键/详情面板展示。**MySQL COLUMN_TYPE 原文**（ENUM 形如 `enum('a','b')`） */
   dataType: string;
   width: number;
   isPrimaryKey?: boolean;
   /** C4：列注释，进入表头 tooltip（名称 · 类型 · 注释） */
   comment?: string;
+  /**
+   * T25：数据库默认值（information_schema 的 COLUMN_DEFAULT 原文）。**可选**。
+   * - `undefined` = 宿主未透传（**未知**）→ 不因"可能没有默认值"而禁用；
+   * - `null` = 已确认没有 DEFAULT 子句 → 「使用默认值」禁用并给原因。
+   */
+  defaultValue?: string | null;
+  /**
+   * T36：ENUM/SET 的合法值（DDL 顺序）。**可选** —— 不给时从 `dataType` 串解析
+   *（`enum('a','b')`）；两处都拿不到 → ENUM 入口禁用并给原因（红线 6：不造假下拉）。
+   */
+  enumValues?: string[] | null;
+  /**
+   * T25/T36：列是否可空。**可选** —— 未知时「设为 NULL」保持可用，由数据库执行时判定。
+   */
+  nullable?: boolean | null;
 }
 
 /**
@@ -166,7 +222,7 @@ export interface DataGridProps {
    */
   onInspectCell?: (row: number, col: number) => void;
   /**
-   * A2：本格脏改动被清除（⌘0 幂等清除 / 右键「清除本格改动」）后回调，
+   * A2：本格脏改动被清除（⌥0 幂等清除 / 右键「清除本格改动」）后回调，
    * 宿主用它刷新 dirtyCount 角标。设 NULL 本身走 onCellEdited(row, col, null)。
    */
   onCellCleared?: (row: number, col: number) => void;
@@ -176,6 +232,24 @@ export interface DataGridProps {
    * 未接线或只读网格时 ⌘D 静默无效。
    */
   onDuplicateRow?: (row: number) => void;
+  /**
+   * T19（报告 §5 D16）：新增**空白行**上抛（工具栏 / 行号右键 / 数据菜单共用）。
+   *
+   * 与 onDuplicateRow 的差别：不需要任何行值 —— 复制行是"抄一行"，新增行是"给一张空表
+   * 补一行"，两者在**空表**上只有后者成立（没有行可抄）。
+   */
+  onAddBlankRow?: () => void;
+  /**
+   * T38：未保存改动的撤销/重做。
+   *
+   * 栈在宿主侧（一张表一个），网格只负责把 ⌘Z / ⇧⌘Z 与工具栏按钮转过去。
+   * `canUndo/canRedo` 只影响按钮可用状态 —— **快捷键不受它影响**，
+   * 因为栈的深度在点击那一刻才确定（宿主 rerender 存在一帧延迟）。
+   */
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
   /** A17：INSERT/UPDATE 复制格式的限定名上下文（TablePane 透传 tab.database/tableName） */
   database?: string;
   tableName?: string;
@@ -324,6 +398,11 @@ export function DataGrid(props: DataGridProps) {
     onInspectCell,
     onCellCleared,
     onDuplicateRow,
+    onAddBlankRow,
+    onUndo,
+    onRedo,
+    canUndo = false,
+    canRedo = false,
     database,
     tableName,
     locateColumns,
@@ -383,11 +462,23 @@ export function DataGrid(props: DataGridProps) {
   );
 
   const [editing, setEditing] = useState<CellPos | null>(null);
+  /**
+   * 🔴 `editing` 的同步镜像 —— 用来拦住**同一次编辑被提交两次**。
+   *
+   * 现场：Enter 提交 → `commitEditValue` 里 `setEditing(null)` 之后又去
+   * `viewport.focus()`，输入框随即 blur，而 `onBlur` 那个闭包里的 `editing`
+   * 还是**上一帧的值**（React 批处理，state 尚未生效）→ 又提交一次。
+   * 表现（真机 e2e 抓到）：一次编辑进两次撤销栈 —— 用户按一次 ⌘Z 脏格还在，
+   * 得按两次；重做同理。两次 `onCellEdited` 还会把「动作前状态」覆盖成
+   * 「已经是草稿的值」，撤销语义直接失效。
+   * 所以：判定与清空都以这个 ref 为准（state 只负责渲染）。
+   */
+  const editingRef = useRef<CellPos | null>(null);
   const [editValue, setEditValue] = useState('');
   /**
    * V10：单元格编辑的 SQL 表达式模式（DataGrip 2026.2 同款）。
    * 开启后编辑框里的文本按「SQL 表达式」提交（NOW() / amount * 2 原样嵌入），
-   * 关闭则是普通字面量。⇧⌘E 在编辑态切换；单元格右键菜单也能进入。
+   * 关闭则是普通字面量。⌘E 在编辑态切换；单元格右键菜单也能进入。
    */
   const [editExprMode, setEditExprMode] = useState(false);
   /** V10：表达式模式下的即时校验结果（null = 合法；否则展示原因并阻止提交） */
@@ -974,10 +1065,10 @@ export function DataGrid(props: DataGridProps) {
   // ---- A2/A17/A4：设 NULL · 选中区复制 · 复制行（网格 B） ----
 
   /**
-   * ⌘0 的幂等语义：
+   * ⌥0 的幂等语义：
    *  - 当前展示值不是 NULL → 走既有 onCellEdited(row, col, null)：进脏叠加层，
    *    由宿主按既有链路构造 UPDATE/INSERT，保存预演链路完全不变；
-   *  - 当前展示值已是 NULL → 清除本格脏改动回到原始值。即「再按一次 ⌘0 =
+   *  - 当前展示值已是 NULL → 清除本格脏改动回到原始值。即「再按一次 ⌥0 =
    *    撤销设 NULL」；原始值本就是 NULL 且无脏改动时是空操作（菜单项在该态禁用）。
    * 只读网格忽略（B5：可编辑判定只有 isEditable 一处，宿主传入的 editable 即其结论）。
    */
@@ -996,7 +1087,10 @@ export function DataGrid(props: DataGridProps) {
     [editable, source, onCellEdited, onCellCleared, bumpSelection],
   );
 
-  /** 右键菜单「清除本格改动」（A2 同语义，仅在有脏改动时出现） */
+  /**
+   * T25：「撤销本格」= 清掉本格的待提交改动，回到库中原值。
+   * 与 ⌥0 的幂等清除同义；只读网格也允许（撤销只是丢弃本地改动，不产生写）。
+   */
   const clearCellDirty = useCallback(
     (row: number, col: number) => {
       source.clearCell(row, col);
@@ -1096,7 +1190,7 @@ export function DataGrid(props: DataGridProps) {
   /**
    * V10：切换表达式模式。
    *
-   * 🔴 只在**编辑态**可切（⇧⌘E / 右键菜单）：模式是「这一次输入的解释方式」，
+   * 🔴 只在**编辑态**可切（⌘E / 右键菜单）：模式是「这一次输入的解释方式」，
    * 不是单元格的持久属性 —— 挂在焦点格上会让用户切走再切回时状态莫名变化。
    * 切到表达式模式时：清掉 NULL 字面量的解释（表达式里 NULL 就是 SQL 的 NULL，
    * 不该被当成「设为空值」的输入约定），并立刻校验一次当前文本。
@@ -1118,6 +1212,27 @@ export function DataGrid(props: DataGridProps) {
    *    还是旧值 —— 用「陈旧状态」决定是否移动焦点，会在第一次提交失败后
    *    把焦点错误地推走（真机上表现为「表达式写错还跳了格」）。
    */
+  /**
+   * 提交一个值（不含校验）—— 编辑器/下拉/右键动作共用这一条出口。
+   * 返回值语义与 commitEdit 一致（true = 已提交并关闭编辑态）。
+   */
+  const commitEditValue = useCallback(
+    (value: string | null, valueKind: 'literal' | 'sql-expr'): boolean => {
+      // 防重入：同一格的一次编辑只能落一次（见 editingRef 的说明）
+      if (!editing || editingRef.current === null) return false;
+      editingRef.current = null;
+      onCellEdited(editing.row, editing.col, value, valueKind);
+      setEditing(null);
+      setEditExprMode(false);
+      setEditExprError(null);
+      bumpSelection();
+      // 焦点回到视口：否则编辑器卸载后焦点落回 body，后续方向键/⌘C 全失效
+      viewportRef.current?.focus();
+      return true;
+    },
+    [editing, onCellEdited, bumpSelection],
+  );
+
   const commitEdit = useCallback((): boolean => {
     if (!editing) return false;
     const raw = editValue;
@@ -1130,27 +1245,16 @@ export function DataGrid(props: DataGridProps) {
         setEditExprError(reason);
         return false; // 留在编辑态，让用户改（Esc 才是放弃）
       }
-      onCellEdited(editing.row, editing.col, raw.trim(), 'sql-expr');
-      setEditing(null);
-      setEditExprMode(false);
-      setEditExprError(null);
-      bumpSelection();
-      viewportRef.current?.focus();
-      return true;
+      return commitEditValue(raw.trim(), 'sql-expr');
     }
 
     const isNullLiteral = raw.trim().toUpperCase() === 'NULL' || raw.trim() === '\\N';
-    onCellEdited(editing.row, editing.col, isNullLiteral ? null : raw);
-    setEditing(null);
-    setEditExprError(null);
-    bumpSelection();
-    // 焦点回到视口：否则编辑器卸载后焦点落回 body，后续方向键/⌘C 全失效
-    viewportRef.current?.focus();
-    return true;
-  }, [editing, editValue, editExprMode, validateExpr, onCellEdited, bumpSelection]);
+    return commitEditValue(isNullLiteral ? null : raw, 'literal');
+  }, [editing, editValue, editExprMode, validateExpr, commitEditValue]);
 
   /** 退出编辑态的统一收尾（Esc / 切换单元格都要清表达式模式，避免状态泄漏到下一格） */
   const cancelEdit = useCallback(() => {
+    editingRef.current = null;
     setEditing(null);
     setEditExprMode(false);
     setEditExprError(null);
@@ -1200,6 +1304,8 @@ export function DataGrid(props: DataGridProps) {
       setEditValue(cur === null || cur === undefined ? '' : String(cur));
       setEditExprMode(useExpr);
       setEditExprError(null);
+      // ref 先同步，state 只负责渲染（提交判据一律看 ref）
+      editingRef.current = pos;
       setEditing(pos);
     },
     [editable, source],
@@ -1208,6 +1314,9 @@ export function DataGrid(props: DataGridProps) {
   // ---- 键盘（§9.2：全 Cmd，不用 Ctrl） ----
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // T13：输入法组合期一律放行 —— 组合中的 Enter 是确认候选词，
+      // 不该 commitEdit()、也不该把 Esc 当成「放弃编辑」。
+      if (isImeComposing(e)) return;
       const meta = e.metaKey || e.ctrlKey;
       const dir =
         e.key === 'ArrowUp' ? 'up'
@@ -1221,8 +1330,11 @@ export function DataGrid(props: DataGridProps) {
           cancelEdit(); // 撤销本格改动（含表达式模式）
           viewportRef.current?.focus();
           e.preventDefault();
-        } else if (meta && e.shiftKey && e.key.toLowerCase() === 'e') {
-          // V10：⇧⌘E 切换 SQL 表达式模式（DataGrip 同款键位）
+        } else if (meta && !e.shiftKey && e.key.toLowerCase() === 'e') {
+          // V10：切换 SQL 表达式模式。
+          // 🔴 T11/T12：原为 ⇧⌘E，与原生菜单「导出数据…」同键 —— macOS 菜单
+          //    accelerator 先于页面 keydown，⇧⌘E 实际永远只导出、切不到表达式模式。
+          //    改 ⌘E（仅编辑态，不与全局冲突，见 action-catalog.ts）。
           toggleExprMode();
           e.preventDefault();
           e.stopPropagation();
@@ -1276,8 +1388,16 @@ export function DataGrid(props: DataGridProps) {
         e.preventDefault();
         return;
       }
-      if (meta && e.key === '0') {
-        // A2：设 NULL / 幂等清除（编辑中不会走到这里 —— editing 分支已提前返回）
+      /**
+       * A2：设 NULL / 幂等清除。
+       * 🔴 T11/T12：原为 ⌘0，与原生菜单「重置字体」同键 —— 菜单层先拦截，
+       *    网格这个键实际按不动。改 ⌥0（编辑中不会走到这里 —— editing 分支已提前返回）。
+       *
+       * 🔴 必须认 `e.code === 'Digit0'`：macOS 按住 Option 时 `e.key` 是**组合字符**
+       *    （US 布局下 Option+0 = 'º'），只判 `e.key === '0'` 会永远收不到。
+       *    保留 `e.key === '0'` 作非常规布局/其它平台的兜底。
+       */
+      if (e.altKey && !meta && (e.code === 'Digit0' || e.key === '0')) {
         setCellNull(selection.focus.row, selection.focus.col);
         e.preventDefault();
         return;
@@ -1319,6 +1439,29 @@ export function DataGrid(props: DataGridProps) {
         e.preventDefault();
         return;
       }
+      /**
+       * T19：⌥⌘N 新增空白行。
+       * 🔴 必须判 `e.code === 'KeyN'` 只用来确认是「N 键」，键位本身走 catalog 的
+       *    `Alt+CmdOrCtrl+N`；这里先做**哨兵校验**：meta + alt 同时按下才认，
+       *    否则会把 ⌘N（新建查询）也吞掉。
+       */
+      if (meta && e.altKey && (e.code === 'KeyN' || e.key.toLowerCase() === 'n')) {
+        if (editable && onAddBlankRow) onAddBlankRow();
+        e.preventDefault();
+        return;
+      }
+      /**
+       * T38：⌘Z 撤销、⇧⌘Z 重做**未保存改动**。
+       *
+       * 只在网格焦点下生效，且**编辑态提前 return**（上面已有 guard）——
+       * 否则会把输入框里的文本撤销劫持成网格撤销，用户改一个字就丢一整批改动。
+       */
+      if (meta && e.key.toLowerCase() === 'z') {
+        if (e.shiftKey) onRedo?.();
+        else onUndo?.();
+        e.preventDefault();
+        return;
+      }
       if (e.key === 'Enter') {
         beginEdit(selection.focus);
         e.preventDefault();
@@ -1350,7 +1493,10 @@ export function DataGrid(props: DataGridProps) {
       revealRow,
       setCellNull,
       copySelection,
+      onUndo,
+      onRedo,
       onDuplicateRow,
+      onAddBlankRow,
     ],
   );
 
@@ -1580,6 +1726,147 @@ export function DataGrid(props: DataGridProps) {
   // ---- A3：单元格右键菜单 ----
   const [ctxMenu, setCtxMenu] = useState<CellContextMenuState | null>(null);
 
+  // ---- T25/T36/T37：单元格值编辑浮层 ----
+  /**
+   * 浮层目标格 + 锚点坐标。
+   *
+   * 与 `editing`（格内单行输入）刻意分开：浮层是**另一种编辑形态**
+   *（长文本换行 / ENUM 下拉 / 日期时间控件），两者互斥 —— 开浮层就退格内编辑，
+   * 否则同一格会出现两个输入框互相抢焦点。
+   */
+  const [valueEditor, setValueEditor] = useState<{
+    row: number;
+    col: number;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  /** 每列的类型信息（ENUM/日期判定只算一次，列数组变化才重算） */
+  const columnInfos = useMemo<ColumnTypeInfo[]>(
+    () => columns.map((c) => resolveColumnTypeInfo(c)),
+    [columns],
+  );
+
+  /**
+   * T36/T37：正在编辑的那一格的类型 —— 决定格内是 ENUM 下拉、日期控件入口，
+   * 还是普通文本输入框。
+   */
+  const editingInfo: ColumnTypeInfo | null = editing
+    ? columnInfos[editing.col] ?? UNKNOWN_COLUMN_INFO
+    : null;
+  /** T36：ENUM 列且**拿得到定义值**才给下拉（拿不到就退回文本，绝不假造选项） */
+  const editingIsEnum =
+    editingInfo?.kind === 'enum' && (editingInfo.enumValues?.length ?? 0) > 0;
+  /** T36：ENUM 下拉要区分「当前值是 NULL」与「当前值是空串成员」 */
+  const editingCurrentIsNull = !!editing && source.value(editing.row, editing.col) == null;
+  /** T37：日期/日期时间/时间列 → 格内多一个"辅助控件"入口 */
+  const editingIsDateTime =
+    !!editingInfo &&
+    (editingInfo.kind === 'datetime' ||
+      editingInfo.kind === 'date' ||
+      editingInfo.kind === 'time');
+
+  /** 构造某格的编辑上下文（T25 四个动作的判定输入） */
+  const contextOf = useCallback(
+    (row: number, col: number, column: string): CellEditContext => {
+      const c = columns[col];
+      const info = columnInfos[col] ?? UNKNOWN_COLUMN_INFO;
+      return {
+        editable,
+        readOnly,
+        isInsertRow: row >= source.rowCount,
+        column,
+        dataType: c?.dataType ?? '',
+        cellDirty: source.isDirty(row, col),
+        enumValues: info.enumValues,
+        nullable: c?.nullable ?? null,
+        defaultValue: c?.defaultValue,
+      };
+    },
+    [columns, columnInfos, editable, readOnly, source, selVersion],
+  );
+
+  /** T25：四个动作的统一出口（'edit' 由调用方自己开浮层，这里不处理） */
+  const applyValueEdit = useCallback(
+    (row: number, col: number, action: CellValueAction, ctx: CellEditContext) => {
+      const plan = resolveValueEdit(action, ctx);
+      if (!plan) return; // 上下文不允许 —— 菜单项本就该是 disabled，这里是第二道防线
+      if (plan.kind === 'commit') onCellEdited(row, col, plan.value, plan.valueKind);
+      else if (plan.kind === 'discard') clearCellDirty(row, col);
+    },
+    [onCellEdited, clearCellDirty],
+  );
+
+  /** T25/T36/T37：打开某格的值编辑浮层（会退出格内编辑态） */
+  const openValueEditor = useCallback(
+    (row: number, col: number, x: number, y: number) => {
+      cancelEdit();
+      setValueEditor({ row, col, x, y });
+    },
+    [cancelEdit],
+  );
+
+  const closeValueEditor = useCallback(() => {
+    setValueEditor(null);
+    viewportRef.current?.focus();
+  }, []);
+
+  /**
+   * T25：右键那一格的编辑上下文（四个动作共用一个上下文）。
+   *
+   * 🔴 与 `rowDirtyCellsForMenu` 同一条纪律：**菜单打开时算一次**，
+   *    这样「撤销本格」的 disabled 状态与菜单里其它项读的是同一份快照
+   *    （否则「刚编辑完右键」可能出现「按钮可点但点下去没变化」）。
+   */
+  const ctxEditContext = useMemo<CellEditContext | null>(
+    () => (ctxMenu ? contextOf(ctxMenu.row, ctxMenu.col, ctxMenu.column) : null),
+    [ctxMenu, contextOf],
+  );
+
+  /**
+   * T20：菜单打开时，「选中行」上**真实存在**的脏格。
+   *
+   * 它同时是两件事的输入：
+   *  - `canDiscardRows`（没有脏格就不该出现「撤销选中行的改动」—— 出现了就是假 UI）；
+   *  - 行级撤销的实际作用对象（只撤销选中行的脏格，别的行原样保留）。
+   *
+   * 依赖 `selVersion` 是为了让「先撤销再右键」拿到新鲜结果 —— `ctxMenu` 只在打开时变，
+   * 光靠它不足以反映中途的脏格变化。
+   */
+  const rowDirtyCellsForMenu = useMemo(() => {
+    if (!ctxMenu) return [] as { row: number; col: number }[];
+    const rows = new Set(ctxMenu.rows);
+    return source.dirtyCells().filter((c) => rows.has(c.row)).map((c) => ({ row: c.row, col: c.col }));
+  }, [ctxMenu, source, selVersion]);
+
+  /**
+   * T23：单列 IN 清单 —— 在**菜单打开时**就把它算出来，不是等用户点了再算。
+   *
+   * 两个理由：
+   *  1. 菜单项文案要如实报「几个值 / 有没有截断」—— 用户得在**动手前**知道
+   *     这次复制不完整，而不是粘进 SQL 之后才发现少了值；
+   *  2. 单列语义必须在菜单层锁死：行号右键（`column === ''`）没有「哪一列」可言，
+   *     一律不给这一项 —— 这是报告 §5 D20「明确选区与整行」的直接落实。
+   */
+  const inListForMenu = useMemo(() => {
+    if (!ctxMenu || !ctxMenu.column) return null;
+    const i = columns.findIndex((c) => c.name === ctxMenu.column);
+    if (i < 0) return null;
+    const rows = ctxMenu.rows.length > 0 ? ctxMenu.rows : [ctxMenu.row];
+    const res = rowsFromSelection({
+      ranges: [],
+      focusRow: rows[0],
+      selectedRows: rows,
+      rowCount,
+      colCount: columns.length,
+      columnIndexes: [i],
+      valueAt: (r, c) => source.value(r, c),
+    });
+    const values = res.rows.map((r) => r[0]);
+    const built = buildInList({ column: ctxMenu.column, values });
+    return built.ok ? { col: ctxMenu.column, built } : null;
+  }, [ctxMenu, columns, rowCount, source]);
+
   /** 菜单动作统一收尾：关菜单 + 焦点回视口（规格：动作执行后焦点回视口） */
   const closeCtxAndFocus = useCallback(() => {
     setCtxMenu(null);
@@ -1710,6 +1997,63 @@ export function DataGrid(props: DataGridProps) {
 
       {/* A5：网格顶部细工具栏（不属于滚动区；viewport 顶部让位见 data-grid.css） */}
       <div className="gd-toolbar">
+        {/**
+         * T19（报告 §5 D16）：新增空白行。
+         *
+         * 放在工具栏**最前**并加分隔线：它是「我要往这张表里加一条」的第一直觉入口，
+         * 且**空表也成立** —— 复制行（⌘D）在空表上没有源行可抄，只有它能用。
+         * 禁用时给出原因，不做「能点但没反应」。
+         */}
+        <button
+          type="button"
+          className="gd-tool-btn"
+          data-testid="btn-add-row"
+          title={
+            !editable
+              ? '该表只读（无主键/唯一键，或连接只读），不能新增行'
+              : !onAddBlankRow
+                ? '新增空白行（宿主未接线）'
+                : `新增空白行（${displayOf('grid-add-row')}）—— 只标脏，落库走保存预演`
+          }
+          disabled={!editable || !onAddBlankRow}
+          onClick={() => onAddBlankRow?.()}
+        >
+          <IconPlus size={13} />
+        </button>
+        <div className="gd-tool-sep" />
+
+        {/**
+         * T38：撤销 / 重做**未保存改动**。
+         *
+         * 只在宿主接了回调时渲染（没接就不画按钮，不做「点了没反应」的假 UI）；
+         * 栈空时禁用并说明原因。⌘Z / ⇧⌘Z 与这里等价。
+         */}
+        {onUndo || onRedo ? (
+          <>
+            <button
+              type="button"
+              className="gd-tool-btn"
+              data-testid="btn-undo"
+              disabled={!canUndo}
+              title={canUndo ? '撤销上一次未保存改动（⌘Z）' : '没有可撤销的未保存改动'}
+              onClick={() => onUndo?.()}
+            >
+              <IconUndo size={13} />
+            </button>
+            <button
+              type="button"
+              className="gd-tool-btn"
+              data-testid="btn-redo"
+              disabled={!canRedo}
+              title={canRedo ? '重做（⇧⌘Z）' : '没有可重做的改动'}
+              onClick={() => onRedo?.()}
+            >
+              <IconRedo size={13} />
+            </button>
+            <div className="gd-tool-sep" />
+          </>
+        ) : null}
+
         <button type="button" className="gd-tool-btn" title="在结果集中查找（⌘F）" onClick={openSearch}>
           <IconSearch size={13} />
         </button>
@@ -1815,6 +2159,7 @@ export function DataGrid(props: DataGridProps) {
             value={jumpValue}
             onChange={(e) => setJumpValue(e.target.value.replace(/[^\d]/g, ''))}
             onKeyDown={(e) => {
+              if (isImeComposing(e)) return;
               if (e.key === 'Enter') {
                 submitJump();
                 e.preventDefault();
@@ -1865,6 +2210,7 @@ export function DataGrid(props: DataGridProps) {
               setBatchError(null);
             }}
             onKeyDown={(e) => {
+              if (isImeComposing(e)) return;
               if (e.key === 'Enter') {
                 applyBatch();
                 e.preventDefault();
@@ -2130,8 +2476,8 @@ export function DataGrid(props: DataGridProps) {
                               data-testid="expr-toggle"
                               title={
                                 editExprMode
-                                  ? 'SQL 表达式模式：开（⇧⌘E 切回字面量）'
-                                  : '切到 SQL 表达式模式（⇧⌘E）：NOW() 等原样嵌进 UPDATE'
+                                  ? `SQL 表达式模式：开（${EXPR_MODE_KEY} 切回字面量）`
+                                  : `切到 SQL 表达式模式（${EXPR_MODE_KEY}）：NOW() 等原样嵌进 UPDATE`
                               }
                               /**
                                * 🔴 必须 stopPropagation，只 preventDefault 不够（真机 e2e 抓到）：
@@ -2152,16 +2498,33 @@ export function DataGrid(props: DataGridProps) {
                             >
                               <IconFn size={10} />
                             </button>
-                            <input
-                              ref={isEditing ? editorInputRef : undefined}
-                              className={`grid-cell-editor${editExprMode ? ' gd-expr-input' : ''}`}
-                              data-testid="cell-editor"
-                              autoFocus
-                              value={editValue}
-                              placeholder={editExprMode ? 'SQL 表达式' : undefined}
-                              onChange={(e) => {
-                                setEditValue(e.target.value);
-                                if (editExprError) setEditExprError(null);
+                            {/*
+                              T36：ENUM 列在格内直接给"只含定义值"的下拉 ——
+                              取值集合来自数据库 DDL，用户选不出非法枚举。
+                              拿不到定义值（editingIsEnum=false）时退回下面的普通输入框。
+                            */}
+                            {editingIsEnum ? (
+                              <EnumCellEditor
+                                values={editingInfo!.enumValues ?? []}
+                                /**
+                                 * 🔴 当前值是 NULL 就传 null（不是 ''）——
+                                 *    空串是 ENUM 的**定义成员**，与 NULL 不是一个意思。
+                                 */
+                                value={editingCurrentIsNull ? null : editValue}
+                                nullable={columns[editing!.col]?.nullable ?? null}
+                                onChange={(v) => void commitEditValue(v, 'literal')}
+                              />
+                            ) : (
+                              <input
+                                ref={isEditing ? editorInputRef : undefined}
+                                className={`grid-cell-editor${editExprMode ? ' gd-expr-input' : ''}`}
+                                data-testid="cell-editor"
+                                autoFocus
+                                value={editValue}
+                                placeholder={editExprMode ? 'SQL 表达式' : undefined}
+                                onChange={(e) => {
+                                  setEditValue(e.target.value);
+                                  if (editExprError) setEditExprError(null);
                               }}
                               onBlur={() => {
                                 // 表达式模式且非法 → 不提交也不关（点外面不能悄悄丢掉报错）；
@@ -2173,6 +2536,7 @@ export function DataGrid(props: DataGridProps) {
                                 commitEdit();
                               }}
                             />
+                            )}
                             {/* V9：外键列的候选值下拉入口（表达式模式下隐藏，两种输入意图互斥） */}
                             {fk && onLookupForeignKeyValues && !editExprMode ? (
                               <button
@@ -2192,6 +2556,30 @@ export function DataGrid(props: DataGridProps) {
                                 }}
                               >
                                 <IconLink size={10} />
+                              </button>
+                            ) : null}
+                            {/*
+                              T37：日期时间列的辅助控件入口。
+                              点它开浮层（日期/时间控件 + 原始文本），格内文本**不消失** ——
+                              浮层只是辅助，不是"另一种模式"。
+                            */}
+                            {editingIsDateTime ? (
+                              <button
+                                type="button"
+                                className="gd-dt-toggle"
+                                data-testid="ce-cell-dt-toggle"
+                                title="打开日期时间辅助控件（原始文本仍可编辑）"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const r = e.currentTarget.getBoundingClientRect();
+                                  openValueEditor(rowIndex, originalIndex, r.left, r.bottom + 2);
+                                }}
+                              >
+                                <IconClock size={10} />
                               </button>
                             ) : null}
                           </div>
@@ -2278,11 +2666,12 @@ export function DataGrid(props: DataGridProps) {
           hasSelection={selection.ranges.length > 0 || selection.selectedRows.length > 0}
           canSetNull={
             editable &&
-            // 「已是原始 NULL」时禁用：设 NULL 是空操作（有脏改动时仍可用 —— ⌘0 的幂等清除）
+            // 「已是原始 NULL」时禁用：设 NULL 是空操作（有脏改动时仍可用 —— ⌥0 的幂等清除）
             !(source.raw(ctxMenu.row, ctxMenu.col) === null && !source.isDirty(ctxMenu.row, ctxMenu.col))
           }
           cellDirty={source.isDirty(ctxMenu.row, ctxMenu.col)}
           canDuplicate={editable && !!onDuplicateRow}
+          canAddBlankRow={editable && !!onAddBlankRow}
           canInsert={!!tableName}
           canUpdate={!!tableName && (locateColumns?.length ?? 0) > 0}
           canQuickFilter={!!onQuickFilter && !!ctxMenu.column}
@@ -2298,7 +2687,45 @@ export function DataGrid(props: DataGridProps) {
               ? `批量编辑「${batchColumn.name}」（${batchTarget.rows.length} 行）`
               : null
           }
+          /**
+           * T33（报告 §5 R16）：宿主两条回调一个都没接时不画「查看完整值」。
+           * 判定在这里做一次，菜单只负责渲染 —— 与 canInsert/canUpdate 同款纪律。
+           */
+          canViewFullValue={!!onInspectCell || !!onCellActivated}
+          /**
+           * T25：四个动作的状态。全部来自 `editors/valueEditorModel` 的纯函数，
+           * 组件里不重写一遍判定（避免出现"菜单说能用、点了却没反应"的分裂）。
+           */
+          editValueState={ctxEditContext ? canEditValue(ctxEditContext) : DISABLED_STATE}
+          setEmptyState={ctxEditContext ? acceptsEmptyString(ctxEditContext) : DISABLED_STATE}
+          useDefaultState={ctxEditContext ? canUseDefault(ctxEditContext) : DISABLED_STATE}
+          useDefaultHint={ctxEditContext ? describeDefaultAction(ctxEditContext) : ''}
+          discardCellState={ctxEditContext ? canDiscardCell(ctxEditContext) : DISABLED_STATE}
+          setNullDisabledReason={
+            readOnly
+              ? '该连接已标记为只读：写语句会被主进程 AST 守卫拦截'
+              : !editable
+                ? '该表无主键/唯一键，无法安全定位行，网格为只读'
+                : undefined
+          }
+          columnDataType={ctxMenu ? (columns[ctxMenu.col]?.dataType ?? '') : ''}
           onClose={() => setCtxMenu(null)}
+          onEditValue={() => {
+            if (ctxMenu) openValueEditor(ctxMenu.row, ctxMenu.col, ctxMenu.x, ctxMenu.y);
+            setCtxMenu(null);
+          }}
+          onSetEmptyString={() => {
+            if (ctxEditContext) applyValueEdit(ctxMenu.row, ctxMenu.col, 'empty-string', ctxEditContext);
+            closeCtxAndFocus();
+          }}
+          onUseDefault={() => {
+            if (ctxEditContext) applyValueEdit(ctxMenu.row, ctxMenu.col, 'default', ctxEditContext);
+            closeCtxAndFocus();
+          }}
+          onDiscardCell={() => {
+            if (ctxEditContext) applyValueEdit(ctxMenu.row, ctxMenu.col, 'discard', ctxEditContext);
+            closeCtxAndFocus();
+          }}
           onCopyCell={() => {
             const v = source.value(ctxMenu.row, ctxMenu.col);
             void navigator.clipboard?.writeText(cellToDisplay(v)).catch(() => undefined);
@@ -2310,6 +2737,23 @@ export function DataGrid(props: DataGridProps) {
           }}
           onCopyRows={(format) => {
             copyRowsAs(ctxMenu.row, format);
+            closeCtxAndFocus();
+          }}
+          /**
+           * T23：单列 IN 清单。文案把「几个值 / 有没有被上限截断 / 有没有 NULL」
+           * 全部摆在按钮上 —— 这三件事都会让粘出来的 SQL **结果变窄**，
+           * 用户必须在动手前就看到，而不是执行完发现少了几行。
+           */
+          singleColumnInLabel={
+            inListForMenu
+              ? `${inListForMenu.col} → IN 清单（${inListForMenu.built.used} 个值` +
+                `${inListForMenu.built.nullCount > 0 ? ' + NULL' : ''}` +
+                `${inListForMenu.built.truncated ? `，已截断到 ${IN_LIST_LIMIT}` : ''}）`
+              : null
+          }
+          onCopyInList={() => {
+            const plan = inListForMenu;
+            if (plan) void navigator.clipboard?.writeText(plan.built.condition).catch(() => undefined);
             closeCtxAndFocus();
           }}
           onQuickFilter={(op) => {
@@ -2324,7 +2768,7 @@ export function DataGrid(props: DataGridProps) {
             closeCtxAndFocus();
           }}
           onExprEdit={() => {
-            // V10：从右键菜单直接进表达式模式（⇧⌘E 是编辑态内的切换）
+            // V10：从右键菜单直接进表达式模式（⌘E 是编辑态内的切换）
             beginEdit({ row: ctxMenu.row, col: ctxMenu.col }, true);
             setCtxMenu(null);
           }}
@@ -2336,22 +2780,92 @@ export function DataGrid(props: DataGridProps) {
             setCellNull(ctxMenu.row, ctxMenu.col);
             closeCtxAndFocus();
           }}
-          onClearCell={() => {
-            clearCellDirty(ctxMenu.row, ctxMenu.col);
-            closeCtxAndFocus();
-          }}
           onDuplicateRow={() => {
             if (editable && onDuplicateRow) onDuplicateRow(ctxMenu.row);
             closeCtxAndFocus();
           }}
+          onAddBlankRow={() => {
+            // T19：行号右键 / 单元格右键都能新增 —— 与工具栏、⌥⌘N 是同一条实现
+            if (editable && onAddBlankRow) onAddBlankRow();
+            closeCtxAndFocus();
+          }}
+          /**
+           * T20：行级动作 —— 作用对象是**菜单打开时的行选快照**（`ctxMenu.rows`），
+           * 不是「右键落点那一行」。用户在行号上拖选了 5 行再右键，
+           * 期待的就是对这 5 行动手；拿落点那一行去删会少删 4 行。
+           */
+          canDeleteRows={editable && !readOnly && ctxMenu.rows.length > 0}
+          canDiscardRows={rowDirtyCellsForMenu.length > 0}
+          deleteRowsLabel={ctxMenu.rows.length > 1 ? `删除选中 ${ctxMenu.rows.length} 行` : '删除这一行'}
+          deleteDisabledReason={
+            ctxMenu.rows.length === 0
+              ? '没有选中任何行'
+              : readOnly
+                ? '该连接已标记为只读：写语句会被主进程 AST 守卫拦截'
+                : !editable
+                  ? '该表无主键/唯一键（或未选中数据行），无法安全定位要删除的行'
+                  : ''
+          }
+          onDeleteRows={() => {
+            const rows = ctxMenu.rows;
+            if (!editable || readOnly || rows.length === 0) return;
+            onDeleteRows(rows);
+            closeCtxAndFocus();
+          }}
+          onDiscardRows={() => {
+            onBatchDiscard?.(rowDirtyCellsForMenu);
+            closeCtxAndFocus();
+          }}
+          /**
+           * T33（报告 §5 R16）：菜单项在无回调时已被隐藏，这里仍保持两条分支
+           * 的**优先级**不变（弹窗优先，退化到激活单元格），保证有回调时行为与从前一致。
+           */
           onViewFullValue={() => {
-            // 缺陷 5：宿主接了弹窗回调就走弹窗；没接则退化为激活单元格
-            // （详情面板旧版会显示完整值 —— 保持向后兼容，不出现"点了没反应"）
             if (onInspectCell) onInspectCell(ctxMenu.row, ctxMenu.col);
             else onCellActivated?.(ctxMenu.row, ctxMenu.col);
             closeCtxAndFocus();
           }}
         />
+      ) : null}
+
+      {/*
+        T25/T36/T37：单元格值编辑浮层（fixed 浮层挂在 grid 根上，避开 viewport 裁切）。
+        🔴 只在**有回调**时才画：宿主没接 onCellEdited 的话，这个浮层按下去
+           只会改变本地草稿、永远落不到脏格 —— 那就是假 UI。
+      */}
+      {valueEditor && valueEditor.row < rowCount && valueEditor.col < columns.length ? (
+        (() => {
+          const t = valueEditor;
+          const col = columns[t.col];
+          const info = columnInfos[t.col] ?? UNKNOWN_COLUMN_INFO;
+          const ctx = contextOf(t.row, t.col, col?.name ?? '');
+          const current = source.value(t.row, t.col);
+          const initial = current === null || current === undefined ? null : String(current);
+          return (
+            <ValueEditorPopover
+              column={col?.name ?? ''}
+              dataType={col?.dataType ?? ''}
+              info={info}
+              initialValue={initial}
+              isInsertRow={t.row >= source.rowCount}
+              emptyState={acceptsEmptyString(ctx)}
+              canSetNull={editable && !readOnly}
+              useDefaultState={canUseDefault(ctx)}
+              useDefaultHint={describeDefaultAction(ctx)}
+              originalValue={source.raw(t.row, t.col)}
+              onCommit={(v, kind) => {
+                onCellEdited(t.row, t.col, v, kind);
+                closeValueEditor();
+              }}
+              onDiscard={() => {
+                clearCellDirty(t.row, t.col);
+                closeValueEditor();
+              }}
+              onClose={closeValueEditor}
+              anchor={{ x: t.x, y: t.y }}
+            />
+          );
+        })()
       ) : null}
 
       {/* A21：列头右键菜单（V8 追加「冻结到此列」） */}

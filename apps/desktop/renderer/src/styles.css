@@ -1599,6 +1599,285 @@ pre.detail-ddl {
   background: var(--bg);
 }
 
+/* ---------- T31：原值/待提交值说明行 ---------- */
+
+.cell-modal-note {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-alt);
+  padding: 4px 8px;
+}
+
+/* 有差异时换醒目配色（warn），与「一致/未知」区分 */
+.cell-modal-note.cell-modal-note-differs {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 36%, transparent);
+}
+
+/* ---------- T34：图片查看器（ImageViewer） ---------- */
+
+.dt-image-reason {
+  margin: 4px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--warn) 6%, transparent);
+  padding: 4px 8px;
+}
+
+.dt-image-stage {
+  overflow: auto;
+  min-height: 0;
+  max-height: 56vh;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background:
+    conic-gradient(from 90deg at 50% 50%, var(--bg-alt) 25%, var(--bg) 0 50%, var(--bg-alt) 0 75%, var(--bg) 0)
+    0 0 / 16px 16px; /* 棋盘格衬托透明像素 */
+}
+
+.dt-image-zoom {
+  display: block;
+  max-width: none;
+  image-rendering: auto;
+}
+
+.dt-image-stage .dt-image-zoom { max-width: 100%; max-height: 52vh; object-fit: contain; }
+.dt-image-stage[data-zoom-mode='percent'] .dt-image-zoom { max-width: none; max-height: none; object-fit: none; }
+
+.dt-image-zoom-pct {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: center;
+}
+
+/* ---------- T35：JSON 折叠树（JsonTreeView） ---------- */
+
+.dt-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.dt-tree-count { font-size: 11px; color: var(--text-dim); }
+
+.dt-tree-body {
+  max-height: 56vh;
+  overflow: auto;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  padding: 4px 6px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.dt-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  border-radius: 4px;
+  padding-block: 1px;
+}
+
+.dt-tree-row:hover { background: var(--bg-alt); }
+
+.dt-tree-row.dt-tree-hit {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.dt-tree-row.dt-tree-hit-cur {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.dt-tree-caret {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+}
+
+.dt-tree-caret:hover { background: var(--bg-alt); color: var(--text); }
+.dt-tree-caret:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+
+.dt-tree-leaf { flex: 0 0 16px; text-align: center; color: var(--text-dim); }
+
+.dt-tree-key { color: var(--warn); }
+
+.dt-tree-summary { color: var(--text-dim); }
+
+.dt-tree-val { color: var(--text); overflow: hidden; text-overflow: ellipsis; max-width: 46%; }
+.dt-tree-kind-string .dt-tree-val, .dt-tree-row .dt-tree-val.dt-tree-kind-string { color: var(--ok); }
+.dt-tree-kind-number .dt-tree-val, .dt-tree-row .dt-tree-val.dt-tree-kind-number { color: var(--accent); font-variant-numeric: tabular-nums; }
+.dt-tree-kind-boolean .dt-tree-val, .dt-tree-row .dt-tree-val.dt-tree-kind-boolean { color: var(--error-bar); }
+.dt-tree-kind-null .dt-tree-val, .dt-tree-row .dt-tree-val.dt-tree-kind-null { color: var(--text-dim); font-style: italic; }
+
+.dt-tree-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-family: inherit;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dt-tree-copy:hover { border-color: var(--border); background: var(--bg-alt); color: var(--text); }
+.dt-tree-copy:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+
+/* ---------- T32：多行编辑器（TextValueEditor，cv-*） ---------- */
+
+.cv-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.cv-editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.cv-editor-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.cv-editor-bar button:hover:not(:disabled) { background: var(--bg-alt); color: var(--text); }
+.cv-editor-bar button.dt-on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: transparent;
+  color: var(--accent);
+}
+.cv-editor-bar button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.cv-editor-metrics { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.cv-draft-badge {
+  font-size: 11px;
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 36%, transparent);
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+
+.cv-find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-alt);
+}
+
+.cv-find input[type='text'],
+.cv-find input:not([type]) {
+  flex: 0 1 220px;
+  padding: 2px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.cv-find button {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.cv-find button:hover:not(:disabled) { background: var(--bg-alt); }
+.cv-find button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.cv-find-cs { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+
+.cv-find-status { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.cv-editor-area {
+  width: 100%;
+  min-height: 200px;
+  max-height: 46vh;
+  resize: vertical;
+  padding: 8px 10px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  tab-size: 4;
+}
+
+.cv-editor-area:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+
+.cv-editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.cv-editor-foot button {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.cv-editor-foot button:hover { background: var(--bg-alt); }
+
 /* ---------- 筛选器（§6.3.3） ---------- */
 
 .filter-bar {
@@ -4153,6 +4432,77 @@ button.es-card:hover {
   font: 600 9px/1.4 'SF Mono', Menlo, monospace;
 }
 
+/* ---------- T09 / R15 提交冲突弹窗 ---------- */
+
+.conflict-modal .body {
+  padding: 10px 14px 14px;
+  max-height: 62vh;
+  overflow: auto;
+}
+.conflict-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r, 6px);
+  padding: 8px 10px;
+  margin: 10px 0;
+  background: var(--bg-panel);
+}
+.conflict-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.conflict-head .spacer { flex: 1 1 auto; }
+.conflict-tag { font-weight: 600; }
+.conflict-row,
+.conflict-actual {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.conflict-sql { margin: 6px 0; }
+.conflict-sql summary {
+  cursor: default;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.conflict-sql pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: var(--bg-alt);
+  border-radius: 4px;
+  font: 11px/1.5 'SF Mono', Menlo, monospace;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.conflict-actions { display: flex; gap: 6px; margin-top: 4px; }
+.conflict-note {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.conflict-diff {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.conflict-diff th,
+.conflict-diff td {
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.conflict-diff th { background: var(--bg-alt); font-weight: 600; }
+.conflict-diff .mono {
+  font: 11px/1.5 'SF Mono', Menlo, monospace;
+  word-break: break-all;
+}
+/* 库中现值与原值不同 → 这列就是冲突根因，用警示色标出（不靠颜色也能从文字看出） */
+.conflict-diff tr.drifted td:last-child { color: var(--warn); font-weight: 600; }
+
 /* ---------- V12 转置视图 ---------- */
 
 .gd-transpose {
@@ -4690,11 +5040,22 @@ button.es-card:hover {
 
 /* 库名与类别压灰并靠右：主信息是表名，其余是定位信息 */
 .ob-db,
+.ob-conn,
 .ob-kind {
   flex: 0 0 auto;
   color: var(--text-dim);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+}
+/* 跨连接概览时显示连接名，用于区分同名库（T02/R02）；靠左紧贴表名，
+   ob-db 的 auto 外边距仍把库名/类别压到最右 */
+.ob-conn {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
 }
 .ob-db { margin-left: auto; }
 .ob-kind { min-width: 48px; text-align: right; }
@@ -4709,3 +5070,379 @@ button.es-card:hover {
   font-size: 12px;
   text-align: center;
 }
+
+/* ---------- T27：标签右键 —— 批量关闭的脏清单弹窗 ---------- */
+
+/* 清单可能很长（10 个脏表），弹窗比常规宽一点、body 自己滚 */
+.tab-dirty-modal { width: min(560px, 92vw); }
+
+.tab-dirty-summary {
+  margin: 0 0 10px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.tab-dirty-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.tab-dirty-item + .tab-dirty-item { border-top: 1px solid var(--border); }
+
+.tab-dirty-item label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.tab-dirty-item:hover { background: var(--row-hover); }
+
+.tab-dirty-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-dirty-meta {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   T25 / T36 / T37 —— 单元格值编辑器（grid/editors/）
+   --------------------------------------------------------------------------
+   ⚠️ 样式纪律（AGENTS.md §九）：懒加载组件的外壳样式必须在首屏就位。
+      本段与 .gd-fk-picker / .gd-ctx-menu 同族（面板底 + 边框 + 阴影），
+      保证浮层在任何时刻弹出都不会出现"没有样式的裸 DOM"。
+   ========================================================================== */
+
+/* 格内：日期时间列的辅助控件入口（与 fx / 外键入口同款 16px 小按钮） */
+.gd-editor-wrap .gd-dt-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gd-editor-wrap .gd-dt-toggle:hover { background: var(--bg-alt); color: var(--text); }
+
+/* 格内 ENUM 下拉：与 .grid-cell-editor 同高，避免行高抖动 */
+.gd-editor-wrap .ce-enum-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 400 11.5px/1.4 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  outline: none;
+}
+
+/*
+  值编辑浮层：fixed 定位（避开 .grid-viewport 的 overflow 裁切），
+  z-index 63 = 高于外键下拉(62)与右键菜单。
+*/
+.ce-popover {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  font: 400 11.5px/1.5 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+}
+
+.ce-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ce-pop-title {
+  font: 600 11px/1.3 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-pop-type {
+  font: 400 10px/1.3 'SF Mono', Menlo, monospace;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ce-pop-note,
+.ce-pop-original {
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.ce-pop-error {
+  padding: 5px 8px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--error-bar);
+}
+
+.ce-pop-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.ce-pop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: 500 11px/1.3 -apple-system, 'SF Pro Text', 'PingFang SC', sans-serif;
+  cursor: pointer;
+}
+.ce-pop-btn:hover:not(:disabled) { background: var(--bg-alt); }
+.ce-pop-btn:disabled { opacity: 0.4; cursor: default; }
+.ce-pop-btn.primary {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* T36：ENUM 下拉（浮层内） */
+.ce-enum-select {
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 500 11.5px/1.4 'SF Mono', Menlo, monospace;
+  outline: none;
+}
+.ce-enum-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+
+/* T36：拿不到定义值时的原因文案（不许造假下拉） */
+.ce-enum-missing {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+/* T37：日期时间编辑器 */
+.ce-dt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+}
+.ce-dt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ce-dt-label {
+  flex: 0 0 42px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+.ce-dt-text,
+.ce-dt-date,
+.ce-dt-time {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 500 11.5px/1.4 'SF Mono', Menlo, monospace;
+  outline: none;
+}
+.ce-dt-text:focus,
+.ce-dt-date:focus,
+.ce-dt-time:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+.ce-dt-text:disabled,
+.ce-dt-date:disabled,
+.ce-dt-time:disabled {
+  opacity: 0.5;
+}
+.ce-dt-note {
+  padding: 3px 0 0;
+  font-size: 10px;
+  color: var(--warn);
+  white-space: pre-wrap;
+}
+
+/* 通用文本编辑器（T25「编辑值…」的默认形态） */
+.ce-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+}
+.ce-textarea {
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 400 11.5px/1.5 'SF Mono', Menlo, monospace;
+  resize: vertical;
+  outline: none;
+}
+.ce-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.ce-hint {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+/* ---------- T46 身份条 + 工具栏密度 ---------- */
+/* 身份条是工具栏里唯一「一直看得见我在哪」的东西，蓝色系、不加渐变 */
+.tb-identity {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 320px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-dim);
+  /* 与工具栏一致可拖窗；文字本身不参与命中，避免挡住按钮 */
+  -webkit-app-region: drag;
+}
+.tb-id-conn {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tb-id-sep { color: var(--border-strong); }
+.tb-id-env {
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  color: var(--text);
+}
+/* 生产环境：靠文字 + 边框 + 字重区分，不只靠颜色（浅/深主题都要读得出） */
+.tb-id-env[data-tone='prod'] {
+  border-color: var(--error-bar);
+  color: var(--error-bar);
+  font-weight: 600;
+}
+.tb-id-env[data-tone='unknown'] {
+  border-style: dashed;
+  color: var(--text-dim);
+}
+.tb-id-db,
+.tb-id-object {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.tb-id-object { font-weight: 500; }
+.tb-id-empty { font-size: 11px; color: var(--text-dim); }
+
+/* 紧凑模式：低频操作进「更多」。打开时让工具栏可见溢出，否则弹层会被裁掉 */
+.toolbar[data-more='1'] { overflow: visible; }
+.tb-more { position: relative; display: inline-flex; }
+.tb-more-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 148px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+}
+.tb-more-pop button {
+  justify-content: flex-start;
+  width: 100%;
+  text-align: left;
+}
+
+/* ---------- T47 网格六态占位块 ---------- */
+.gs-block {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 16px;
+  min-height: 0;
+  color: var(--text-dim);
+}
+.gs-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+.gs-hint {
+  max-width: 520px;
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+}
+.gs-error .gs-title { color: var(--error-bar); }
+.gs-disconnected .gs-title { color: var(--warn); }
+.gs-loading .gs-title { color: var(--text-dim); }
+.gs-retry {
+  margin-top: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.gs-retry:hover { border-color: var(--accent); color: var(--accent); }

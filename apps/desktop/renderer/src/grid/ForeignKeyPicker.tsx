@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { IconLink, IconX } from '../ui/icons';
 import type { GridForeignKey } from './DataGrid';
+import { isImeComposing } from '../ui/imeGuard';
 
 /** 单次候选值上限（服务端 LIMIT，超出提示继续输入过滤） */
 const LOOKUP_LIMIT = 200;
@@ -101,6 +102,7 @@ export function ForeignKeyPicker({ fk, anchor, lookup, onPick, onClose }: Foreig
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === 'Escape') {
         onClose();
         e.preventDefault();

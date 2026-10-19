@@ -89,6 +89,43 @@ extraResources:
   - { from: node_modules/node-sql-parser, to: node_modules/node-sql-parser }
   - { from: node_modules/big-integer, to: node_modules/big-integer }
   - { from: node_modules/@types/pegjs, to: node_modules/@types/pegjs }
+  # T45 应用内检查更新：主进程 `await import('electron-updater')` 动态加载。
+  # 它不在根 dependencies（依赖收集器不打包 workspace 外的 hoist 包），
+  # 且**打包产物里缺它就是真缺**：判据 `hasUpdateConfig()` 为 true 之后
+  # import 会抛 "Cannot find module"，用户看到的是「检查更新失败」而非
+  # 「已是最新」（诚实但没用）。以下 16 项是 `electron-updater@6.8.9` 的
+  # 运行时闭包（脚本按 package.json dependencies 递归算出，勿手减）。
+  - { from: node_modules/electron-updater, to: node_modules/electron-updater }
+  - { from: node_modules/builder-util-runtime, to: node_modules/builder-util-runtime }
+  - { from: node_modules/fs-extra, to: node_modules/fs-extra }
+  - { from: node_modules/graceful-fs, to: node_modules/graceful-fs }
+  - { from: node_modules/jsonfile, to: node_modules/jsonfile }
+  - { from: node_modules/universalify, to: node_modules/universalify }
+  - { from: node_modules/js-yaml, to: node_modules/js-yaml }
+  - { from: node_modules/argparse, to: node_modules/argparse }
+  - { from: node_modules/lazy-val, to: node_modules/lazy-val }
+  - { from: node_modules/lodash.escaperegexp, to: node_modules/lodash.escaperegexp }
+  - { from: node_modules/lodash.isequal, to: node_modules/lodash.isequal }
+  - { from: node_modules/semver, to: node_modules/semver }
+  # ⚠️ electron-updater 要 `semver ~7.7.3`，仓库根是 7.8.5 → npm 在它内部
+  #    套了一份 7.7.4。这一份必须跟着拷，否则运行时解析到根上的 7.8.5
+  #    （跨小版本，行为差异不可控）。
+  - from: node_modules/electron-updater/node_modules/semver
+    to: node_modules/electron-updater/node_modules/semver
+  - { from: node_modules/tiny-typed-emitter, to: node_modules/tiny-typed-emitter }
+  - { from: node_modules/debug, to: node_modules/debug }
+  - { from: node_modules/ms, to: node_modules/ms }
+  - { from: node_modules/sax, to: node_modules/sax }
+
+# T45：发布通道。electron-builder 会据此在产物里生成
+# `Contents/Resources/app-update.yml` —— 这是 `hasUpdateConfig()` 的判据，
+# 也是 electron-updater 唯一知道「去哪查新版本」的地方。没有这一段，
+# 应用内「检查更新」永远只能是 `unconfigured`（谎报「已是最新」更糟）。
+# ⚠️ 只声明通道，不上传：打包命令显式带 `--publish never`（见 package.json dist 脚本）。
+publish:
+  provider: github
+  owner: canyuexiang
+  repo: db-studio
 
 # ssh2 可选原生依赖（cpu-features 等）若被收进包，.node 必须解包出 asar
 asarUnpack:

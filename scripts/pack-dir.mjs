@@ -28,11 +28,13 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import yaml from 'js-yaml';
 
 const ROOT = join(import.meta.dirname, '..');
 const OUT_APP = join(ROOT, 'apps/desktop/release/mac-arm64/DB Studio.app');
+const APP_UPDATE_YML = join(OUT_APP, 'Contents/Resources/app-update.yml');
 
 /** 解掉宿主 IDE 沙箱的 fs broker 注入（见文件头说明） */
 const cleanEnv = { ...process.env };
@@ -49,17 +51,64 @@ const run = (label, cmd, args) => {
 };
 
 // 1. electron-builder --dir（只出 .app，不打 dmg）
-run('electron-builder --mac --arm64 --dir', 'npx', ['electron-builder', '--mac', '--arm64', '--dir']);
+//    ⚠️ 必须显式 `--publish never`：配置里现在有 `publish:`（T45 发布通道），
+//    EB 的默认策略是 onTagOrDraft，带 tag 的构建会**直接尝试上传**到 GitHub。
+//    本机打包永远只想要产物。
+run('electron-builder --mac --arm64 --dir', 'npx', [
+  'electron-builder',
+  '--mac',
+  '--arm64',
+  '--dir',
+  '--publish',
+  'never',
+]);
 
 if (!existsSync(OUT_APP)) {
   console.error(`[pack-dir] 未找到产物：${OUT_APP}`);
   process.exit(1);
 }
 
-// 2. 补外层 ad-hoc 重签（绝不用 --deep）
+// 2. 生成 app-update.yml（**必须早于重签** —— 往 .app 里写文件会让签名失效）
+//
+//    为什么 EB 自己不生成：`--dir` 只出 unpacked 目录，app-update.yml 是
+//    dmg/zip 产物阶段才写的。而本项目本机安装用的就是 dir 产物（ditto .app），
+//    缺这个文件 → `hasUpdateConfig()` 恒为 false → 应用内「检查更新」永远
+//    只能是 `unconfigured`（T45 的核心断言）。
+//
+//    内容从 electron-builder.yml 的 publish 段读，**不在这里重复维护**。
+function writeAppUpdateYml() {
+  console.log('\n=== 生成 app-update.yml ===');
+  const cfg = yaml.load(readFileSync(join(ROOT, 'electron-builder.yml'), 'utf8'));
+  const raw = cfg?.publish;
+  const pub = Array.isArray(raw) ? raw[0] : raw;
+  if (!pub || !pub.provider) {
+    console.error('[pack-dir] electron-builder.yml 缺 publish 段 —— 应用内检查更新会一直是「未配置」，拒绝出包');
+    process.exit(1);
+  }
+  const payload = {};
+  for (const key of ['provider', 'owner', 'repo', 'url', 'channel', 'releaseType']) {
+    if (pub[key] != null) payload[key] = pub[key];
+  }
+  writeFileSync(APP_UPDATE_YML, yaml.dump(payload), 'utf8');
+
+  // 自检：写进去的东西能被解析回来，且 provider 与源配置一致
+  const back = yaml.load(readFileSync(APP_UPDATE_YML, 'utf8'));
+  if (back?.provider !== pub.provider) {
+    console.error(`[pack-dir] app-update.yml 自检失败：provider=${back?.provider} 预期 ${pub.provider}`);
+    process.exit(1);
+  }
+  if (pub.provider === 'github' && (!back.owner || !back.repo)) {
+    console.error('[pack-dir] app-update.yml 自检失败：github 通道缺 owner/repo');
+    process.exit(1);
+  }
+  console.log(`   已写入 ${APP_UPDATE_YML.replace(ROOT + '/', '')}（provider=${back.provider}）`);
+}
+writeAppUpdateYml();
+
+// 3. 补外层 ad-hoc 重签（绝不能用 --deep）
 run('ad-hoc 重签（外层）', 'codesign', ['--force', '--sign', '-', OUT_APP]);
 
-// 3. 签名自检 —— 不许"签完就走"
+// 4. 签名自检 —— 不许"签完就走"
 run('签名自检', 'codesign', ['--verify', '--verbose=1', OUT_APP]);
 
 console.log(`\n✅ 打包完成：${OUT_APP}`);

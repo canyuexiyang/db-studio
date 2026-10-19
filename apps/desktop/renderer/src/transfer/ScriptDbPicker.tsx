@@ -11,6 +11,7 @@
 
 import { useEffect, useState } from 'react';
 import { IconDatabase, IconX } from '../ui/icons';
+import { isImeComposing } from '../ui/imeGuard';
 
 export interface ScriptDbPickerProps {
   /** 连接显示名（标题用） */
@@ -28,6 +29,8 @@ export function ScriptDbPicker({ connName, databases, onPick, onClose }: ScriptD
   // Esc 关闭（与其它弹窗一致）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // T13：输入法组合期一律放行（Enter/Esc 是确认/取消候选词，不是提交/关闭）
+      if (isImeComposing(e)) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         onClose();

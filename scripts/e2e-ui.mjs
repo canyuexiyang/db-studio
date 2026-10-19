@@ -91,6 +91,31 @@ function ok(name, pass, detail = '') {
   console.log(`${pass ? '✅' : '❌'} ${name}${detail ? ' — ' + detail : ''}`);
 }
 
+/**
+ * 用「命令面板 → 刷新当前对象 → 守卫 → 放弃改动」把当前表格的未保存改动清干净。
+ *
+ * 走刷新而不是点列头：列头会顺带改排序状态，而本脚本后面多处断言对排序有前提。
+ *
+ * 🔴 判「有没有脏格」必须读状态栏的 `data-dirty-count`，**不能数 `.grid-cell.dirty` 节点**：
+ *    网格是虚拟滚动的，脏格若落在视口外（典型：T19 追加在末尾的空白行）就根本没渲染，
+ *    节点数为 0 ⇒ 这个 helper 会**静默空转**，脏格原样留给下一个章节。
+ *    （实测踩到：T19 收尾调用它，12 个脏格一个没清，污染了后续章节的断言基线。）
+ */
+async function clearDirtyByReload(page) {
+  const dirty = Number((await page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count')) ?? 0);
+  if (dirty === 0) return false;
+  await page.keyboard.press('Meta+k');
+  await page.waitForTimeout(300);
+  await page.locator('.palette input').fill(':刷新当前对象');
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Enter');
+  const guard = page.locator('[data-testid="dirty-reload-guard"]');
+  await guard.waitFor({ state: 'visible', timeout: 5_000 });
+  await page.locator('[data-testid="dirty-guard-discard"]').click();
+  await page.waitForTimeout(800);
+  return true;
+}
+
 const browser = await chromium.launch({ executablePath, headless: HEADLESS });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errors = [];
@@ -278,6 +303,49 @@ try {
   await page.locator('button', { hasText: '取消' }).first().click().catch(() => {});
   await page.waitForTimeout(300);
 
+  /**
+   * 4.5 T01 / R01 回归：重载前未提交改动守卫。
+   *
+   * 🔴 这条断言的存在价值：修复前，点列头排序会**静默丢弃**脏格（实测脏格 1→0、
+   *    输入消失）。而下面第 6 步的「排序三态」恰是在「脏格已被丢掉」的状态下写的 ——
+   *    一旦实现回退到旧行为，那几条断言**照旧全绿**。所以必须单独钉住「不许丢」，
+   *    并让守卫的取消路径（回滚乐观写入）与放弃路径（清脏后照常重载）都被覆盖。
+   */
+  {
+    const dirtyBefore = await page.locator('.grid-cell.dirty').count();
+    ok('T01 前置：仍有未保存的脏格', dirtyBefore >= 1, `脏格=${dirtyBefore}`);
+
+    const guard = page.locator('[data-testid="dirty-reload-guard"]');
+    const hdrEl = page.locator('.grid-header-cell').nth(1);
+
+    await hdrEl.click();
+    await guard.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
+    ok('T01 带脏格点列头 → 弹出未保存改动守卫', (await guard.count()) === 1);
+
+    await page.locator('[data-testid="dirty-guard-cancel"]').click();
+    await page.waitForTimeout(400);
+    const dirtyAfterCancel = await page.locator('.grid-cell.dirty').count();
+    ok('T01 取消后脏格原样保留', dirtyAfterCancel >= dirtyBefore, `${dirtyBefore} → ${dirtyAfterCancel}`);
+    ok('T01 取消后列头未被写成已排序（乐观写入已回滚）',
+      (await page.locator('.sort-mark').count()) === 0);
+    ok('T01 取消后守卫已关闭', (await guard.count()) === 0);
+
+    // 走「明确放弃」这条出口：脏格应被清空，且本次排序真正生效
+    await hdrEl.click();
+    await guard.waitFor({ state: 'visible', timeout: 5_000 });
+    await page.locator('[data-testid="dirty-guard-discard"]').click();
+    await page.waitForSelector('.grid-row', { timeout: 15_000 });
+    await page.waitForTimeout(500);
+    ok('T01 选择放弃后脏格被清空', (await page.locator('.grid-cell.dirty').count()) === 0);
+    ok('T01 选择放弃后排序真正生效（列头 ↑）',
+      /↑/.test((await page.locator('.sort-mark').first().textContent().catch(() => '')) ?? ''));
+
+    // 收尾：把排序还原为「无」，避免污染第 6 步的三态断言（此时已无脏格，不再触发守卫）
+    await hdrEl.click(); await page.waitForTimeout(250);
+    await hdrEl.click(); await page.waitForTimeout(400);
+    ok('T01 收尾：排序还原为无', (await page.locator('.sort-mark').count()) === 0);
+  }
+
   // 5. 命令面板（D5）
   await page.keyboard.press('Meta+k');
   await page.waitForTimeout(400);
@@ -349,6 +417,9 @@ try {
       await page.waitForTimeout(200);
       await page.locator('.grid-row').nth(0).locator('.grid-cell').nth(1).click({ button: 'right' });
       await page.waitForSelector('.gd-ctx-menu', { timeout: 5_000 });
+      // T22：复制格式已收进二级面板 —— 先展开「复制…」再点具体格式
+      await page.locator('[data-testid="ctx-copy-open"]').click();
+      await page.waitForTimeout(200);
       await page.locator('.gd-ctx-item', { hasText: 'TSV（粘进 Excel）' }).click();
       await page.waitForTimeout(250);
       const tsvDefault = await page.evaluate(() => navigator.clipboard.readText());
@@ -362,6 +433,9 @@ try {
       await page.waitForTimeout(150);
       await page.locator('.grid-row').nth(0).locator('.grid-cell').nth(1).click({ button: 'right' });
       await page.waitForSelector('.gd-ctx-menu', { timeout: 5_000 });
+      // T22：复制格式已收进二级面板 —— 先展开「复制…」再点具体格式
+      await page.locator('[data-testid="ctx-copy-open"]').click();
+      await page.waitForTimeout(200);
       await page.locator('.gd-ctx-item', { hasText: 'TSV（含列名）' }).click();
       await page.waitForTimeout(250);
       const tsvHeader = await page.evaluate(() => navigator.clipboard.readText());
@@ -389,6 +463,9 @@ try {
     await page.waitForTimeout(200);
     const menuTitle = await page.locator('.gd-ctx-menu .gd-ctx-title').textContent().catch(() => '');
     ok('行右键菜单出现（标题为行语义）', /已选 4 行|第 \d+ 行/.test(menuTitle ?? ''), menuTitle ?? '无菜单');
+    // T22：复制格式已收进二级面板 —— 先展开「复制…」再点具体格式
+    await page.locator('[data-testid="ctx-copy-open"]').click();
+    await page.waitForTimeout(200);
     await page.locator('.gd-ctx-item', { hasText: 'INSERT 语句' }).click();
     await page.waitForTimeout(200);
     const ins = await page.evaluate(() => navigator.clipboard.readText());
@@ -396,6 +473,9 @@ try {
       /INSERT INTO `order_db`\.`order`/.test(ins) && /VALUES \(\d+/.test(ins) && !/VALUES \(\?/.test(ins),
       ins.split('\n')[0]?.slice(0, 90) ?? '空');
     await page.locator('.grid-row').nth(2).locator('.gd-rowno').click({ button: 'right' });
+    await page.waitForTimeout(200);
+    // T22：复制格式已收进二级面板 —— 先展开「复制…」再点具体格式
+    await page.locator('[data-testid="ctx-copy-open"]').click();
     await page.waitForTimeout(200);
     await page.locator('.gd-ctx-item', { hasText: 'UPDATE 语句' }).click();
     await page.waitForTimeout(200);
@@ -776,8 +856,9 @@ try {
   ok('编辑器可输入', /SELECT/i.test(editorText), editorText.slice(0, 40));
 
   // 执行 → 出结果 Tab
-  // ⚠️ 精确文本：hasText:'执行' 会同时命中「执行选中」「执行计划」
-  await page.locator('.sql-toolbar button').filter({ hasText: /^▶ 执行 ⌘R$/ }).click();
+  // ⚠️ 用 data-testid 定位，不用可见文案：hasText:'执行' 会同时命中「执行选中」「执行计划」，
+  //    而按精确文案匹配等于把测试绑死在 UI 文案上（T29 改文案时就会被门禁拦住）
+  await page.locator('.sql-toolbar [data-testid="sql-run-all"]').click();
   await page.waitForTimeout(1500);
   const msgText = await page.locator('.sql-message').innerText().catch(() => '');
   ok('执行后出现结果消息', /行|失败|取消/.test(msgText), msgText.replace(/\n/g, ' ').slice(0, 60));
@@ -976,8 +1057,8 @@ try {
     await page.keyboard.type('DELETE FROM `order`;');
     await page.waitForTimeout(300);
 
-    // 精确匹配「▶ 执行 ⌘R」（泛匹配会命中「执行选中」「执行计划」）
-    const runBtn = page.locator('.sql-toolbar button').filter({ hasText: /^▶ 执行 ⌘R$/ });
+    // 定位「执行全部」按钮（用 testid，不绑可见文案）
+    const runBtn = page.locator('.sql-toolbar [data-testid="sql-run-all"]');
     if ((await runBtn.count()) > 0 && !(await runBtn.isDisabled())) {
       await runBtn.click();
       // 危险确认弹窗出现（classifyDanger 是动态加载的 chunk，给足时间）
@@ -1197,6 +1278,10 @@ try {
       ok('V3 拖选后状态栏统计矩形选区（多行多列，cells=rows×3）',
         rowsSel >= 4 && cellsSel === rowsSel * 3, sbText.slice(0, 90));
     }
+
+    // T01：V1 粘贴 / V2 删除预演取消 都会留下脏格，「刷新当前对象」会先弹守卫。
+    //      先把脏格按「放弃改动」清掉，下面的 V4 断言才有干净的基线。
+    await clearDirtyByReload(page);
 
     // ---- V4：命令面板「假命令」治理（refresh / toggleReadOnly / openPreferences 均有真实副作用）----
     await page.keyboard.press('Meta+k');
@@ -2024,6 +2109,1062 @@ try {
     const hasIcon = (await kindRow.count()) > 0 && (await kindRow.locator(':scope > svg').count()) > 0;
     ok('分组行有类别图标（表/视图/过程…）', hasIcon,
     hasIcon ? '有 svg' : '分组行没有 svg —— KindIcon 又漏了 kind 分支');
+  }
+
+  // 13f. T19 新增空白行（入口 + 脏格记账 + 预演区分 DEFAULT/NULL）
+  /**
+   * 这一段的断言口径（三件事，缺一件 T19 就没交付）：
+   *  1. **入口真的可达**：工具栏按钮在、行号/单元格右键有、原生菜单已登记（后者由 e2e:keys 覆盖）；
+   *  2. **脏格记账正确**：新增一行 → 只把「必须填」和「可空写 NULL」的列标脏，
+   *     自增列与「有默认值」的列**不进脏集合**（否则保存时会显式覆盖默认值）；
+   *  3. **预演的 DEFAULT/NULL 分开**：空白行不能盲目写 NULL —— NOT NULL 列必须在预演里
+   *     被逐列点名拒绝，而不是让用户点确认后吃 MySQL 1048。
+   *
+   * 🔴 第 5 条是**回归防线**：原实现用 `source.rowCount` 当新行下标，连点两次会落在同一行，
+   *    脏格数停在 6 不动。断言「6 → 12」才能把「两次都写在同一行」钉死。
+   */
+  {
+    // 前置：13 节把所有标签关光了（此刻是对象清单空态），从清单重新打开 order
+    const dbRowT19 = page
+      .locator('.tree-row[data-node-kind="database"]')
+      .filter({ has: page.locator('.tree-label', { hasText: /^order_db$/ }) })
+      .first();
+    let opened = false;
+    if ((await dbRowT19.count()) > 0) {
+      await dbRowT19.click();
+      await page.waitForTimeout(400);
+      const obOrder = page.locator('[data-testid="ob-item-order"]');
+      if ((await obOrder.count()) > 0) {
+        await obOrder.first().click();
+        await page.waitForTimeout(1200);
+        opened = true;
+      }
+    }
+    ok('T19 前置：order 表已重新打开为标签', opened && (await page.locator('[data-testid="pane-order"]').count()) === 1,
+      opened ? '' : '没能从对象清单打开 order（后续断言会失真）');
+
+    const dirtyOf = () =>
+      page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count').then((v) => Number(v ?? -1));
+    const dirty0 = await dirtyOf();
+    ok('T19 前置：起始无脏格', dirty0 === 0, `dirty=${dirty0}`);
+
+    // 入口 1：工具栏（表格工具栏最前面的「新增空白行」）
+    const addBtn = page.locator('[data-testid="btn-add-row"]');
+    ok('T19 工具栏有「新增空白行」入口', (await addBtn.count()) === 1);
+    ok('T19 工具栏按钮可用（demo order 有自增主键，可编辑）', await addBtn.isEnabled());
+
+    // 入口 2：行号 / 单元格右键共用同一份菜单（行号右键的 column 为空串）
+    const someCell = page.locator('.grid-row').nth(2).locator('.grid-cell').nth(2);
+    await someCell.click({ button: 'right' });
+    await page.waitForTimeout(400);
+    ok('T19 单元格右键有「新增空白行」', (await page.locator('[data-testid="ctx-add-row"]').count()) === 1);
+    ok('T19 右键项带 ⌥⌘N 键位提示',
+      /⌥⌘N/.test(await page.locator('[data-testid="ctx-add-row"]').innerText().catch(() => '')));
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    // 动作 1：点击工具栏 → 一行 6 个脏格
+    await addBtn.click();
+    await page.waitForTimeout(600);
+    /**
+     * demo `order` 的期望账（7 列）：
+     *   id         自增   → auto-skip（不标脏）
+     *   order_no   NOT NULL 无默认 → needs-input（脏）
+     *   user_id    同上 → 脏
+     *   amount     同上 → 脏
+     *   status     同上 → 脏
+     *   created_at 同上 → 脏
+     *   remark     可空 → set-null（写显式 NULL，脏）
+     * 合计 **6**。第 3 条（DEFAULT 列不标脏）在 demo 里没有可用的列，
+     * 由 core-mutation 单测覆盖 —— 这里不写一条永远为真的假断言。
+     */
+    const dirty1 = await dirtyOf();
+    ok('T19 新增一行标脏 6 格（自增列不标）', dirty1 === 6, `dirty 0 → ${dirty1}（期望 6）`);
+
+    // 动作 2：⌥⌘N 再新增一行 —— 必须是**新**行，不是覆盖上一行
+    await page.locator('.grid-viewport').click({ position: { x: 200, y: 200 } });
+    await page.keyboard.press('Alt+Meta+n');
+    await page.waitForTimeout(600);
+    const dirty2 = await dirtyOf();
+    ok('T19 🔴 连续两次新增落在不同行（⌥⌘N 不是覆盖）', dirty2 === 12,
+      `dirty ${dirty1} → ${dirty2}（期望 12；若仍是 6 说明两次都写在同一行 —— 旧 source.rowCount 缺陷）`);
+
+    // 动作 3：保存预演 —— 空白行的 NOT NULL 列必须被逐列点名，而不是放行到库上报 1048
+    await page.keyboard.press('Meta+s');
+    await page.waitForTimeout(700);
+    const previewT19 = await page.locator('.modal').innerText().catch(() => '');
+    ok('T19 空白行在预演里被拒（不做「确认后才报 1048」）',
+      /不会提交/.test(previewT19) && /NOT NULL/.test(previewT19),
+      previewT19.split('\n').slice(0, 3).join(' / ').slice(0, 120) || '（预演没弹出）');
+    ok('T19 拒绝原因点名列名（不是泛化文案）',
+      /order_no/.test(previewT19) && /user_id/.test(previewT19) && /created_at/.test(previewT19));
+    ok('T19 可空列 remark 不被 NOT NULL 规则误伤',
+      !/remark[^。]*不能写 NULL/.test(previewT19));
+    // 反向对照：被拒的行必须**不产生** INSERT（否则「拒绝」是假的）
+    ok('T19 被拒的行没有生成任何 INSERT 语句',
+      (await page.locator('[data-testid="preview-sql"]').count()) === 0,
+      `preview-sql 节点数=${await page.locator('[data-testid="preview-sql"]').count()}`);
+
+    await page.locator('button', { hasText: '取消' }).first().click().catch(() => {});
+    await page.waitForTimeout(400);
+
+    // 收尾：把这两行脏格清掉，别影响后面（如果有）的断言
+    await clearDirtyByReload(page);
+  }
+
+  // 13g. T28/T29 SQL 编辑器右键菜单 + 工具栏执行对象 / 目标连接环境
+  /**
+   * 断言口径（每条都要能证伪，不写恒真断言）：
+   *  - 右键菜单项数 ≥ 7（T28 最小集 6 项 + 已在动作目录登记 sql-context 的「执行全部」）；
+   *  - **无选区**时「剪切/复制」必须 disabled（红线：菜单项没有真实对象时不许看着可用）；
+   *  - ⌘A 选中后同样两项转可用 —— 这一对正反断言证明 enabled 是**动态**的，不是写死的；
+   *  - 工具栏「执行对象」随选区切换（无选区=当前语句，有选区=执行选中，T29 三者可辨）；
+   *  - 目标连接与环境常驻展示，且生产环境带 data-production=1 标记。
+   */
+  {
+    await page.keyboard.press('Meta+t');
+    await page.waitForSelector('.cm-editor', { timeout: 15_000 });
+    await page.locator('.cm-content').click();
+    await page.keyboard.press('Meta+a');
+    await page.keyboard.type('SELECT 1;\nSELECT 2;');
+    await page.waitForTimeout(400);
+
+    // ---- T29：目标连接与环境（demo: c1=prod_order/生产环境 红标签） ----
+    const connBadge = page.locator('[data-testid="sql-conn-target"]');
+    const connText = (await connBadge.innerText().catch(() => '')) || '';
+    ok('T29 工具栏常驻显示目标连接与环境',
+      /prod_order/.test(connText) && /生产环境/.test(connText), connText || '（无徽标）');
+    ok('T29 生产环境被显式标记（data-production=1）',
+      (await connBadge.getAttribute('data-production')) === '1',
+      `data-production=${await connBadge.getAttribute('data-production')}`);
+    /**
+     * T29 的核心口径是「三个执行对象**可辨**」—— 可辨是指**用户看得见**，
+     * 不是「DOM 里有个 aria-label」。所以这里同时断两件：
+     *  1. 可见文案里带「全部」（只靠 aria-label 补语义，对读屏之外的用户等于没说清）；
+     *  2. aria-label 也在。
+     * 反向对照在下面：另两个按钮的可见文案必须是「执行当前语句 / 执行选中」「执行计划」，
+     * 三者互不相同 —— 少一个维度这条断言就退化成恒真。
+     */
+    const runAllText = (await page.locator('.sql-toolbar [data-testid="sql-run-all"]').innerText()).replace(/\s+/g, '');
+    ok('T29「执行全部」可见文案自己说清了是全部', /全部/.test(runAllText), `可见文案=「${runAllText}」`);
+    ok('T29「执行全部」aria-label 也在（读屏可达）',
+      (await page.locator('.sql-toolbar button[aria-label="执行全部"]').count()) === 1);
+
+    // 无选区（点一下编辑器塌陷光标）：⌘⏎ 对象应为「当前语句」而不是含糊的「执行选中」
+    await page.locator('.cm-content').click();
+    await page.waitForTimeout(250);
+    const runSelBtn = page.locator('[data-testid="sql-run-selection"]');
+    const noSelLabel = (await runSelBtn.innerText()) || '';
+    const noSelHint = (await page.locator('[data-testid="sql-exec-target"]').innerText()) || '';
+    ok('T29 无选区时 ⌘⏎ 按钮显示「执行当前语句」', /执行当前语句/.test(noSelLabel), noSelLabel);
+    ok('T29 无选区时执行对象指示器=当前语句', /当前语句/.test(noSelHint), noSelHint);
+
+    // ---- T28：无选区右键 ----
+    await page.locator('.cm-content').click({ button: 'right' });
+    await page.waitForSelector('[data-testid="sql-editor-ctx-menu"]', { timeout: 5_000 });
+    const menu = page.locator('[data-testid="sql-editor-ctx-menu"]');
+    const itemCount = await menu.locator('.ctx-item').count();
+    ok('T28 右键菜单项数 ≥ 7（不再只有「格式化 SQL」）', itemCount >= 7, `${itemCount} 项`);
+    const menuText = (await menu.innerText()) || '';
+    ok('T28 菜单齐最小集：全部 / 当前语句(或选中) / 执行计划 / 格式化 / 注释 / 剪切 / 复制 / 粘贴',
+      /执行全部/.test(menuText) && /执行当前语句|执行选中/.test(menuText) && /执行计划/.test(menuText) &&
+      /格式化/.test(menuText) && /注释/.test(menuText) &&
+      /剪切/.test(menuText) && /复制/.test(menuText) && /粘贴/.test(menuText),
+      menuText.replace(/\n/g, ' / ').slice(0, 140));
+    ok('T28 键位提示取自动作目录（格式化 ⌘I / 注释 ⌘/）',
+      /⌘I/.test(menuText) && /⌘\//.test(menuText), menuText.replace(/\n/g, ' / ').slice(0, 140));
+    const cutDisabled = await page.locator('[data-testid="sql-editor-ctx-sql-cut"]').isDisabled();
+    const copyDisabled = await page.locator('[data-testid="sql-editor-ctx-sql-copy"]').isDisabled();
+    ok('T28 无选区时「剪切/复制」禁用（不做假 UI）', cutDisabled && copyDisabled,
+      `剪切 disabled=${cutDisabled} / 复制 disabled=${copyDisabled}`);
+    // 红线 1 的 DOM 级验证：禁用**必须**给出原因（title），不是静默置灰
+    const cutReason = (await page.locator('[data-testid="sql-editor-ctx-sql-cut"]').getAttribute('title')) || '';
+    ok('T28 禁用的「剪切」带中文原因（title 非空）', cutReason.length > 0, cutReason || '（无 title）');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    ok('T28 Esc 关闭右键菜单', (await menu.count()) === 0);
+
+    // ---- T28/T29：有选区（⌘A）后，同一批项必须换个状态 ----
+    await page.locator('.cm-content').click();
+    await page.keyboard.press('Meta+a');
+    await page.waitForTimeout(300);
+    const selLabel = (await runSelBtn.innerText()) || '';
+    const selHint = (await page.locator('[data-testid="sql-exec-target"]').innerText()) || '';
+    ok('T29 有选区时 ⌘⏎ 按钮切换为「执行选中」', /执行选中/.test(selLabel), selLabel);
+    ok('T29 有选区时指示器显示选中字符数', /选中 \d+ 字符/.test(selHint), selHint);
+
+    /**
+     * T29 的**反向对照**：三个执行对象的可见文案必须两两不同。
+     *
+     * 上面每条单看都只断「含某个词」—— 若三个按钮文案都写成「执行」，那两条断言照样绿。
+     * 这里把三者拉齐比一次，才真正钉住「可辨」。
+     */
+    {
+      const t = async (sel) => ((await page.locator(sel).innerText()) || '').replace(/\s+/g, '');
+      const allT = await t('.sql-toolbar [data-testid="sql-run-all"]');
+      const selT = await t('[data-testid="sql-run-selection"]');
+      const expT = await t('[data-testid="sql-run-explain"]');
+      const uniq = new Set([allT, selT, expT]);
+      ok('T29 三个执行对象的可见文案两两不同（否则「可辨」是假的）',
+        uniq.size === 3 && allT.length > 0 && selT.length > 0 && expT.length > 0,
+        `全部=「${allT}」 选中=「${selT}」 计划=「${expT}」`);
+    }
+
+    await page.locator('.cm-content').click({ button: 'right' });
+    await page.waitForSelector('[data-testid="sql-editor-ctx-menu"]', { timeout: 5_000 });
+    const cutEnabled = await page.locator('[data-testid="sql-editor-ctx-sql-cut"]').isEnabled();
+    const copyEnabled = await page.locator('[data-testid="sql-editor-ctx-sql-copy"]').isEnabled();
+    ok('T28 有选区时「剪切/复制」转可用（证伪静态 enabled）', cutEnabled && copyEnabled,
+      `剪切 enabled=${cutEnabled} / 复制 enabled=${copyEnabled}`);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+  }
+
+  // 13h. T21 提交预览「旧值 → 新值」摘要（对象 / 行定位 / 字段 / 改前改后）
+  /**
+   * 断言口径（每条都要能证伪，不写恒真断言）：
+   *  1. 本次编辑**恰好**新增 1 个脏格（delta 断言，不受 T19 残留脏格影响）；
+   *  2. 预演里真的出现摘要（`change-row`）且四项属性齐全；
+   *  3. 🔴 **旧值来自真实原值**：编辑前先读网格里那一格的真实文本，改成新值后再看摘要，
+   *     断言 `data-old` 恰等于编辑前的原值、且 ≠ 新值。若实现拿脏格新值反推旧值，
+   *     data-old 会等于新值 —— 这条立刻红（这正是「保真」要防的偷懒做法）；
+   *  4. 原文 SQL 仍是权威：摘要出现的同时 `preview-sql` 节点仍在（摘要只加一层，
+   *     不取代、不折叠 SQL 原文）。
+   */
+  {
+    const PANE21 = '.ws-tab-pane:not(.hidden)';
+    // 前置：切到 order 表标签（13g 结束时激活的是查询标签）
+    const orderTab = page.locator('.ws-tab').filter({ hasText: 'order' }).first();
+    if ((await orderTab.count()) > 0) await orderTab.click();
+    await page.waitForTimeout(700);
+    ok('T21 前置：order 表标签在（否则后续断言失真）',
+      (await page.locator('[data-testid="pane-order"]').count()) === 1);
+
+    // 尝试清掉可能残留的脏格（若都落在视口外，这个既有 helper 会空转 —— 见下面前置断言）。
+    await clearDirtyByReload(page);
+    const dirtyCountOf = () =>
+      page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count').then((v) => Number(v ?? -1));
+    /**
+     * ⚠️ 不假设「起始无脏格」：T19 的追加行脏格落在视口之外，`clearDirtyByReload`
+     *    只统计**已渲染**的 `.grid-cell.dirty`，会误判为空转而清不掉（实测残留 12，
+     *    且 T19 自己的收尾清理同样失效 —— 这是一个与本任务无关的既有 e2e helper 缺陷，
+     *    因文件改动红线（只能在 §14 之前追加）不在这里修，仅在报告里指出）。
+     *    所以这里改用「delta 断言」：本次编辑必须**恰好**新增 1 个脏格 ——
+     *    既不受残留影响，也仍然能证伪（编辑错列/多标脏都会红）。
+     */
+    const dirtyBeforeEdit = await dirtyCountOf();
+
+    // 滚到左上角，确保目标行在可视区（虚拟滚动只渲染可视区）
+    await page.evaluate(() => {
+      const vp = document.querySelector('.ws-tab-pane:not(.hidden) .grid-viewport');
+      if (vp) { vp.scrollTop = 0; vp.scrollLeft = 0; }
+    });
+    await page.waitForTimeout(300);
+
+    /**
+     * 取「第 2 行 · order_no」（第 2 个数据列 = data-col nth(1)）。
+     * order_no 是 NOT NULL varchar（demo 里有非空值），编辑安全、值不经 Number 丢精度。
+     * 原值不写死，而是**当场从网格读出** —— 这样断言与排序/筛选状态无关，且能
+     * 真正验证「旧值 = 编辑前那一格的原文」。
+     */
+    const t21Cell = page.locator(`${PANE21} .grid-row`).nth(1).locator('.grid-cell[data-col]').nth(1);
+    const originalValue = ((await t21Cell.innerText()) || '').trim();
+    const NEW_VALUE = 'T21_NEW_VALUE';
+    ok('T21 前置：读到待编辑单元格的真实原值（非空、且与新值不同）',
+      originalValue.length > 0 && originalValue !== NEW_VALUE, `原值="${originalValue}"`);
+
+    await t21Cell.dblclick();
+    await page.waitForTimeout(250);
+    ok('T21 前置：双击进入编辑态', (await page.locator(`${PANE21} .grid-cell-editor`).count()) === 1);
+    await page.locator(`${PANE21} .grid-cell-editor`).fill(NEW_VALUE);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(400);
+
+    const dirtyAfterEdit = await dirtyCountOf();
+    ok('T21 前置：本次编辑恰好新增 1 个脏格（可证伪：编辑错列/多标脏会红）',
+      dirtyAfterEdit === dirtyBeforeEdit + 1, `${dirtyBeforeEdit} → ${dirtyAfterEdit}`);
+
+    // 打开保存预演
+    await page.keyboard.press('Meta+s');
+    await page.waitForTimeout(700);
+    const modal21 = await page.locator('.modal').innerText().catch(() => '');
+
+    const changeRows = page.locator('[data-testid="change-row"]');
+    const changeRowCount = await changeRows.count();
+    ok('T21 预演出现「旧值 → 新值」摘要（change-row ≥ 1）',
+      changeRowCount >= 1,
+      `change-row 数=${changeRowCount}；modal 首行="${(modal21.split('\n')[0] ?? '').slice(0, 60)}"`);
+
+    /**
+     * 读出全部摘要行的四项属性。⚠️ 不能用 `filter({ has })` 找那一行 ——
+     * `has` 匹配的是**后代**，而 data-field 就在 <tr> 自身上，永远匹配不到
+     * （第一版就踩了这个坑，导致属性读成 null 假红）。
+     */
+    const rowsInfo = [];
+    for (let i = 0; i < changeRowCount; i++) {
+      const r = changeRows.nth(i);
+      rowsInfo.push({
+        kind: await r.getAttribute('data-kind'),
+        field: await r.getAttribute('data-field'),
+        target: await r.getAttribute('data-target'),
+        locate: await r.getAttribute('data-locate'),
+        old: await r.getAttribute('data-old'),
+        new: await r.getAttribute('data-new'),
+      });
+    }
+    const attr =
+      rowsInfo.find((r) => r.field === 'order_no') ??
+      { kind: null, field: null, target: null, locate: null, old: null, new: null };
+    const dumpRows = JSON.stringify(rowsInfo).slice(0, 260);
+
+    ok('T21 摘要四项齐全（对象 / 行定位 / 字段 / 改前改后）',
+      !!attr.target && /order/.test(attr.target) && /`id` = /.test(attr.locate ?? '') &&
+        attr.field === 'order_no' && !!attr.old && attr.new === NEW_VALUE,
+      `target=${attr.target} locate=${attr.locate} field=${attr.field} old=${attr.old} new=${attr.new}；rows=${dumpRows}`);
+
+    ok('T21 🔴 旧值来自真实原值（不是拿脏格新值反推）',
+      attr.old === originalValue && attr.old !== attr.new,
+      `old="${attr.old}"（编辑前读到 "${originalValue}"） / new="${attr.new}"`);
+
+    // 反向对照：摘要出现的同时原文 SQL 仍在（摘要不取代、不折叠权威 SQL）
+    const sqlNodeCount = await page.locator('[data-testid="preview-sql"]').count();
+    ok('T21 🔴 原文 SQL 仍逐条可看（摘要不取代权威 SQL）',
+      sqlNodeCount >= 1 && /UPDATE/.test(modal21),
+      `preview-sql 节点数=${sqlNodeCount}`);
+
+    await page.locator('.modal footer button', { hasText: '取消' }).first().click().catch(() => {});
+    await page.waitForTimeout(400);
+  }
+
+  // 13i. T20 行号右键是一份**行菜单**，不是单元格菜单的复制品
+  /**
+   * T20 的核心口径（报告 §5 D17）有两句，缺一句都算没交付：
+   *  1. 行号右键要独立突出 **新增 / 复制 / 删除 / 撤销选中行**；
+   *  2. **不以首列值当作用户操作目标** —— 也就是行号上不许出现
+   *     「复制该值 / 查看完整值」这类只能拿首列值冒充「整行」的项。
+   *
+   * 断言写成「该有的都在」+「不该有的都没有」两组，互为对照：
+   * 只断前者的话，把单元格菜单原样搬过来也能全绿。
+   */
+  {
+    // 前置：先确保有一张可编辑的 order 标签（上一个章节的收尾把脏格留下来了，先清掉）
+    await clearDirtyByReload(page);
+    const pane20 = page.locator('[data-testid="pane-order"]');
+    let opened20 = (await pane20.count()) === 1;
+    if (!opened20) {
+      const dbRow20 = page
+        .locator('.tree-row[data-node-kind="database"]')
+        .filter({ has: page.locator('.tree-label', { hasText: /^order_db$/ }) })
+        .first();
+      if ((await dbRow20.count()) > 0) {
+        await dbRow20.click();
+        await page.waitForTimeout(400);
+        const ob = page.locator('[data-testid="ob-item-order"]');
+        if ((await ob.count()) > 0) {
+          await ob.first().click();
+          await page.waitForTimeout(1200);
+          opened20 = true;
+        }
+      }
+    }
+    ok('T20 前置：order 表标签可用', opened20 && (await pane20.count()) === 1);
+
+    const gutter = pane20.locator('.grid-row .grid-cell.gd-rowno').nth(1);
+    ok('T20 前置：行号列可定位', (await gutter.count()) === 1);
+
+    // --- 无脏格时右键行号：三/四个行级项在该在的位置 ---
+    await gutter.click({ button: 'right' });
+    await page.waitForTimeout(400);
+    ok('T20 行号右键弹出菜单', (await page.locator('.gd-ctx-menu').count()) === 1);
+    ok('T20 行号菜单有「新增空白行」', (await page.locator('[data-testid="ctx-add-row"]').count()) === 1);
+    ok('T20 行号菜单有「插入复制行」', (await page.locator('[data-testid="ctx-duplicate-row"]').count()) === 1);
+    ok('T20 行号菜单有「删除选中行」', (await page.locator('[data-testid="ctx-delete-rows"]').count()) === 1);
+
+    // 标题认的是「行」不是「格」：不含任何列名
+    const gutterTitle = (await page.locator('.gd-ctx-menu .gd-ctx-title').innerText().catch(() => '')).trim();
+    ok('T20 行号菜单标题是「第 N 行」（不冒充某一列）', /^第 \d+ 行$/.test(gutterTitle), `标题=「${gutterTitle}」`);
+
+    // 🔴 反向对照：单元格专属项一个都不许出现
+    const gutterMenuText = await page.locator('.gd-ctx-menu').innerText();
+    const cellOnly = ['复制该值', '查看完整值', '设为 NULL', '清除本格改动'];
+    const leaked = cellOnly.filter((t) => gutterMenuText.includes(t));
+    ok('T20 🔴 行号菜单不含单元格专属项（不以首列值冒充整行）',
+      leaked.length === 0, leaked.length ? `漏出来的项：${leaked.join('、')}` : '干净');
+
+    // 反向对照：本来就没有脏格 → 「撤销选中行的改动」不该出现
+    ok('T20 无脏格时不给「撤销选中行的改动」（给了就是假 UI）',
+      (await page.locator('[data-testid="ctx-discard-rows"]').count()) === 0);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+
+    // --- 对照：单元格右键**必须**有那些单元格项 ---
+    await pane20.locator('.grid-row').nth(1).locator('.grid-cell').nth(2).click({ button: 'right' });
+    await page.waitForTimeout(400);
+    const cellMenuText = await page.locator('.gd-ctx-menu').innerText();
+    ok('T20 🔴 单元格右键仍有「复制该值 / 查看完整值」（对照，防一刀切）',
+      cellMenuText.includes('复制该值') && cellMenuText.includes('查看完整值'),
+      cellMenuText.split('\n').slice(0, 3).join(' / '));
+    ok('T20 单元格右键也有行级项（整行语义对两种右键都成立）',
+      (await page.locator('[data-testid="ctx-add-row"]').count()) === 1 &&
+        (await page.locator('[data-testid="ctx-delete-rows"]').count()) === 1);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+
+    // --- 有脏格时：撤销选中行的改动 ---
+    await pane20.locator('.grid-row').nth(1).locator('.grid-cell').nth(2).dblclick();
+    await page.waitForTimeout(250);
+    await pane20.locator('.grid-cell-editor').fill('T20 弄脏一下');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(400);
+    const dirtyBefore20 = Number(
+      (await page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count')) ?? 0,
+    );
+    ok('T20 前置：已造出 1 个脏格', dirtyBefore20 === 1, `dirty=${dirtyBefore20}`);
+
+    await pane20.locator('.grid-row').nth(1).locator('.grid-cell.gd-rowno').click({ button: 'right' });
+    await page.waitForTimeout(400);
+    ok('T20 有脏格时出现「撤销选中行的改动」',
+      (await page.locator('[data-testid="ctx-discard-rows"]').count()) === 1);
+    await page.locator('[data-testid="ctx-discard-rows"]').click();
+    await page.waitForTimeout(500);
+    const dirtyAfter20 = Number(
+      (await page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count')) ?? 0,
+    );
+    ok('T20 行级撤销真的清掉了脏格', dirtyAfter20 === 0, `dirty ${dirtyBefore20} → ${dirtyAfter20}`);
+
+    // --- 删除选中行：真的进「待删除」并出现在保存预演里 ---
+    await pane20.locator('.grid-row').nth(1).locator('.grid-cell.gd-rowno').click({ button: 'right' });
+    await page.waitForTimeout(400);
+    await page.locator('[data-testid="ctx-delete-rows"]').click();
+    await page.waitForTimeout(500);
+    await page.keyboard.press('Meta+s');
+    await page.waitForTimeout(700);
+    const delPreview = await page.locator('.modal').innerText().catch(() => '');
+    ok('T20 行号右键删除 → 保存预演里出现 DELETE（不是点了没反应）',
+      /DELETE/i.test(delPreview), delPreview.split('\n').find((l) => /DELETE/i.test(l))?.slice(0, 60) ?? '未出现');
+    await page.locator('.modal footer button, .modal button').filter({ hasText: '取消' }).first().click().catch(() => {});
+    await page.waitForTimeout(400);
+
+    // 收尾：把「待删除」标记清掉，别影响后面
+    await clearDirtyByReload(page);
+  }
+
+  // 13j. T22 复制收进子菜单 + T23 单列 IN 清单
+  /**
+   * T22 的验收口径是「**菜单不再撑满屏幕**」，所以断言不能只断「子面板里有那些项」——
+   * 那样把两组项同时铺在顶层也能全绿（旧状态就是全绿）。必须比**项数**：
+   * 顶层项数要明显小于铺开时的总数，且子面板里能找全五类。
+   *
+   * T23 的验收口径是「输出可直接用于 SQL」+「单列」。这里既断形状
+   * （`` `col` IN (…) ``）也断**只含一列**——反例是多列混进 IN 就会语法不通。
+   */
+  {
+    await clearDirtyByReload(page);
+    const pane22 = page.locator('[data-testid="pane-order"]');
+    ok('T22 前置：order 表标签可用', (await pane22.count()) === 1);
+
+    // --- 单元格右键（有列）---
+    await pane22.locator('.grid-row').nth(1).locator('.grid-cell').nth(1).click({ button: 'right' });
+    await page.waitForTimeout(400);
+    const rootItems = await page.locator('.gd-ctx-menu [role="menuitem"]').count();
+    ok('T22 顶层菜单有「复制…」入口', (await page.locator('[data-testid="ctx-copy-open"]').count()) === 1);
+    ok('T22 顶层不再直接铺开复制格式（TSV/JSON/… 都不在顶层）',
+      (await page.locator('.gd-ctx-menu', { hasText: 'TSV' }).count()) === 0,
+      `顶层项数=${rootItems}`);
+
+    /**
+     * 🔴 快照必须在「点开复制…」**之前**取 —— 二级面板渲染进同一个
+     * .gd-ctx-menu，之后取到的标签全是子面板内容，「顶层无格式项」就
+     * 失去了证伪能力（旧的全铺开实现反而能绿）。
+     *
+     * 格式项的判定**只看 .gd-ctx-label**（可见文案），不看 title / testid ——
+     * 否则「SQL 表达式模式编辑」的 title（含 UPDATE）会把无关项误判成格式项。
+     */
+    const FORMAT_LABEL_RE = /TSV|CSV|JSON 数组|Markdown 表格|INSERT 语句|UPDATE 语句|IN 清单|含列名|整行 SQL/;
+    const menuLabels = () => page.locator('.gd-ctx-menu [role="menuitem"] .gd-ctx-label')
+      .evaluateAll((els) => els.map((e) => (e.textContent ?? '').trim()));
+    const topLabels = await menuLabels();
+    ok('T22 🔴 顶层不含任何格式项（否则等于没收纳）',
+      topLabels.filter((l) => FORMAT_LABEL_RE.test(l)).length === 0,
+      `命中格式词的顶层标签=${JSON.stringify(topLabels.filter((l) => FORMAT_LABEL_RE.test(l)))}（顶层项数=${rootItems}）`);
+
+    await page.locator('[data-testid="ctx-copy-open"]').click();
+    await page.waitForTimeout(300);
+    const subItems = await page.locator('.gd-ctx-menu [role="menuitem"]').count();
+    const subText = await page.locator('.gd-ctx-menu').innerText();
+    const fmtIn = async () => (await page.locator('.gd-ctx-menu [role="menuitem"] .gd-ctx-label')
+      .evaluateAll((els) => els.filter((e) => /TSV|CSV|JSON 数组|Markdown 表格|INSERT 语句|UPDATE 语句|IN 清单/.test(e.textContent ?? '')).length));
+    ok('T22 🔴 复制格式被收进二级面板（子面板内格式项 ≥ 7）', (await fmtIn()) >= 7,
+      `子面板格式项=${await fmtIn()}（期望 ≥7；少于 7 说明收纳后反而丢了格式）`);
+    ok('T22 子面板五类齐全（当前值/选中区/含列名/整行 SQL/单列 IN）',
+      /当前值/.test(subText) && /选中区/.test(subText) && /含列名/.test(subText) &&
+        /整行 SQL/.test(subText) && /单列 IN/.test(subText),
+      subText.split('\n').filter((l) => /区|含列名|整行|单列|当前值/.test(l)).join(' | ').slice(0, 120));
+
+    // 「← 返回」真的回得去（否则用户点错一次只能关菜单重来）
+    await page.locator('[data-testid="ctx-copy-back"]').click();
+    await page.waitForTimeout(300);
+    ok('T22 二级面板可返回顶层',
+      (await page.locator('[data-testid="ctx-copy-open"]').count()) === 1 &&
+        (await page.locator('[data-testid="ctx-copy-back"]').count()) === 0);
+
+    // --- T23：单列 IN 清单 ---
+    await page.locator('[data-testid="ctx-copy-open"]').click();
+    await page.waitForTimeout(300);
+    const inItem = page.locator('[data-testid="ctx-copy-in-list"]');
+    ok('T23 子面板有「单列 IN 清单」', (await inItem.count()) === 1);
+    const inLabel = (await inItem.innerText().catch(() => '')).replace(/\s+/g, ' ');
+    /**
+     * 断**口径**不断具体列名 —— 右键落在哪一列取决于列顺序，写死列名会在
+     * 列顺序变化时假红。这里要求：文案形如「<列名> → IN 清单（N 个值…）」，
+     * 且 N 必须与**真的复制到剪贴板的值个数**一致（下面紧接着读剪贴板核对）。
+     * 光有「个值」三个字是恒真，必须对得上数。
+     */
+    const mIn = /^(.+?) → IN 清单（(\d+) 个值/.exec(inLabel);
+    ok('T23 文案报出列名与值个数（动手前就知道会复制什么）', !!mIn, `文案=「${inLabel}」`);
+
+    await inItem.click();
+    await page.waitForTimeout(300);
+    const inText = await page.evaluate(() => navigator.clipboard.readText());
+    ok('T23 🔴 输出形如 `col` IN (…)，可直接粘进 SQL',
+      /^`[^`]+` IN \(.+\)$/.test(inText.trim()) || /^\(`[^`]+` IN \(.+\) OR `[^`]+` IS NULL\)$/.test(inText.trim()),
+      inText.slice(0, 90));
+    ok('T23 🔴 文案里的值个数与真复制出的个数一致（不许文案说一套给一套）',
+      !!mIn && (inText.match(/`/g) ?? []).length >= 2 &&
+        (() => {
+          const body = / IN \(([^)]*)\)/.exec(inText)?.[1] ?? '';
+          const n = body === '' ? 0 : body.split(', ').length;
+          return n === Number(mIn[2]);
+        })(),
+      mIn ? `文案说 ${mIn[2]} 个值，实际 ${/ IN \(([^)]*)\)/.exec(inText)?.[1]?.split(', ').length ?? 0} 个` : '文案没解析出个数');
+    ok('T23 🔴 只含一列（多列混进 IN 就是语法不通的坏 SQL）',
+      (inText.match(/`/g) ?? []).length <= (inText.includes(' IS NULL') ? 6 : 4),
+      `反引号个数=${(inText.match(/`/g) ?? []).length} 内容=${inText.slice(0, 60)}`);
+    ok('T23 值是字面量而不是 ? 占位（占位符粘出去没法用）',
+      !inText.includes('?'), inText.slice(0, 60));
+
+    // 反向对照：行号右键没有「哪一列」可言 → 子面板里不该出现单列 IN
+    await pane22.locator('.grid-row').nth(1).locator('.grid-cell.gd-rowno').click({ button: 'right' });
+    await page.waitForTimeout(400);
+    await page.locator('[data-testid="ctx-copy-open"]').click();
+    await page.waitForTimeout(300);
+    ok('T23 🔴 行号右键不给「单列 IN」（没有列可言，给了就是误导）',
+      (await page.locator('[data-testid="ctx-copy-in-list"]').count()) === 0);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+
+    await clearDirtyByReload(page);
+  }
+
+  // 13k. T24 列头快筛 + 单列多值 IN；13l. T25 单元格右键四个值编辑动作；无桥场景对照
+  /**
+   * 断言口径（每条都要能证伪）：
+   *  - 快筛浮层必须由**列头右键菜单**触发（预选列 = 右键的那一列，断言下拉 value）；
+   *  - 多值 IN 输入「重复值 + 裸空行」后：规则摘要必须报出去重与空片段计数
+   *    （静默少给 = 结果集悄悄变窄，这正是规则存在的理由）；
+   *  - 应用后条件条出现 IN 徽标且 SQL 预览含 IN —— demo 后端忽略 WHERE，
+   *    但「写入 tab.filter → 重查 → 条件条读真值」这条 UI 链路必须全通（同 A22 口径）；
+   *  - T25 四动作各一条：编辑值浮层能开 / 设为空串后脏格显示 '' 且不带 null 类
+   *    （与 NULL 严格区分的红线）/ 使用默认值后预演含 SET `col` = DEFAULT
+   *    （sql-expr 原样嵌入，不是字符串 'DEFAULT'）/ 撤销本格清脏；
+   *  - 无桥对照：SQL 结果网格的列头右键里两个筛选入口必须 disabled 且 title 给原因。
+   */
+  {
+    // 前置：回到 order 表标签（13j 结束时可能停在别的标签）
+    const orderTabT24 = page.locator('.ws-tab').filter({ hasText: 'order' }).first();
+    if ((await orderTabT24.count()) > 0) await orderTabT24.click();
+    await page.waitForTimeout(700);
+    const paneT = page.locator('[data-testid="pane-order"]');
+    ok('T24 前置：order 表标签可用', (await paneT.count()) === 1);
+
+    await clearDirtyByReload(page);
+    const dirtyOfT = () =>
+      page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count').then((v) => Number(v ?? -1));
+
+    // 滚回左上角（前面章节滚过，快筛的验证格必须在可视区）
+    await page.evaluate(() => {
+      const vp = document.querySelector('.ws-tab-pane:not(.hidden) .grid-viewport');
+      if (vp) { vp.scrollTop = 0; vp.scrollLeft = 0; }
+    });
+    await page.waitForTimeout(300);
+
+    // ---- T24a：列头右键 → 按此列筛选 → 浮层出现且预选列正确 ----
+    const statusHeader = paneT.locator('.grid-header-cell').filter({ hasText: 'status' }).first();
+    await statusHeader.click({ button: 'right' });
+    await page.waitForTimeout(400);
+    ok('T24 列头右键菜单含「按此列筛选 / 此列多值 IN」两项',
+      (await page.locator('[data-testid="ctx-header-filter"]').count()) === 1 &&
+        (await page.locator('[data-testid="ctx-header-filter-in"]').count()) === 1);
+
+    await page.locator('[data-testid="ctx-header-filter"]').click();
+    await page.waitForTimeout(300);
+    ok('T24 快筛浮层出现（FilterBar 的 quick 属性）', (await page.locator('[data-testid="fb-qf"]').count()) === 1);
+    // 🔴 预选列必须等于右键的那一列（写死 value 在「菜单传错列」时立刻红）
+    const qfCol = await page.locator('[data-testid="fb-qf-col"]').inputValue().catch(() => '');
+    ok('T24 浮层预选列 = 右键列（status）', qfCol === 'status', `预选=${qfCol}`);
+
+    // 单值模式：选「等于」填一个值应用 → 条件条出现且徽标含 status
+    // 先记下应用**之前**条件条上有什么：如果本来就是空的，应用后多出「未填完」
+    // 就一定是这次追加把编辑器占位行带进来了（T24 曾这么红过一次）。
+    const chipInfoBeforeT = await paneT
+      .locator('[data-testid="fb-bar-chip"]')
+      .evaluateAll((els) => els.map((e) => `${e.getAttribute('data-state')}:${(e.textContent ?? '').trim()}`));
+    await page.locator('[data-testid="fb-qf-value"]').fill('paid');
+    await page.locator('[data-testid="fb-qf-apply"]').click();
+    await page.waitForTimeout(700);
+    ok('T24 单值快筛应用后条件条出现', (await paneT.locator('.filter-bar').count()) === 1);
+    const chipInfoT = await paneT
+      .locator('[data-testid="fb-bar-chip"]')
+      .evaluateAll((els) => els.map((e) => `${e.getAttribute('data-state')}:${(e.textContent ?? '').trim()}`));
+    ok('T24 条件条徽标含预选列（status = paid）',
+      chipInfoT.some((t) => /status/.test(t) && /paid/.test(t)), chipInfoT.join(' | '));
+    // 应用的是**填完的**条件 → 条上不该出现「未填完」的已生效条目
+    ok('T24 🔴 应用完整条件后没有「未填完」的已生效徽标',
+      !chipInfoT.some((t) => t.startsWith('incomplete')),
+      `应用前=${chipInfoBeforeT.join(' | ') || '(空)'} 应用后=${chipInfoT.join(' | ')}`);
+    ok('T24 应用后浮层关闭（quick 状态清掉）', (await page.locator('[data-testid="fb-qf"]').count()) === 0);
+
+    // ---- T24b：列头右键 → 多值 IN（含重复 + 裸空行）----
+    await statusHeader.click({ button: 'right' });
+    await page.waitForTimeout(400);
+    await page.locator('[data-testid="ctx-header-filter-in"]').click();
+    await page.waitForTimeout(300);
+    ok('T24 多值 IN 浮层打开（textarea 形态）', (await page.locator('[data-testid="fb-qf-values"]').count()) === 1);
+    // 预选列同样正确（IN 入口与单值入口走同一个浮层，列号不该串）
+    const qfInCol = await page.locator('[data-testid="fb-qf-col"]').inputValue().catch(() => '');
+    ok('T24 IN 浮层预选列也是右键列', qfInCol === 'status', `预选=${qfInCol}`);
+
+    // 重复值 paid ×2 + 裸空片段（末尾逗号）—— 规则必须把这两件事说出来
+    await page.locator('[data-testid="fb-qf-values"]').fill('paid, unpaid, paid,');
+    await page.waitForTimeout(200);
+    const summaryT = (await page.locator('[data-testid="fb-qf-summary"]').innerText().catch(() => ''));
+    ok('T24 摘要报出 2 个值（去重生效）', /2 个值/.test(summaryT), summaryT);
+    ok('T24 🔴 摘要报出去重计数（重复不许静默少给）', /去重 1 个/.test(summaryT), summaryT);
+    ok('T24 🔴 摘要报出忽略的空片段（裸空不是空串）', /忽略 1 个空片段/.test(summaryT), summaryT);
+
+    await page.locator('[data-testid="fb-qf-apply"]').click();
+    await page.waitForTimeout(700);
+    // 条件条：出现带 IN 标记的徽标，且 SQL 预览含 IN
+    const inChip = paneT.locator('[data-testid="fb-bar-chip"]', { hasText: 'IN' });
+    ok('T24 应用后条件条出现 IN 徽标', (await inChip.count()) >= 1,
+      (await inChip.first().innerText().catch(() => '')).replace(/\n/g, ' '));
+    const barPreviewT = (await paneT.locator('[data-testid="fb-bar-preview"]').innerText().catch(() => ''));
+    ok('T24 SQL 预览含 IN 条件（服务端筛选真值进了 tab.filter）', /status` IN/.test(barPreviewT),
+      barPreviewT.slice(0, 90));
+
+    // 收尾：清空筛选（别把条件留给后面的章节），并确认清空后条件条消失
+    await paneT.locator('[data-testid="fb-bar-clear"]').click();
+    await page.waitForTimeout(700);
+    ok('T24 清空后条件条消失（真值回空，bar 不常驻）', (await paneT.locator('.filter-bar').count()) === 0);
+
+    // ---- T25：单元格右键四个值编辑动作 ----
+    // 靶子格：第 2 行 remark 列（varchar 可空，空串/NULL 语义都在这列上有意义）
+    const REMARK_COL = 6; // id/order_no/user_id/amount/status/created_at/remark（从 0 数第 6 个数据列）
+    const remarkCell = () => paneT.locator('.grid-row').nth(1).locator('.grid-cell[data-col]').nth(REMARK_COL);
+    await remarkCell().click({ button: 'right' });
+    await page.waitForTimeout(400);
+    const t25MenuText = await page.locator('.gd-ctx-menu').innerText();
+    ok('T25 菜单含四个值编辑动作（编辑值/设为空串/使用默认值/撤销本格）',
+      /编辑值/.test(t25MenuText) && /设为空串/.test(t25MenuText) &&
+        /使用默认值/.test(t25MenuText) && /撤销本格/.test(t25MenuText),
+      t25MenuText.split('\n').filter((l) => /编辑值|空串|默认|撤销本格/.test(l)).join(' / '));
+    ok('T25 无改动时「撤销本格」禁用（不给点了没反应的项）',
+      await page.locator('[data-testid="ce-ctx-discard-cell"]').isDisabled());
+
+    // (1) 编辑值…：浮层真的能开，且是菜单项触发（不是只有格内双击那条路）
+    await page.locator('[data-testid="ce-ctx-edit-value"]').click();
+    await page.waitForTimeout(400);
+    ok('T25 「编辑值…」打开浮层（ce-value-editor）',
+      (await page.locator('[data-testid="ce-value-editor"]').count()) === 1);
+    ok('T25 浮层标题带列名与类型', /remark/.test(await page.locator('[data-testid="ce-value-editor"]').innerText()),
+      (await page.locator('[data-testid="ce-value-editor-type"]').innerText().catch(() => '')));
+    // 关闭走浮层自己的取消按钮：Esc 在浮层 onKeyDown 上，焦点不在浮层内时收不到
+    await page.locator('[data-testid="ce-value-editor-cancel"]').click();
+    await page.waitForTimeout(250);
+
+    // (2) 设为空串：脏格显示 '' 且**不带 null 类**（空串是真实值，NULL 是斜体占位 —— 两者不许混）
+    await remarkCell().click({ button: 'right' });
+    await page.waitForTimeout(400);
+    await page.locator('[data-testid="ce-ctx-set-empty"]').click();
+    await page.waitForTimeout(400);
+    const dirty1 = await dirtyOfT();
+    ok('T25 设为空串后脏格 +1', dirty1 === 1, `dirty=${dirty1}`);
+    const emptyCell = remarkCell();
+    const emptyText = (await emptyCell.innerText().catch(() => '')).trim();
+    const emptyIsDirty = await emptyCell.evaluate((el) => el.classList.contains('dirty'));
+    const emptyIsNullCls = await emptyCell.evaluate((el) => el.classList.contains('null'));
+    /**
+     * 🔴 空串脏格的显示是**空白文本**（String('')），NULL 的显示是斜体「NULL」+ null 类。
+     * 若实现把空串存成了 NULL（T25 要修的混淆），文本会变成「NULL」且带 null 类 —— 两条都红。
+     */
+    ok('T25 🔴 空串脏格显示空白文本（不是 NULL 占位「NULL」）', emptyText === '', `文本=「${emptyText}」`);
+    ok('T25 🔴 空串脏格带 dirty 类且不带 null 类（与 NULL 严格区分）', emptyIsDirty && !emptyIsNullCls,
+      `dirty=${emptyIsDirty} null=${emptyIsNullCls}`);
+
+    // (3) 使用默认值（UPDATE 语境）：预演 SQL 必须含 SET `remark` = DEFAULT（关键字，不是字符串）
+    await remarkCell().click({ button: 'right' });
+    await page.waitForTimeout(400);
+    const defDisabled = await page.locator('[data-testid="ce-ctx-use-default"]').isDisabled();
+    ok('T25 「使用默认值」在 UPDATE 语境可点', !defDisabled,
+      defDisabled ? `禁用原因=${await page.locator('[data-testid="ce-ctx-use-default"]').getAttribute('title')}` : '');
+    await page.locator('[data-testid="ce-ctx-use-default"]').click();
+    await page.waitForTimeout(400);
+    ok('T25 使用默认值后仍是 1 个脏格（DEFAULT 也是待提交改动）',
+      (await dirtyOfT()) === 1, `dirty=${await dirtyOfT()}`);
+    await page.keyboard.press('Meta+s');
+    await page.waitForTimeout(700);
+    const defPreview = await page.locator('.modal').innerText().catch(() => '');
+    ok('T25 🔴 预演 SQL 含 SET `remark` = DEFAULT（sql-expr 原样嵌入）',
+      /SET `remark` = DEFAULT/.test(defPreview),
+      defPreview.split('\n').find((l) => /remark/.test(l))?.slice(0, 70) ?? '未找到 remark 行');
+    ok('T25 🔴 DEFAULT 不是字符串字面量（写成 \'DEFAULT\' 就是把关键字当文本写库）',
+      !/= 'DEFAULT'/.test(defPreview), defPreview.split('\n').find((l) => /DEFAULT/.test(l))?.slice(0, 70) ?? '');
+    await page.locator('.modal footer button, .modal button').filter({ hasText: '取消' }).first().click().catch(() => {});
+    await page.waitForTimeout(400);
+
+    // (4) 撤销本格：清掉脏格（DEFAULT 的待提交改动也归它管）
+    await remarkCell().click({ button: 'right' });
+    await page.waitForTimeout(400);
+    ok('T25 有改动时「撤销本格」转可用', !(await page.locator('[data-testid="ce-ctx-discard-cell"]').isDisabled()));
+    await page.locator('[data-testid="ce-ctx-discard-cell"]').click();
+    await page.waitForTimeout(400);
+    ok('T25 🔴 撤销本格清脏（dirty 归零）', (await dirtyOfT()) === 0, `dirty=${await dirtyOfT()}`);
+    const cellAfterDiscard = await remarkCell().evaluate((el) => el.classList.contains('dirty'));
+    ok('T25 撤销后该格不再带 dirty 类', !cellAfterDiscard);
+
+    // ---- 无桥对照：SQL 结果网格列头右键 → 两项 disabled + title 给原因 ----
+    // ⚠️ 13g 留下的旧查询 tab 里也有 .cm-editor（隐藏 pane），waitForSelector 会卡在
+    //    「第一个命中不可见」—— 必须限定在**激活** pane 内等待与操作。
+    await page.keyboard.press('Meta+t');
+    await page.waitForSelector('.ws-tab-pane:not(.hidden) .cm-editor', { timeout: 15_000 });
+    const activeCm = page.locator('.ws-tab-pane:not(.hidden) .cm-content');
+    await activeCm.click();
+    await page.keyboard.press('Meta+a');
+    await page.keyboard.type('SELECT 1 AS n;');
+    await page.waitForTimeout(300);
+    await page.locator('.ws-tab-pane:not(.hidden) .sql-toolbar [data-testid="sql-run-all"]').click();
+    await page.waitForTimeout(1500);
+    // 结果网格在查询 pane 里（无 HeaderFilterContext provider）
+    const resultPane = page.locator('.ws-tab-pane:not(.hidden)');
+    const resultHeader = resultPane.locator('.grid-header-cell').filter({ hasText: 'n' }).first();
+    ok('T24 无桥前置：SQL 结果网格已渲染', (await resultHeader.count()) === 1);
+    await resultHeader.click({ button: 'right' });
+    await page.waitForTimeout(400);
+    const noBridgeSingle = await page.locator('[data-testid="ctx-header-filter"]').isDisabled();
+    const noBridgeIn = await page.locator('[data-testid="ctx-header-filter-in"]').isDisabled();
+    ok('T24 🔴 无桥（结果网格）两个筛选入口都 disabled', noBridgeSingle && noBridgeIn,
+      `单值=${noBridgeSingle} IN=${noBridgeIn}`);
+    const reasonSingle = (await page.locator('[data-testid="ctx-header-filter"]').getAttribute('title')) || '';
+    ok('T24 🔴 disabled 的 title 给出中文原因（不是静默置灰）',
+      /没有接入表筛选链路/.test(reasonSingle), reasonSingle);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    // 关掉这个查询 tab，别影响后面章节的 tab 计数
+    await page.keyboard.press('Meta+w');
+    await page.waitForTimeout(400);
+  }
+
+  // ---- T46 / T47 / T38：身份条 / 行数口径 / 撤销重做 ----
+  /**
+   * 断言口径：
+   *  - T46 身份条四段必须**都有内容**，且「环境」不能等于连接名（那说明只是把连接名
+   *    重复了一遍，用户仍然不知道自己在哪个环境）；
+   *  - T46 保存按钮**无改动时不报数量、有改动时报 N 项** —— 两条都断，否则
+   *    「显示数量」可能根本没接上而断言仍然绿；
+   *  - T46 刷新数据 / 刷新结构必须是两个入口且 title 语义不同（报告 §8.2 第 2 条）；
+   *  - T47 行数口径必须有 data-basis，且取值在 exact/estimated/truncated 里；
+   *  - T38 ⌘Z 撤销后脏格归零、⇧⌘Z 重做后脏格回来（只断一次的话，
+   *    把 undo 实现成 clearAll 也能过）。
+   */
+  {
+    const orderTabT = page.locator('.ws-tab').filter({ hasText: 'order' }).first();
+    if ((await orderTabT.count()) > 0) await orderTabT.click();
+    await page.waitForTimeout(700);
+    await clearDirtyByReload(page);
+    const paneX = page.locator('[data-testid="pane-order"]');
+    const dirtyNow = () =>
+      page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count').then((v) => Number(v ?? -1));
+    const dirtyCellsNow = () =>
+      page
+        .locator('.statusbar[data-dirty-count]')
+        .getAttribute('data-dirty-cells')
+        .then((v) => v ?? '')
+        .catch(() => '');
+
+    const idParts = await page
+      .locator('[data-testid="toolbar-identity"] [data-testid^="identity-"]')
+      .evaluateAll((els) => els.map((e) => (e.textContent ?? '').trim()));
+    ok('T46 身份条四段齐全', idParts.length === 4 && idParts.every((t) => t.length > 0), idParts.join(' / '));
+    ok('T46 身份条对象段 = 当前表名', idParts[3] === 'order', idParts[3] ?? '(空)');
+    ok('T46 环境段与连接段分开（不是把连接名重复一遍）', idParts[0] !== idParts[1], `${idParts[0]} vs ${idParts[1]}`);
+
+    const saveCleanText = (await page.locator('[data-testid="btn-save"]').innerText()).trim();
+    ok('T46 无改动时保存按钮不报数量', !/\d+\s*项/.test(saveCleanText), saveCleanText);
+
+    const hasRefreshData = (await page.locator('[data-testid="btn-refresh-data"]').count()) === 1;
+    const hasRefreshSchema = (await page.locator('[data-testid="btn-refresh-schema"]').count()) === 1;
+    ok('T46 刷新数据与刷新结构是两个入口', hasRefreshData && hasRefreshSchema,
+      `数据=${hasRefreshData} 结构=${hasRefreshSchema}`);
+    const titleData = (await page.locator('[data-testid="btn-refresh-data"]').getAttribute('title')) || '';
+    const titleSchema = (await page.locator('[data-testid="btn-refresh-schema"]').getAttribute('title')) || '';
+    ok('T46 两者命名区分数据与结构', /数据/.test(titleData) && /结构/.test(titleSchema),
+      `${titleData} | ${titleSchema}`);
+
+    /**
+     * T46 紧凑模式 —— 此前**没有任何门禁**：e2e-ui 的窗口固定 1440，
+     * density 恒为 full，`{density === 'compact' ? <更多菜单> : null}` 这段
+     * 分支从来没被执行过。唯一撞到它的是 e2e:keys（窗口更窄），而且当场
+     * 崩在 `isDisabled()` 的 30s 超时上。这里补上真门禁：
+     *  · 窄 → compact，低频项离开主栏但**必须还在「更多」里**（不是删掉）；
+     *  · 核心项（保存/筛选）永不折叠。
+     */
+    {
+      await page.setViewportSize({ width: 760, height: 900 });
+      await page.waitForTimeout(500);
+      const dens = await page.locator('.toolbar').first().getAttribute('data-density');
+      ok('T46 窄宽度下工具栏进入紧凑模式', dens === 'compact', `density=${dens}`);
+      ok('T46 紧凑模式下低频项不再占主栏（导入不在 DOM）',
+        (await page.locator('[data-testid="btn-import"]').count()) === 0);
+      const moreBtn = page.locator('[data-testid="btn-more"]');
+      ok('T46 紧凑模式出现「更多」入口', (await moreBtn.count()) === 1);
+      ok('T46 紧凑模式仍保留保存与筛选（核心项不折叠）',
+        (await page.locator('[data-testid="btn-save"]').count()) === 1 &&
+          (await page.locator('[data-testid="btn-filter"]').count()) === 1);
+
+      await moreBtn.click();
+      await page.waitForTimeout(300);
+      const popItems = await page.locator('[data-testid="tb-more-pop"] [role="menuitem"]').count();
+      ok('T46 展开「更多」后折叠项可达（4 项）', popItems === 4, `items=${popItems}`);
+      ok('T46 折叠项身份齐全（导出/导入/设计/粘贴）',
+        (await page.locator('[data-testid="more-export"]').count()) === 1 &&
+          (await page.locator('[data-testid="more-import"]').count()) === 1 &&
+          (await page.locator('[data-testid="more-design"]').count()) === 1 &&
+          (await page.locator('[data-testid="more-paste"]').count()) === 1);
+
+      // 恢复宽度 = 菜单整段 unmount（不用按 Esc，也不该依赖 Esc）
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.waitForTimeout(500);
+      ok('T46 恢复宽度后回到完整模式且折叠项回到主栏',
+        (await page.locator('.toolbar').first().getAttribute('data-density')) === 'full' &&
+          (await page.locator('[data-testid="btn-import"]').count()) === 1);
+    }
+
+    const basis = await page.locator('[data-testid="status-row-count"]').getAttribute('data-basis').catch(() => null);
+    ok('T47 行数口径显式标注（exact / estimated / truncated）',
+      ['exact', 'estimated', 'truncated'].includes(basis ?? ''), String(basis));
+
+    // T38：改一格 → 撤销 → 重做
+    await paneX.locator('.grid-row').nth(1).locator('.grid-cell').nth(7).dblclick();
+    await page.waitForTimeout(200);
+    await page.locator('.grid-cell-editor').fill('undo-test');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    const dirtyAfterEdit = await dirtyNow();
+    const saveDirtyText = (await page.locator('[data-testid="btn-save"]').innerText()).trim();
+    ok('T46 有改动时保存按钮报出待提交数量', /\d+\s*项/.test(saveDirtyText), saveDirtyText);
+    ok('T38 有改动时撤销按钮可用', !(await page.locator('[data-testid="btn-undo"]').isDisabled()),
+      `dirty=${dirtyAfterEdit} 坐标=${(await dirtyCellsNow()) || '(空)'}`);
+
+    await page.locator('[data-testid="btn-undo"]').click();
+    await page.waitForTimeout(300);
+    /**
+     * 失败时必须能一眼看出是哪一层没生效：
+     *  · toast 说「已撤销」→ 栈走通了，问题在回放；
+     *  · 网格还有 .dirty 类 → source 没清掉；statusbar 归零而网格有类 → 渲染层不同步。
+     */
+    const undoToast = await page.locator('.banner.shell-banner').first().innerText().catch(() => '');
+    const dirtyCells = await paneX.locator('.grid-cell.dirty').count();
+    ok('T38 撤销后脏格归零', (await dirtyNow()) === 0,
+      `dirty=${await dirtyNow()} 坐标=${await dirtyCellsNow() || '(空)'} 脏格=${dirtyCells} 提示=${undoToast.trim()}`);
+    ok('T38 撤销后重做按钮可用（不是把改动直接扔掉）',
+      !(await page.locator('[data-testid="btn-redo"]').isDisabled()));
+
+    await page.locator('[data-testid="btn-redo"]').click();
+    await page.waitForTimeout(300);
+    ok('T38 重做后脏格回来', (await dirtyNow()) === dirtyAfterEdit, `dirty=${await dirtyNow()}`);
+
+    // 收尾：清干净，别把脏标记留给后面的章节
+    await clearDirtyByReload(page);
+  }
+
+  // ---- T36 / T37：ENUM 专用下拉 与 日期时间辅助控件 ----
+  /**
+   * 断言口径（都要求**可证伪**）：
+   *  - T36：格内出现的必须是 `<select>`（不是文本框）→ 断「选不出非法值」，
+   *    并读出选项集合，确认**只来自 DDL 定义值**；写入后脏格的值 = 选中的值。
+   *  - T37：原始文本**永远可见且逐字相等**（含微秒）；日期控件只改日期段，
+   *    时间与微秒原样保留 —— 这正是「过一遍 Date 就丢微秒」的实现会红的地方。
+   */
+  {
+    const orderTab37 = page.locator('.ws-tab').filter({ hasText: 'order' }).first();
+    if ((await orderTab37.count()) > 0) await orderTab37.click();
+    await page.waitForTimeout(700);
+    await clearDirtyByReload(page);
+    const pane37 = page.locator('[data-testid="pane-order"]');
+    await page.evaluate(() => {
+      const vp = document.querySelector('.ws-tab-pane:not(.hidden) .grid-viewport');
+      if (vp) { vp.scrollTop = 0; vp.scrollLeft = 0; }
+    });
+    await page.waitForTimeout(300);
+
+    const cellAt37 = (row, col) =>
+      pane37.locator('.grid-row').nth(row).locator(`.grid-cell[data-col="${col}"]`).first();
+    const dirty37 = () =>
+      page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count').then((v) => Number(v ?? -1));
+
+    // T36：第 5 列（data-col=4）= enum('paid','unpaid','refunded')
+    const enumText = ((await cellAt37(0, 4).innerText()) || '').trim();
+    ok('T36 前置：该列确实是 ENUM 取值', ['paid', 'unpaid', 'refunded'].includes(enumText), enumText);
+
+    await cellAt37(0, 4).dblclick();
+    await page.waitForTimeout(300);
+    ok('T36 双击 ENUM 列进入专用下拉（不是自由文本）',
+      (await page.locator('[data-testid="ce-enum-select"]').count()) === 1);
+    // 负向对照：文本输入框必须消失 —— 两个都在就说明"只是多画了一个下拉"
+    ok('T36 ENUM 格内没有自由文本框（选不出非法值）',
+      (await page.locator('[data-testid="cell-editor"]').count()) === 0);
+
+    const enumOpts = await page
+      .locator('[data-testid="ce-enum-select"] option')
+      .evaluateAll((els) => els.map((e) => (e.textContent ?? '').trim()));
+    const realOpts = enumOpts.filter((t) => t !== '选择取值…' && !/^NULL/.test(t) && t !== '');
+    ok('T36 下拉选项只来自 DDL 定义值',
+      realOpts.length > 0 && realOpts.every((t) => ['paid', 'unpaid', 'refunded'].includes(t)),
+      realOpts.join('|'));
+
+    await page.locator('[data-testid="ce-enum-select"]').selectOption({ label: 'unpaid' });
+    await page.waitForTimeout(400);
+    ok('T36 选中定义值后进入待提交（脏格 = 1）', (await dirty37()) === 1, `dirty=${await dirty37()}`);
+    ok('T36 格内显示的是选中的值', ((await cellAt37(0, 4).innerText()) || '').trim() === 'unpaid',
+      ((await cellAt37(0, 4).innerText()) || '').trim());
+
+    // 撤销回干净（同时验证 T38 的栈能撤掉 ENUM 这一手）
+    await page.locator('[data-testid="btn-undo"]').click();
+    await page.waitForTimeout(300);
+    ok('T36 ENUM 改动可撤销回干净', (await dirty37()) === 0, `dirty=${await dirty37()}`);
+
+    // T37：第 6 列（data-col=5）= datetime(6)，demo 值带 6 位微秒
+    const dtText = ((await cellAt37(0, 5).innerText()) || '').trim();
+    ok('T37 前置：日期列原文带 6 位微秒（保真靶子）',
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/.test(dtText), dtText);
+
+    await cellAt37(0, 5).dblclick();
+    await page.waitForTimeout(300);
+    ok('T37 日期格内出现辅助控件入口（不是只有文本框）',
+      (await page.locator('[data-testid="ce-cell-dt-toggle"]').count()) === 1);
+    await page.locator('[data-testid="ce-cell-dt-toggle"]').click();
+    await page.waitForTimeout(400);
+    ok('T37 辅助控件浮层打开', (await page.locator('[data-testid="ce-dt"]').count()) === 1);
+
+    const rawVisible = await page.locator('[data-testid="ce-dt-text"]').inputValue();
+    ok('T37 🔴 原始字符串完整可见（含微秒，逐字相等）', rawVisible === dtText, `${rawVisible} vs ${dtText}`);
+
+    await page.locator('[data-testid="ce-dt-date"]').fill('2030-01-01');
+    await page.waitForTimeout(300);
+    const afterDate = await page.locator('[data-testid="ce-dt-text"]').inputValue();
+    ok('T37 🔴 日期控件只改日期段：时间与微秒原样保留',
+      afterDate === `2030-01-01${dtText.slice(10)}`, `${afterDate}`);
+
+    await page.locator('[data-testid="ce-value-editor-cancel"]').click();
+    await page.waitForTimeout(300);
+    ok('T37 取消辅助编辑不留脏格（草稿没被悄悄写库）', (await dirty37()) === 0, `dirty=${await dirty37()}`);
+    // 关掉可能残留的编辑态，别把脏标记/焦点留给后面的章节
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+  }
+
+  // ---- T49：组合回归（demo 后端可覆盖的 3 条）----
+  /**
+   * 只覆盖 demo 能造出前置条件的三条；其余三条由专项门禁守着：
+   *  · 两连接同名库 → T02/T03 单测 + e2e:app 真库；
+   *  · JSON 大整数逐字 → core-clipboard 单测 + e2e:smoke（真库）；
+   *  · 异常中断释放 → e2e:idle（断线重连/隧道）。
+   */
+  {
+    const pane49 = page.locator('[data-testid="pane-order"]');
+    const dirty49 = () =>
+      page.locator('.statusbar[data-dirty-count]').getAttribute('data-dirty-count').then((v) => Number(v ?? -1));
+
+    // 组合 1：脏编辑 → 排序 → 守卫取消 → 原改动仍可提交
+    await clearDirtyByReload(page);
+    const cell49 = pane49.locator('.grid-row').nth(1).locator('.grid-cell[data-col="6"]').first();
+    await cell49.dblclick();
+    await page.waitForTimeout(250);
+    await page.locator('.grid-cell-editor').fill('combo-keep');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(400);
+    ok('T49-1 前置：已有一处未保存改动', (await dirty49()) === 1, `dirty=${await dirty49()}`);
+
+    const hdrAmount = pane49.locator('.grid-header-cell').filter({ hasText: 'amount' }).first();
+    await hdrAmount.click();
+    await page.waitForTimeout(500);
+    ok('T49-1 带脏格排序被守卫拦下', (await page.locator('[data-testid="dirty-reload-guard"]').count()) === 1);
+
+    await page.locator('[data-testid="dirty-guard-cancel"]').click();
+    await page.waitForTimeout(400);
+    ok('T49-1 取消后原改动还在（脏格没被排序顺手丢掉）', (await dirty49()) === 1, `dirty=${await dirty49()}`);
+
+    // 「仍可提交」= 保存预演里能看到这条改动（预演是纯前端计划，不需要真库）
+    await page.keyboard.press('Meta+s');
+    await page.waitForTimeout(700);
+    const previewText = await page.locator('.modal').innerText().catch(() => '');
+    ok('T49-1 🔴 取消排序后原改动仍进保存预演（不是"脏标记还在但提交不了"）',
+      /combo-keep/.test(previewText), previewText.split('\n').slice(0, 2).join(' / ').slice(0, 120));
+    // 🔴 必须点「取消」关弹窗：焦点在模态里时 Meta+K 到不了全局快捷键，
+    //    后面的 clearDirtyByReload 会等 30s 超时（这次就是这么红的）。
+    await page.locator('.modal button', { hasText: '取消' }).first().click();
+    await page.waitForTimeout(400);
+    ok('T49-1 预演取消后弹窗关闭（没把脏改动一起提交）',
+      (await page.locator('.modal').count()) === 0, `modal=${await page.locator('.modal').count()}`);
+    await clearDirtyByReload(page);
+
+    // 组合 3：只读连接 → 编辑/粘贴/批量 全禁并给原因
+    await page.keyboard.press('Meta+k');
+    await page.waitForTimeout(300);
+    await page.locator('.palette input').fill(':切换只读模式');
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(600);
+    ok('T49-3 连接已切到只读（状态栏可观测）',
+      (await page.locator('.statusbar[data-dirty-count]').getAttribute('data-conn-readonly')) === '1');
+
+    await pane49.locator('.grid-row').nth(1).locator('.grid-cell[data-col="6"]').first().dblclick();
+    await page.waitForTimeout(300);
+    ok('T49-3 只读连接双击不进入编辑态', (await page.locator('[data-testid="cell-editor"]').count()) === 0);
+    const pasteBtn49 = page.locator('[data-testid="btn-paste"]');
+    if ((await pasteBtn49.count()) > 0) {
+      ok('T49-3 只读连接「粘贴」禁用且给出中文原因',
+        (await pasteBtn49.isDisabled()) && /只读/.test((await pasteBtn49.getAttribute('title')) || ''),
+        (await pasteBtn49.getAttribute('title')) || '(无 title)');
+    }
+
+    // 切回可写，别把只读状态留给后续
+    await page.keyboard.press('Meta+k');
+    await page.waitForTimeout(300);
+    await page.locator('.palette input').fill(':切换只读模式');
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(600);
+    ok('T49-3 切回后恢复可写', (await page.locator('.statusbar[data-dirty-count]').getAttribute('data-conn-readonly')) === '0');
+
+    // 组合 5：查询结果 → 打开源表 → 文案不暗示继承了查询条件
+    const sqlTab49 = page.locator('.ws-tab').filter({ hasText: '查询' }).first();
+    if ((await sqlTab49.count()) > 0) {
+      await sqlTab49.click();
+      await page.waitForTimeout(500);
+      const openSrc = page.locator('[data-testid="sql-open-editable"]').first();
+      if ((await openSrc.count()) > 0) {
+        const title49 = (await openSrc.getAttribute('title')) || '';
+        ok('T49-5 「打开源表」文案明确不继承 WHERE/ORDER BY/LIMIT',
+          /不继承/.test(title49) && /WHERE/.test(title49), title49.slice(0, 80));
+        ok('T49-5 按钮文字是「打开源表」（不是"打开可编辑表格"）',
+          ((await openSrc.innerText()) || '').trim() === '打开源表');
+      }
+    }
+    // 回到 order 表，保持后续/收尾上下文稳定
+    const orderTabBack = page.locator('.ws-tab').filter({ hasText: 'order' }).first();
+    if ((await orderTabBack.count()) > 0) await orderTabBack.click();
+    await page.waitForTimeout(400);
   }
 
   // 14. 控制台干净

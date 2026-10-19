@@ -20,6 +20,7 @@ import {
   type PrefsRowHeight,
 } from './preferences';
 import { FONT_ZOOM_STEPS, type FontZoomDir } from '../workspace/fontZoom';
+import { isImeComposing } from '../ui/imeGuard';
 
 /** 外观三态。与 App.tsx 的 ThemeMode 同口径（此处独立定义避免环形依赖） */
 export type PrefsThemeMode = 'system' | 'light' | 'dark';
@@ -55,6 +56,8 @@ export function PreferencesPanel({
   // Esc 关闭（与其它弹窗一致）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // T13：输入法组合期一律放行（Enter/Esc 是确认/取消候选词，不是提交/关闭）
+      if (isImeComposing(e)) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         onClose();

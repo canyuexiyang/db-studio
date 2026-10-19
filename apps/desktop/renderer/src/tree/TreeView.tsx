@@ -48,6 +48,7 @@ import {
   IconPlus, IconGear, IconX, IconPlug, IconPower, IconDatabase, IconTable, IconEye,
   IconBraces, IconFn, IconStar, IconStarFilled, IconZap, IconClock, IconFileCode, IconCopy, IconFolder, IconCheck,
 } from '../ui/icons';
+import { isImeComposing } from '../ui/imeGuard';
 
 
 export interface TreeViewProps {
@@ -65,8 +66,8 @@ export interface TreeViewProps {
   onToggleConnection?: (cfg: ConnectionConfig, live: boolean) => void;
   onEditConnection?: (cfg: ConnectionConfig) => void;
   onDeleteConnection?: (cfg: ConnectionConfig) => void;
-  /** 数据库节点「新建表」：打开表设计器（§6.5.4） */
-  onNewTable?: (database: string) => void;
+  /** 数据库节点「新建表」：打开表设计器（§6.5.4）。显式带 connId，避免同名库跨连接（T03/R03） */
+  onNewTable?: (database: string, connId: string) => void;
   /** 搜索按字段名命中（Q2）时打开对应表 —— 列命中在树里没有节点，由这里跳转 */
   onOpenTableRef?: (database: string, tableName: string) => void;
   /**
@@ -135,6 +136,18 @@ function isLiveState(s: string | undefined): boolean {
 function connIdOfObjectKey(key: string): string {
   const parts = key.split(':');
   return parts[0] === 'obj' && parts.length >= 3 ? parts[1] : '';
+}
+
+/**
+ * 从 db / kind 节点 key 解析 connId（`db:<connId>:<db>` / `kind:<connId>:<db>:<kind>`）。
+ *
+ * 🔴 v0.7.0 T03/R03：库行「新建表」过去只回传 database 名，宿主再用「第一个含同名库
+ * 的连接」反查 connId —— 两个连接都有 `order_db` 时，从第二个连接的库行点新建表，
+ * 设计器会被指向第一个连接（跨环境建表）。库名不是唯一身份，必须显式带 connId。
+ */
+function connIdOfScopeKey(key: string): string {
+  const parts = key.split(':');
+  return (parts[0] === 'db' || parts[0] === 'kind') && parts.length >= 3 ? parts[1] : '';
 }
 
 /** 收藏 key = 对象节点 key 去掉 `obj:` 前缀（与 ⌘K PaletteItem.id 同构） */
@@ -426,6 +439,8 @@ export function TreeView({
 
   const onTreeKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
+      // T13：组合期的 Backspace 是输入法在删候选，不是「删除对象」
+      if (isImeComposing(e)) return;
       if (e.key !== 'F2' && e.key !== 'Delete' && e.key !== 'Backspace') return;
       // 搜索框/输入类元素里的按键不属于树导航
       const target = e.target as HTMLElement | null;
@@ -648,9 +663,11 @@ onSelectNode?.(n);
                   className="tree-act"
                   title={`在 ${n.database} 中新建表`}
                   data-testid={`btn-new-table-${n.database}`}
+                  data-conn-id={connIdOfScopeKey(n.key)}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onNewTable(n.database!);
+                    // 显式传 connId：库名唯一不足以定位连接（T03/R03）
+                    onNewTable(n.database!, connIdOfScopeKey(n.key));
                   }}
                 >
                   <IconPlus size={10} />

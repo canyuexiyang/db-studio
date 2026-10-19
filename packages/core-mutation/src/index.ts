@@ -67,6 +67,15 @@ export interface PendingInsert {
    * 一行不改，只有表达式模式才需要填这个字段。
    */
   valueKinds?: Record<string, EditValueKind>;
+  /**
+   * T19：这一行是**用户显式新增的空白行**（没填任何值也必须出现在 INSERT 里）。
+   *
+   * 为什么需要这个标记：粘贴 / 复制行都至少有一个非空列，`INSERT (...) VALUES (...)`
+   * 天然成立；但「新增空白行」可能一个值都没有（全是自增 / 默认值列），
+   * 此时正确语义是 `INSERT INTO t () VALUES ()`（让数据库填满默认值），
+   * 而不是报「新增行没有任何有效列值」—— 空表新增一行本来就是这个场景。
+   */
+  blank?: boolean;
 }
 
 export interface PendingDelete {
@@ -103,6 +112,13 @@ export interface SqlStatement {
    *    当成 WHERE 的值（静默产出错 SQL，是最难查的一类 bug）。
    */
   readonly setParamCount?: number;
+  /**
+   * T21：本条语句的「旧值 → 新值」核对摘要（对象 / 行定位 / 字段 / 改前改后）。
+   *
+   * 🔴 它只是**多一层可读核对**，绝不替代原文 SQL —— 头号红线里
+   *    「写操作必须可预览 SQL 原文」照旧由 `sql` 承担，且不做可选绕过。
+   */
+  readonly summary?: ChangeSummary;
 }
 
 // ---------- 行定位 ----------
@@ -439,6 +455,21 @@ export function buildUpdate(
     // V10：预演弹窗据此把「表达式原样嵌入」显式标出来（红线：用户必须看得见原文）
     hasSqlExpr: exprCols.length > 0,
     setParamCount: params.length,
+    // T21：旧值→新值摘要。原值取自 first.locateValues / e.oldValue（均由调用方从
+    // 网格 source.raw() 取得），绝不用 newValue 反推。
+    summary: buildChangeSummary({
+      kind: 'update',
+      database,
+      table: table.name,
+      locateColumns: locateCols.map((x) => x.name),
+      locateValues: first.locateValues,
+      changes: edits.map((e) => ({
+        column: e.column,
+        oldValue: e.oldValue,
+        newValue: e.newValue,
+        valueKind: e.valueKind,
+      })),
+    }),
   };
 }
 
@@ -503,7 +534,10 @@ export function buildMutationPlan(
         // 去掉 WHERE 中由 extraComparisons 带来的原值条件
         stmt = stripConflictComparisons(stmt, table, valid);
       }
-      statements.push(stmt);
+      // T08/T09：带上行身份（rowId）。冲突时渲染层要靠它定位「是哪一行改了」
+      // 才能做「重载该行 → 对比库中现值 vs 待提交值」。旧实现只有 INSERT 带 refId，
+      // UPDATE/DELETE 冲突后用户根本不知道是哪一行出的问题。
+      statements.push({ ...stmt, refId: valid[0].rowId ?? undefined });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       for (const ed of valid) rejected.push({ rowId: ed.rowId, column: ed.column, reason: msg });
@@ -528,6 +562,16 @@ export function buildMutationPlan(
       params: where.params,
       kind: 'delete',
       description: `删除 ${c.qualified} 的 1 行`,
+      // T08/T09：带行身份，冲突时可定位比较
+      refId: d.rowId,
+      // T21：删除是整行操作 —— 摘要给对象 + 行定位，无字段级改动
+      summary: buildChangeSummary({
+        kind: 'delete',
+        database,
+        table: table.name,
+        locateColumns: locateCols.map((x) => x.name),
+        locateValues: d.locateValues,
+      }),
     });
   }
 
@@ -543,7 +587,29 @@ export function buildMutationPlan(
       return true;
     });
 
+    /**
+     * T19：显式新增空白行 —— 允许一个值都没有。
+     *
+     * `INSERT INTO t () VALUES ()` 是 MySQL 的合法语法（所有列取默认值），
+     * 也正是「空表新增一行 / 整张表只有自增 + 默认值列」时唯一正确的写法。
+     * 旧行为在这里报「新增行没有任何有效列值」，等于把最常见的场景判成错误。
+     * ⚠️ 只有调用方**显式**标注 blank 才走这条路（粘贴 / 复制行仍然照旧报错，
+     *    因为那两条路径出现空行只可能是用户误操作）。
+     */
     if (usable.length === 0) {
+      if (ins.blank === true) {
+        statements.push({
+          sql: `INSERT INTO ${c.qualified} () VALUES ()`,
+          params: [],
+          kind: 'insert',
+          refId: ins.tempId,
+          description: `向 ${c.qualified} 插入 1 行（未指定任何列，全部由数据库默认值填充）`,
+          setParamCount: 0,
+          // T21：空白行没有任何字段改动，摘要给对象 + 「新增行」
+          summary: buildChangeSummary({ kind: 'insert', database, table: table.name }),
+        });
+        continue;
+      }
       rejected.push({ rowId: ins.tempId, column: '*', reason: '新增行没有任何有效列值' });
       continue;
     }
@@ -565,6 +631,37 @@ export function buildMutationPlan(
     }
 
     /**
+     * T19：把**显式 NULL** 写进「NOT NULL 且无默认值」的普通列 —— 预演阶段就拒绝。
+     *
+     * 这正是「新增空白行」最容易踩的一步：空白行对可空列写显式 NULL 是对的，
+     * 但同一套动作落到 NOT NULL 列上，MySQL 严格模式一定报 1048。
+     * 与其让用户确认执行后吃一条数据库错误（还得自己去猜是哪一列），
+     * 不如在预览里逐列点名。
+     *
+     * ⚠️ 刻意**排除主键列** —— 但要如实说明：在当前分支顺序下这个排除是**不可达的**。
+     *    emptyPk 检查在更上面且会 `continue`，所以「留空的主键列」永远走不到这里；
+     *    自增主键留空则早被 usable 剔除。它留在这里只是**对顺序的独立防线**：
+     *    将来若有人把 NOT NULL 检查上移，没有这行就会用泛化文案覆盖掉更贴切的「主键列 X 未填写」。
+     *    实测过：单独删掉这个条件，测试不变红（因为不可达）—— 所以别把它当承重墙，
+     *    真正钉住契约的是下面的**互斥**断言（主键文案 vs NOT NULL 文案）。
+     * ⚠️ 与之相对，**「有默认值的列」根本不该走到这里** —— 它们不该被写进 INSERT
+     *    （见 buildBlankRowPlan 的 use-default）。真写了显式 NULL 就是用户意图，照样拒绝。
+     */
+    const nullIntoNotNull = usable.filter(([k, v]) => {
+      if (!isNullValue(v)) return false;
+      const col = table.columns.find((x) => x.name === k);
+      return !!col && !col.nullable && !col.autoIncrement && !col.isPrimaryKey;
+    });
+    if (nullIntoNotNull.length > 0) {
+      rejected.push({
+        rowId: ins.tempId,
+        column: nullIntoNotNull.map(([k]) => k).join(', '),
+        reason: `列 ${nullIntoNotNull.map(([k]) => k).join('、')} 为 NOT NULL，不能写 NULL —— 请填值，或删除这一行`,
+      });
+      continue;
+    }
+
+    /**
      * V10：表达式值原样进 VALUES，字面量仍走 ? 占位。
      * 列名与值的对应关系必须逐列判定（valueKinds 是稀疏映射，缺省 = 字面量）。
      *
@@ -576,12 +673,15 @@ export function buildMutationPlan(
     const acceptedCols: string[] = [];
     const valueParts: string[] = [];
     const insertParams: unknown[] = [];
+    // T21：与 acceptedCols 同源逐列生成摘要（只有真正进 INSERT 的列才进摘要）
+    const summaryChanges: { column: string; oldValue: unknown; newValue: unknown; valueKind?: EditValueKind }[] = [];
     let exprCount = 0;
     for (const [k, v] of usable) {
       if (kinds[k] !== 'sql-expr') {
         acceptedCols.push(k);
         valueParts.push('?');
         insertParams.push(normalizeValue(v));
+        summaryChanges.push({ column: k, oldValue: null, newValue: v });
         continue;
       }
       if (typeof v !== 'string') {
@@ -595,6 +695,7 @@ export function buildMutationPlan(
       }
       acceptedCols.push(k);
       valueParts.push(normalizeSqlExpression(v));
+      summaryChanges.push({ column: k, oldValue: null, newValue: v, valueKind: 'sql-expr' });
       exprCount++;
     }
     if (valueParts.length === 0) {
@@ -615,6 +716,13 @@ export function buildMutationPlan(
           : `向 ${c.qualified} 插入 1 行`,
       hasSqlExpr: exprCount > 0,
       setParamCount: insertParams.length,
+      // T21：新增行没有「改前」——摘要的 oldText 统一为「（新增）」
+      summary: buildChangeSummary({
+        kind: 'insert',
+        database,
+        table: table.name,
+        changes: summaryChanges,
+      }),
     });
   }
 
@@ -745,6 +853,212 @@ export function buildDuplicateRowPlan(table: TableMeta, rowValues: readonly unkn
   return { edits, autoSkipped, needsInput, rejected: null, summary: parts.join('，') };
 }
 
+/** 新增空白行产出的单列动作 */
+export interface BlankRowEdit {
+  /** 列下标（table.columns 顺序，与网格的原始列索引一致） */
+  col: number;
+  column: string;
+  /**
+   * 该列在新行里的处理方式：
+   *  - `auto-skip`   —— 自增列：**不写进 INSERT**，由服务端生成；
+   *  - `use-default` —— 有数据库默认值：**不写进 INSERT**，让 DEFAULT 生效；
+   *  - `set-null`    —— 可空且无默认值：写**显式 NULL**；
+   *  - `needs-input` —— NOT NULL 且无默认值：留空待用户填，格子标红。
+   */
+  kind: 'auto-skip' | 'use-default' | 'set-null' | 'needs-input';
+  /** needs-input 的原因（进入单元格 invalid 提示） */
+  reason?: string;
+}
+
+export interface BlankRowPlan {
+  /** 每列一个动作，顺序 = table.columns */
+  edits: BlankRowEdit[];
+  /** 交给服务端生成（自增列） */
+  autoSkipped: string[];
+  /** 交给数据库默认值（有 DEFAULT 的列） */
+  defaulted: string[];
+  /** 无默认值但可空 → 显式写 NULL */
+  nulled: string[];
+  /** NOT NULL 且无默认值 → 必须用户填 */
+  needsInput: string[];
+  /** 整体拒绝（表不可编辑）；null = 可以新增 */
+  rejected: string | null;
+  /** 汇总文案，UI 直接展示 */
+  summary: string;
+}
+
+/**
+ * 构造「新增空白行」的脏单元格计划（T19 / 报告 §5 D16）。
+ *
+ * 🔴 **预演必须区分 DEFAULT 与 NULL** —— 这两件事在 SQL 层完全不同：
+ *   - 写**显式 NULL**：`INSERT (col) VALUES (?)` + `null` ⇒ 该列是 NULL；
+ *   - 走**数据库默认值**：**根本不把列写进 INSERT 列表** ⇒ 服务端按 DEFAULT 填。
+ *   若一律写 NULL，`DEFAULT 'new'` 这类列会被写成 NULL（甚至违反 NOT NULL），
+ *   而且用户看着预览也无法判断到底会发生什么。
+ *
+ * 产出只是**准备脏单元格**，落库仍走 buildMutationPlan 的 INSERT 预演 ——
+ * 与头号红线一致：这里绝不直接产生可执行 SQL。
+ *
+ * 与 buildDuplicateRowPlan 的差别：复制行是「有源值可抄」，空白行是「一列值都没有」，
+ * 所以判定顺序变成「自增 → 有默认值 → 可空 → 必须填」，且不依赖任何行值。
+ */
+export function buildBlankRowPlan(table: TableMeta): BlankRowPlan {
+  if (locateStrategy(table) === 'none') {
+    return {
+      edits: [],
+      autoSkipped: [],
+      defaulted: [],
+      nulled: [],
+      needsInput: [],
+      rejected: '该表无主键/唯一键，无法安全定位行，网格只读，不支持新增行',
+      summary: '该表无主键/唯一键，网格只读，不支持新增行',
+    };
+  }
+
+  const edits: BlankRowEdit[] = [];
+  const autoSkipped: string[] = [];
+  const defaulted: string[] = [];
+  const nulled: string[] = [];
+  const needsInput: string[] = [];
+
+  table.columns.forEach((col, i) => {
+    if (col.autoIncrement) {
+      autoSkipped.push(col.name);
+      edits.push({ col: i, column: col.name, kind: 'auto-skip' });
+      return;
+    }
+    /**
+     * ⚠️ 三种「看起来有默认值」的情况要当心：
+     *  - 空串 `''` 是**合法默认值**（`DEFAULT ''`），不能当成「没默认值」；
+     *  - information_schema 把 `DEFAULT NULL` 存成**字符串 'NULL'**，
+     *    它与「没有 DEFAULT 子句」在本项目里无法区分（驱动统一 `String(r[5])`）；
+     *  - 判断错方向的代价不对称：把有默认值误判成没默认值 → 用户被要求多填一格（烦但不丢数据）；
+     *    反之会**静默多写/NULL 掉**本该由 DEFAULT 决定的值。
+     *  所以这里 fail-closed：'NULL' 一律按「没有可用默认值」处理。
+     */
+    const dv = col.defaultValue;
+    const hasDefault = dv !== null && dv !== undefined && dv.trim().toUpperCase() !== 'NULL';
+    if (hasDefault) {
+      defaulted.push(col.name);
+      edits.push({ col: i, column: col.name, kind: 'use-default' });
+      return;
+    }
+    if (col.nullable) {
+      nulled.push(col.name);
+      edits.push({ col: i, column: col.name, kind: 'set-null' });
+      return;
+    }
+    const reason = `列 ${col.name} 为 NOT NULL 且无默认值，必须填写`;
+    needsInput.push(col.name);
+    edits.push({ col: i, column: col.name, kind: 'needs-input', reason });
+  });
+
+  const parts = ['将新增 1 行空白行'];
+  if (autoSkipped.length > 0) parts.push(`${autoSkipped.join('、')} 由服务端生成`);
+  if (defaulted.length > 0) parts.push(`${defaulted.join('、')} 使用数据库默认值`);
+  if (nulled.length > 0) parts.push(`${nulled.join('、')} 置为 NULL`);
+  if (needsInput.length > 0) parts.push(`${needsInput.join('、')} 必须填写`);
+
+  return { edits, autoSkipped, defaulted, nulled, needsInput, rejected: null, summary: parts.join('，') };
+}
+
+// ---------- T21：提交预览「旧值 → 新值」摘要 ----------
+
+/** 摘要里一个字段的「改前 → 改后」展示串 */
+export interface ChangeSummaryChange {
+  column: string;
+  /** 改前展示串（INSERT 恒为「（新增）」—— 新增行没有原值，绝不拿 null 冒充） */
+  oldText: string;
+  /** 改后展示串 */
+  newText: string;
+  /** 值为 SQL 表达式（原样嵌入）时标出，供 UI 复用 fx 标记 */
+  valueKind?: EditValueKind;
+}
+
+/**
+ * T21：一条语句的核对摘要 —— 四项：对象 / 行定位 / 字段 / 改前改后。
+ *
+ * 🔴 头号红线不变：**原文 SQL 仍是权威**，本摘要只是把「这条语句到底改了谁、
+ *    改了哪一列、从什么变成了什么」前置成人能一眼核对的形态，不替代也不折叠 SQL。
+ */
+export interface ChangeSummary {
+  kind: 'insert' | 'update' | 'delete';
+  /** 对象：受影响目标的限定名（如 `` `db`.`order` ``） */
+  target: string;
+  /** 行定位展示串（如 `` `id` = 2 ``）；INSERT 无定位键 → 「（新增行）」 */
+  locateText: string;
+  /** 字段级改动；DELETE（整行）与「空白新增行」为空数组 */
+  changes: ChangeSummaryChange[];
+}
+
+/**
+ * 摘要里的值展示串 —— **仅供人核对**，绝不回喂 SQL。
+ *
+ * 🔴 保真（红线 6）：
+ *  - NULL / undefined → `NULL`，**空串 → `''`**，两者肉眼可分（绝不同形）；
+ *  - 字符串原样输出（BIGINT 在列式载荷里本就是字符串 → 不经 JS Number 丢精度）；
+ *  - 二进制不展开成垃圾串，只给字节数；
+ *  - Date 用 ISO（不做时区补偿，与既有的展示口径一致）。
+ *
+ * ⚠️ 与渲染层 `grid/conflictProbe.displayValue` 语义相近但**空串口径不同**：
+ *    那边把空串渲染成空文本（用于冲突逐列对比），预览摘要需要与 NULL 肉眼可分，
+ *    故这里输出 SQL 空串字面量 `''`。
+ */
+export function formatChangeValue(v: unknown): string {
+  if (v === null || v === undefined) return 'NULL';
+  if (typeof v === 'bigint') return v.toString();
+  if (v instanceof Uint8Array) return `<二进制 ${v.length} 字节>`;
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === 'string') return v === '' ? "''" : v;
+  return String(v);
+}
+
+export interface ChangeSummaryInput {
+  kind: 'insert' | 'update' | 'delete';
+  database: string;
+  /** 表名 */
+  table: string;
+  /** 定位列（顺序与下面的值一致）；INSERT 缺省 */
+  locateColumns?: readonly string[];
+  /** 定位列原值（**必须来自网格 `source.raw()` 的真实原值，禁止用脏格新值反推**） */
+  locateValues?: readonly unknown[];
+  /** 字段级改动（缺省 = 无字段级改动，如 DELETE 整行删除） */
+  changes?: readonly { column: string; oldValue: unknown; newValue: unknown; valueKind?: EditValueKind }[];
+}
+
+/**
+ * T21：构造一条语句的摘要 —— **纯函数**（零 IO / 零 React），单测直接覆盖。
+ *
+ * 刻意只做「结构化 + 格式化」，不推导 SQL 语义：对象 / 行定位 / 字段 / 改前改后
+ * 全部来自调用方传入的**真实原值**；调用方（buildMutationPlan）保证只传会真正提交的改动
+ *（被拒绝的单元格压根不会走到这里）。
+ */
+export function buildChangeSummary(input: ChangeSummaryInput): ChangeSummary {
+  const locateCols = input.locateColumns ?? [];
+  const locateVals = input.locateValues ?? [];
+  const locateParts = locateCols.map(
+    (col, i) => `${quoteIdentifier(col)} = ${formatChangeValue(locateVals[i])}`,
+  );
+
+  const changes: ChangeSummaryChange[] = [];
+  for (const c of input.changes ?? []) {
+    const item: ChangeSummaryChange = {
+      column: c.column,
+      oldText: input.kind === 'insert' ? '（新增）' : formatChangeValue(c.oldValue),
+      newText: formatChangeValue(c.newValue),
+    };
+    if (c.valueKind === 'sql-expr') item.valueKind = 'sql-expr';
+    changes.push(item);
+  }
+
+  return {
+    kind: input.kind,
+    target: quoteQualified([input.database, input.table]),
+    locateText: locateParts.length > 0 ? locateParts.join(' , ') : '（新增行）',
+    changes,
+  };
+}
+
 // ---------- 结果解释 ----------
 
 export type MutationOutcome =
@@ -776,3 +1090,63 @@ export function interpretResult(affectedRows: number): MutationOutcome {
 export function previewSql(plan: MutationPlan): string[] {
   return plan.statements.map((s) => s.sql);
 }
+
+// ---------- T25：「使用默认值」的两种语境 ----------
+
+/**
+ * MySQL 的「默认值」在 INSERT 与 UPDATE 里是**两件不同的事**，
+ * 本项目在代码注释、菜单文案、保存预览三处都必须说清，否则用户会按错的那个预期去理解：
+ *
+ * | 语境 | 写法 | 语义 | 列没有 DEFAULT 子句时 |
+ * |---|---|---|---|
+ * | INSERT（新增行） | **不把该列写进 INSERT 列表** | 由数据库按 DEFAULT 填 | 取隐式默认值（可空 → NULL；NOT NULL → 严格模式报错） |
+ * | UPDATE（已有行） | `SET col = DEFAULT` | 显式把该列重设为 DEFAULT | 同上，**不是**写成字符串 `'DEFAULT'` |
+ *
+ * 🔴 最常见的误解是「把默认值当成某个值写进去」——
+ *    默认值是**列的约束**，只有数据库知道它现在是什么；
+ *    渲染层拿不到、也不该缓存它（缓存会与 DDL 漂移）。
+ */
+export const DEFAULT_KEYWORD = 'DEFAULT';
+
+/** 一段文本是不是「使用默认值」关键字（去空白、大小写不敏感） */
+export function isDefaultKeyword(v: unknown): boolean {
+  return typeof v === 'string' && v.trim().toUpperCase() === DEFAULT_KEYWORD;
+}
+
+export interface DefaultKeywordEdit {
+  column: string;
+  /** 固定 `DEFAULT` —— **SQL 关键字**，不是字符串字面量 */
+  newValue: string;
+  /**
+   * 固定 `sql-expr`：这是渲染层目前**唯一**能一路带到 SQL 文本、且被
+   * `buildUpdate` 原样嵌入的值形态（见 V10 的通道说明）。
+   * 于是 `newValue='DEFAULT' + valueKind='sql-expr'` ⇒ `SET col = DEFAULT`；
+   * 而 `newValue='DEFAULT' + valueKind='literal'` ⇒ `SET col = ?` 且参数是字符串 'DEFAULT'。
+   * 两者产出的 SQL **完全不同**，单测里互为对照。
+   */
+  valueKind: EditValueKind;
+}
+
+/**
+ * 构造「使用默认值」的编辑片段（**UPDATE 语境专用**）。
+ *
+ * ⚠️ INSERT 语境**不要**调它 —— 新增行要让数据库填默认值，
+ *    做法是**把该列从 INSERT 列表里去掉**（即清除该格的待提交值），
+ *    写成 `VALUES (DEFAULT)` 虽然语法合法，但它依赖"该列确实有 DEFAULT"，
+ *    且会让「这一格到底是空着还是填了」在本地状态里无法区分。
+ */
+export function defaultValueEdit(column: string): DefaultKeywordEdit {
+  return { column, newValue: DEFAULT_KEYWORD, valueKind: 'sql-expr' };
+}
+
+/**
+ * 人类可读的语境说明（菜单 title / 提示条直接用）。
+ *
+ * @param isInsertRow 行号 ≥ 已加载行数 = 待插入的新行
+ */
+export function describeDefaultKeyword(isInsertRow: boolean): string {
+  return isInsertRow
+    ? '新行：把该列从 INSERT 列表里去掉，由数据库填默认值（不是写 NULL —— 显式 NULL 会覆盖 DEFAULT）'
+    : '已有行：UPDATE … SET 该列 = DEFAULT（MySQL 关键字，不是字符串 \'DEFAULT\'）';
+}
+
