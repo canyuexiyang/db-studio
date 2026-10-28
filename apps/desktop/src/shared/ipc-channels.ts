@@ -221,7 +221,24 @@ export interface OpenTableRequest {
 export interface QueryOutcomeDto {
   payload: ColumnarPayload;
   elapsedMs: number;
+  /** 结果集行数。非 SELECT 恒为 0 —— 影响行数看 affectedRows（0.7.1） */
   rowCount: number;
+  /**
+   * 0.7.1：OkPacket.affectedRows。
+   *
+   * 🔴 UPDATE 时是**匹配行数（matched）**（mysql2 默认带 CLIENT_FOUND_ROWS）；
+   *    真实变更数看 `info` 里的 `Changed:`。INSERT/DELETE 就是插入/删除行数。
+   *    结果集时等于 rowCount。
+   */
+  affectedRows: number;
+  /** 0.7.1：INSERT 自增值；无自增为 null */
+  insertId: number | null;
+  /** 0.7.1：语句分类，决定 UI 文案（'select' → 返回 N 行 / 'update' → 已修改 N 行 …） */
+  statementKind: 'select' | 'insert' | 'update' | 'delete' | 'ddl' | 'other';
+  /** 0.7.1：OkPacket.info 原文（`Rows matched: N  Changed: M`），无则 null */
+  info: string | null;
+  /** 0.7.1：服务端告警数 */
+  warnings: number;
   /** 是否因取消提前返回（mysql2 被 KILL 是 resolve 不是 reject） */
   cancelled: boolean;
   /** 行数达到 limit，很可能还有更多 */

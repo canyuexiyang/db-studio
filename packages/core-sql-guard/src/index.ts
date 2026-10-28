@@ -539,6 +539,54 @@ export function checkMutationStatement(sql: string, dialect: Dialect = 'mysql'):
 
 export { STATEMENT_WHITELIST, SAFE_SET_VARS, MUTATION_WHITELIST };
 
+// ---------- 0.7.1：语句分类（执行结果文案的判据） ----------
+
+/**
+ * 执行结果展示用的语句分类。
+ *
+ * 为什么需要它：执行结果文案不能靠 `rowCount` 一个数决定 —— 结果集说「返回 N 行」，
+ * 写操作必须说「已修改 N 行」，DDL 根本不该提行数（它恒为 0）。
+ *
+ *  - `select`：会产生结果集（含 SHOW / DESCRIBE / EXPLAIN）
+ *  - `insert` / `update` / `delete`：写操作，取 affectedRows（**不是** rows.length）
+ *  - `ddl`：结构变更，无行数概念
+ *  - `other`：判定不了（解析失败 / SET / CALL / 未知方言），fail-safe，文案退回中性
+ *
+ * ⚠️ 与 `STATEMENT_WHITELIST`（只读守卫）不是一回事：那是安全白名单，这是展示分类。
+ *    两者共用同一份 AST，但语义变化互不影响 —— 不要合并。
+ */
+export type StatementKind = 'select' | 'insert' | 'update' | 'delete' | 'ddl' | 'other';
+
+/** 返回结果集的语句（USE/SET 不在此列：它们没有行数概念，归 other 出中性文案） */
+const RESULT_SET_TYPES = new Set(['select', 'show', 'describe', 'desc', 'explain']);
+
+/** 结构变更语句 */
+const DDL_TYPES = new Set(['create', 'drop', 'alter', 'truncate', 'rename']);
+
+/**
+ * 判定一条 SQL 的执行结果分类。
+ *
+ * 多语句取**第一条**：执行链路本身是逐条执行、逐条出结果标签，文案跟着逐条走，
+ * 这里只需要给「这一条」定性。
+ *
+ * 解析失败一律返回 `other`（不猜）—— 猜错方向的代价是给用户看错误的行数口径，
+ * 比显示中性的「执行完成」更糟。
+ */
+export function statementKindOf(sql: string, dialect: Dialect = 'mysql'): StatementKind {
+  if (!sql || !sql.trim()) return 'other';
+
+  const parsed = parseStatements(sql, dialect);
+  if ('error' in parsed) return 'other';
+
+  const type = String(parsed.asts[0]?.type ?? '').toLowerCase();
+  if (RESULT_SET_TYPES.has(type)) return 'select';
+  if (type === 'insert' || type === 'replace') return 'insert';
+  if (type === 'update') return 'update';
+  if (type === 'delete') return 'delete';
+  if (DDL_TYPES.has(type)) return 'ddl';
+  return 'other';
+}
+
 // ---------- T08 配套：DDL 结构白名单（与网格写语句分开） ----------
 
 /**

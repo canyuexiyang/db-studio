@@ -1,8 +1,59 @@
 import { describe, it, expect } from 'vitest';
-import { checkReadOnly, isReadOnly, checkMutationStatement } from './index.js';
+import { checkReadOnly, isReadOnly, checkMutationStatement, statementKindOf } from './index.js';
 
 const M = 'mysql' as const;
 const P = 'postgresql' as const;
+
+/**
+ * 0.7.1 需求 1 的判据：执行结果文案按语句分类分流。
+ *
+ * 这里钉住的是「分类不会把写操作误判成结果集」—— 一旦判错，UPDATE 就会继续
+ * 显示「返回 0 行」，那正是本次要修的缺陷。
+ */
+describe('0.7.1 statementKindOf（执行结果分类）', () => {
+  const cases: Array<[string, string]> = [
+    ['SELECT * FROM t', 'select'],
+    ['SELECT COUNT(*) FROM t WHERE a = 1', 'select'],
+    ['SHOW TABLES', 'select'],
+    ['DESCRIBE t', 'select'],
+    ['EXPLAIN SELECT * FROM t', 'select'],
+    ['INSERT INTO t (a) VALUES (1)', 'insert'],
+    ['REPLACE INTO t (a) VALUES (1)', 'insert'],
+    ['UPDATE t SET a = 1 WHERE id = 2', 'update'],
+    ['DELETE FROM t WHERE id = 3', 'delete'],
+    ['CREATE TABLE t (id int)', 'ddl'],
+    ['ALTER TABLE t ADD COLUMN b int', 'ddl'],
+    ['DROP TABLE t', 'ddl'],
+    ['TRUNCATE TABLE t', 'ddl'],
+    // 没有行数概念的：必须落 other，不能显示「返回 0 行」
+    ['SET NAMES utf8mb4', 'other'],
+    ['USE order_db', 'other'],
+  ];
+
+  for (const [sql, kind] of cases) {
+    it(`${sql} → ${kind}`, () => {
+      expect(statementKindOf(sql, M)).toBe(kind);
+    });
+  }
+
+  it('解析失败 fail-safe 落 other（不猜方向）', () => {
+    expect(statementKindOf('SELCT * FROM t', M)).toBe('other');
+  });
+
+  it('空语句落 other，不抛', () => {
+    expect(statementKindOf('', M)).toBe('other');
+    expect(statementKindOf('   ', M)).toBe('other');
+  });
+
+  it('多语句取第一条（执行链路逐条出结果，文案逐条走）', () => {
+    expect(statementKindOf('UPDATE t SET a = 1; SELECT * FROM t', M)).toBe('update');
+  });
+
+  it('注释/字符串里的关键字不影响判定（走 AST 而非文本匹配）', () => {
+    expect(statementKindOf("SELECT 'UPDATE t SET a = 1' AS s", M)).toBe('select');
+  });
+});
+
 
 describe('SQL 只读守卫 — 允许的场景', () => {
   const allowed: Array<[string, 'mysql' | 'postgresql', string]> = [

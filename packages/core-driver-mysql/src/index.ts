@@ -156,8 +156,30 @@ export interface FieldMeta {
 export interface QueryResult {
   rows: unknown[][];
   fields: FieldMeta[];
+  /**
+   * 影响行数（OkPacket.affectedRows）。
+   *
+   * 🔴 对 UPDATE 是 **匹配行数（matched）**，不是修改行数 —— 因为 mysql2 默认带
+   *    CLIENT_FOUND_ROWS 标志（2026-10-27 真库实测：`UPDATE t SET v='x' WHERE v='x'`
+   *    返回 affectedRows=3 而 info 写 `Changed: 0`）。真实变更数在 `info` 的
+   *    `Changed:` 里，或用 OkPacket.changedRows。
+   *    要「已修改 N 行」的文案必须解析 info（见 resultMessage.parseChangedRows），
+   *    直接拿本字段说「已修改」会夸大实际变更。
+   * 结果集时等于 rows.length（保持既有行为，不是 0）。
+   */
   affectedRows: number;
   insertId: number | null;
+  /**
+   * 0.7.1：OkPacket 的原文信息，形如
+   * `Rows matched: 5  Changed: 2  Warnings: 0`。
+   *
+   * 为什么必须透出：只有 affectedRows 会让「值未变化」的 UPDATE 显示成
+   * 「0 行受影响」，用户误判为没生效。竞品（Workbench）靠这段原文避免误导。
+   * 结果集 / 驱动没给 info 时为 null（不编造）。
+   */
+  info: string | null;
+  /** 0.7.1：OkPacket.warningStatus（服务端告警数；结果集为 0） */
+  warnings: number;
   /** 语句耗时（ms） */
   elapsedMs: number;
 }
@@ -215,13 +237,34 @@ export class DriverError extends Error {
   }
 }
 
-/** 把 mysql2 抛出的错误归一化（UI 要展示原始错误码与原文，不做翻译） */
+/**
+ * 把 mysql2 抛出的错误归一化（UI 要展示原始错误码与原文，不做翻译）
+ *
+ * 🔴 `fatal: true` 但**没有 code** 的错误必须补一个码（2026-10-27 真机验证发现）。
+ *
+ * mysql2 在「连接已经死了」之后，下一次 query 抛的是：
+ *   `Error: Can't add new command when connection is in closed state`
+ * 这个错误对象只有 `{ fatal: true }`，**没有 code / errno / sqlState** ——
+ * 于是 `isConnectionLostError()`（只认 code）根本认不出它，导致：
+ * 服务端 wait_timeout 掐断 / `KILL CONNECTION` / 代理层回收连接之后，状态机仍停在
+ * `connected`，UI 显示正常而每条查询都在报错，用户只能手动断开重连自救
+ * （0.7.1 需求 4 的现场就是这样：心跳发了、报错了、但连接"看起来"还活着）。
+ *
+ * 归一成 `PROTOCOL_CONNECTION_LOST` 而不是新造一个码：它在断线码表里、
+ * 语义就是「连接没了」，下游（session-registry 的断线归类）不必再学一套。
+ */
 export function normalizeError(e: unknown): DriverError {
   const anyE = e as any;
   if (anyE instanceof DriverError) return anyE;
+  const code =
+    typeof anyE?.code === 'string' && anyE.code !== ''
+      ? anyE.code
+      : anyE?.fatal === true
+        ? 'PROTOCOL_CONNECTION_LOST'
+        : undefined;
   return new DriverError(
     String(anyE?.message ?? e),
-    anyE?.code,
+    code,
     anyE?.errno,
     anyE?.sqlState,
   );
@@ -435,7 +478,17 @@ export class MySqlDriver {
       rows: isResultSet ? (resultSet as unknown[][]) : [],
       fields,
       affectedRows: isResultSet ? resultSet.length : Number(resultSet?.affectedRows ?? 0),
-      insertId: !isResultSet && resultSet?.insertId != null ? Number(resultSet.insertId) : null,
+      // 0.7.1：`insertId = 0` 归一成 null —— MySQL 的自增从 1 开始，0 只表示
+      // 「这条语句没有自增值」（UPDATE/DELETE/DDL 都是 0）。留着 0 会让 UI
+      // 显示「自增 ID 起始 0」这种没有意义的字。
+      insertId:
+        !isResultSet && resultSet?.insertId != null && Number(resultSet.insertId) > 0
+          ? Number(resultSet.insertId)
+          : null,
+      // 0.7.1：OkPacket.info 只在非结果集时有意义。空串/非字符串一律归一成 null
+      //（渲染层只判 null，不用判 ''）。
+      info: !isResultSet && typeof resultSet?.info === 'string' && resultSet.info !== '' ? resultSet.info : null,
+      warnings: !isResultSet && Number.isFinite(Number(resultSet?.warningStatus)) ? Number(resultSet.warningStatus) : 0,
       elapsedMs: this.now() - started,
     };
   }

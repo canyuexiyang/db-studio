@@ -233,6 +233,28 @@ describe('驱动生命周期', () => {
     expect(e.message).toBe('Access denied');
   });
 
+  // 0.7.1 真机验证反查出来的坑：mysql2 的连接级错误**只有 fatal，没有 code**
+  // （`Can't add new command when connection is in closed state`），
+  // 只认 code 的断线归类就永远认不出来 → 状态机停在 connected，每条查询都在报错。
+  it('🔴 fatal 但没 code 的连接级错误要补成 PROTOCOL_CONNECTION_LOST', () => {
+    const e = normalizeError({
+      message: "Can't add new command when connection is in closed state",
+      fatal: true,
+    });
+    expect(e.code).toBe('PROTOCOL_CONNECTION_LOST');
+    expect(e.message).toContain('closed state');
+  });
+
+  it('有 code 时以 code 为准，不被 fatal 覆盖', () => {
+    const e = normalizeError({ message: 'boom', code: 'ER_LOCK_DEADLOCK', fatal: true });
+    expect(e.code).toBe('ER_LOCK_DEADLOCK');
+  });
+
+  it('非 fatal 且无 code 的普通错误不硬塞断线码（避免误判成断线）', () => {
+    const e = normalizeError(new Error('某条 SQL 语法错'));
+    expect(e.code).toBeUndefined();
+  });
+
   it('testConnection 失败时返回错误与耗时，不抛', async () => {
     const r = await MySqlDriver.testConnection(
       { host: 'h', port: 3306, user: 'u', password: null },
@@ -1298,3 +1320,81 @@ describe('驱动层 SSL 透传（捕获 createConnection 收到的 opts）', () 
     await d.close();
   });
 });
+
+/**
+ * 0.7.1 需求 1：非 SELECT 语句的影响行数。
+ *
+ * 驱动层是这条链路的**源头** —— 它如果只给 rows.length，后面四层怎么改都是 0。
+ * 这里钉住 OkPacket 的三个事实：affectedRows（changed）、info（含 matched 原文）、
+ * warningStatus，以及「结果集时不要误报 info/warnings」。
+ */
+describe('0.7.1 影响行数口径（OkPacket → QueryResult）', () => {
+  /** mysql2 对 INSERT/UPDATE/DELETE 返回 OkPacket（普通对象，非数组）；fields 为 undefined */
+  const okPacket = (o: Record<string, unknown>): [unknown, unknown] => [
+    { affectedRows: 0, insertId: 0, info: '', warningStatus: 0, ...o },
+    undefined,
+  ];
+
+  async function connectedDriver(responder: (sql: string) => [unknown, unknown]): Promise<MySqlDriver> {
+    const d = new MySqlDriver({ host: 'h', port: 3306, user: 'u', password: null }, {}, {
+      // connect() 期间会查 VERSION()/CONNECTION_ID() 拿握手信息，其余留给被测语句
+      loadModule: () =>
+        Promise.resolve(fakeModule((sql) => (sql.includes('VERSION') ? versionOnly() : responder(sql)))),
+    });
+    await d.connect();
+    return d;
+  }
+
+  it('结果集：affectedRows = 行数，info 为 null、warnings 为 0（不把结果集当写操作）', async () => {
+    const d = await connectedDriver(() => [
+      [['a', 1], ['b', 2]],
+      [{ name: 'k' }, { name: 'n' }],
+    ]);
+    const r = await d.query('SELECT k, n FROM t');
+    expect(r.rows).toHaveLength(2);
+    expect(r.affectedRows).toBe(2);
+    expect(r.info).toBeNull();
+    expect(r.warnings).toBe(0);
+    await d.close();
+  });
+
+  it('UPDATE：affectedRows 与 info 原文都透出（matched 与 changed 可能不同）', async () => {
+    const d = await connectedDriver(() =>
+      okPacket({ affectedRows: 2, info: 'Rows matched: 5  Changed: 2  Warnings: 0' }),
+    );
+    const r = await d.query('UPDATE t SET n = 1 WHERE k IS NULL');
+    expect(r.affectedRows).toBe(2);
+    expect(r.info).toBe('Rows matched: 5  Changed: 2  Warnings: 0');
+    // 🔴 这条是关键：只给 affectedRows 会让「值未变化」的 UPDATE 显示成 0 行受影响
+    expect(r.rows).toHaveLength(0);
+    expect(r.insertId).toBeNull();
+    await d.close();
+  });
+
+  it('OkPacket 没带 info（旧服务端 / 驱动差异）：降级为 null，不编造字符串', async () => {
+    const d = await connectedDriver(() => okPacket({ affectedRows: 1, info: undefined }));
+    const r = await d.query('DELETE FROM t WHERE k = 1');
+    expect(r.affectedRows).toBe(1);
+    expect(r.info).toBeNull();
+    await d.close();
+  });
+
+  it('空串 info 归一成 null（渲染层只判 null，不用判空串）', async () => {
+    const d = await connectedDriver(() => okPacket({ affectedRows: 1, info: '' }));
+    const r = await d.query('INSERT INTO t VALUES (1)');
+    expect(r.info).toBeNull();
+    expect(r.insertId).toBeNull();
+    await d.close();
+  });
+
+  it('warningStatus 非 0 时透出告警数（INSERT 忽略/截断要能让用户看见）', async () => {
+    const d = await connectedDriver(() =>
+      okPacket({ affectedRows: 1, insertId: 7, warningStatus: 2, info: 'Records: 1  Duplicates: 0' }),
+    );
+    const r = await d.query('INSERT INTO t VALUES (1)');
+    expect(r.warnings).toBe(2);
+    expect(r.insertId).toBe(7);
+    await d.close();
+  });
+});
+

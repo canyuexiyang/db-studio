@@ -38,7 +38,7 @@ class FakeDriver implements DriverLike {
     rows: [],
     fields: [],
     affectedRows: 0,
-    insertId: null,
+    insertId: null, info: null, warnings: 0,
     elapsedMs: 1,
   });
 
@@ -343,7 +343,7 @@ describe('🔴 只读拦截（唯一安全层）', () => {
       rows: [['a']],
       fields: [{ name: 'x', type: 253 }],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     const out = await registry.runQuery('c1', 'SELECT * FROM t');
@@ -405,7 +405,7 @@ describe('查询', () => {
         { name: 'name', type: 253 },
       ],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 2,
     });
     const out = await registry.runQuery('c1', 'SELECT id, name FROM t');
@@ -420,7 +420,7 @@ describe('查询', () => {
       rows: [],
       fields: [{ name: 'id', type: 8 }],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     await registry.openTable('c1', {
@@ -440,7 +440,7 @@ describe('查询', () => {
       rows: Array.from({ length: 5 }, (_, i) => [i]),
       fields: [{ name: 'id', type: 8 }],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     const out = await registry.openTable('c1', { database: 'app_db', table: 'order', limit: 5 });
@@ -458,7 +458,7 @@ describe('查询', () => {
         { name: 'title', type: 253 },
       ],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     const out = await registry.openTable('c1', { database: 'app_db', table: 'order' });
@@ -479,7 +479,7 @@ describe('查询', () => {
         { name: 'amount', type: 246 },
       ],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     const out = await registry.runQuery('c1', 'SELECT id, amount FROM `order`');
@@ -491,7 +491,7 @@ describe('查询', () => {
       rows: [],
       fields: [{ name: 'id', type: 8 }],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     // 让查询挂住，才能抓到"进行中"的句柄
@@ -531,7 +531,7 @@ describe('写操作（单事务）', () => {
         rows: [],
         fields: [],
         affectedRows: 1,
-        insertId: 99,
+        insertId: 99, info: null, warnings: 0,
         elapsedMs: 1,
       };
     };
@@ -570,7 +570,7 @@ describe('写操作（单事务）', () => {
       rows: [],
       fields: [],
       affectedRows: 1,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     // ⚠️ 带 WHERE：本用例测的是「写操作结束后状态回到 connected」，
@@ -627,7 +627,7 @@ describe('写操作（单事务）', () => {
   });
 
   it('合法写语句放行：带 WHERE 的 UPDATE/DELETE 与 INSERT 照常执行', async () => {
-    driver.handler = () => ({ rows: [], fields: [], affectedRows: 1, insertId: null, elapsedMs: 1 });
+    driver.handler = () => ({ rows: [], fields: [], affectedRows: 1, insertId: null, info: null, warnings: 0, elapsedMs: 1 });
     await registry.applyMutation('c1', 'app_db', [
       { sql: 'UPDATE `order` SET created_at = NOW() WHERE `id` = ? AND `created_at` = ?', params: [1, '2026-01-01'] },
       { sql: 'INSERT INTO `order` (`amount`, `created_at`) VALUES (?, NOW())', params: [10] },
@@ -639,7 +639,7 @@ describe('写操作（单事务）', () => {
   });
 
   it('V10 表达式值（NOW() / 列算术 / 子查询）在写链路中被放行', async () => {
-    driver.handler = () => ({ rows: [], fields: [], affectedRows: 1, insertId: null, elapsedMs: 1 });
+    driver.handler = () => ({ rows: [], fields: [], affectedRows: 1, insertId: null, info: null, warnings: 0, elapsedMs: 1 });
     for (const sql of [
       'UPDATE `order` SET `created_at` = NOW() WHERE `id` = 1',
       'UPDATE `order` SET `amount` = `amount` * 2 WHERE `id` = 1',
@@ -1091,6 +1091,15 @@ function collectEvents(reg: SessionRegistry): { events: { id: string; state: Con
 }
 
 /** mysql2 断线形态的错误（code 决定归类，message 只是展示） */
+/**
+ * 连接级错误替身。
+ *
+ * ⚠️ 这里**故意**带上 `code`，因为 `isConnectionLostError` 只认 code。
+ * 但真实的 mysql2 在「连接已被服务端关掉」时抛的是 `{ fatal: true }`、
+ * **没有 code** —— 于是这个替身曾经让一整套断线用例全绿，而真机上一个都
+ * 触发不了（0.7.1 真机验证反查出来的）。补码的责任在驱动层
+ * `normalizeError`（core-driver-mysql 有单测，`e2e:keepalive` 有真库门禁）。
+ */
 const LOST = () => Object.assign(new Error('Connection lost: The server closed the connection.'), { code: 'PROTOCOL_CONNECTION_LOST' });
 
 describe('D1 状态推送（每一次迁移都回调）', () => {
@@ -1222,5 +1231,249 @@ describe('D1 状态推送（每一次迁移都回调）', () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(reg.stateOf('c1')).toBe('idle');
     driver.failConnect = null;
+  });
+});
+
+/**
+ * 0.7.1 需求 1：执行结果的字段口径。
+ *
+ * 这里钉住的是「断开点」—— 0.7.0 的 runQuery 把 rows.length 当成唯一事实，
+ * 于是 UPDATE 在 UI 上显示「返回 0 行」。断言必须同时看 rowCount（恒 0）与
+ * affectedRows（真值），只断 affectedRows 的话，把 rowCount 也改成 affectedRows
+ * 的实现照样会全绿（那就是另一种错：结果集语义被写操作污染）。
+ */
+describe('0.7.1 执行结果字段（runQuery 透传）', () => {
+  beforeEach(async () => {
+    await registry.connect(cfg(), 'pwd');
+  });
+
+  it('UPDATE：rowCount 恒 0，affectedRows 是真值，statementKind=update 且带 info', async () => {
+    driver.handler = () => ({
+      rows: [],
+      fields: [],
+      affectedRows: 2,
+      insertId: null,
+      info: 'Rows matched: 5  Changed: 2  Warnings: 0',
+      warnings: 0,
+      elapsedMs: 3,
+    });
+    const out = await registry.runQuery('c1', 'UPDATE `order` SET amount = 1 WHERE id = 1');
+    expect(out.rowCount).toBe(0);
+    expect(out.affectedRows).toBe(2);
+    expect(out.statementKind).toBe('update');
+    // matched=5 与 changed=2 必须都能拿到：只有 affectedRows 时用户会以为「只改了 2 行，另外 3 行漏了」
+    expect(out.info).toContain('Rows matched: 5');
+  });
+
+  it('SELECT：affectedRows 跟随行数（不是 0），避免「结果集也报影响 0 行」', async () => {
+    driver.handler = () => ({
+      rows: [['a'], ['b']],
+      fields: [{ name: 'x', type: 253 }],
+      affectedRows: 0,
+      insertId: null,
+      info: null,
+      warnings: 0,
+      elapsedMs: 1,
+    });
+    const out = await registry.runQuery('c1', 'SELECT * FROM `order`');
+    expect(out.rowCount).toBe(2);
+    expect(out.affectedRows).toBe(2);
+    expect(out.statementKind).toBe('select');
+  });
+
+  it('空结果集（0 行但有列）：affectedRows 是 0 而不是服务端无关值', async () => {
+    driver.handler = () => ({
+      rows: [],
+      fields: [{ name: 'x', type: 253 }],
+      affectedRows: 7, // 故意给个脏值：结果集不该采用它
+      insertId: null,
+      info: null,
+      warnings: 0,
+      elapsedMs: 1,
+    });
+    const out = await registry.runQuery('c1', 'SELECT * FROM `order` WHERE 1 = 0');
+    expect(out.rowCount).toBe(0);
+    expect(out.affectedRows).toBe(0);
+  });
+
+  it('INSERT：透出 insertId 与 warnings', async () => {
+    driver.handler = () => ({
+      rows: [],
+      fields: [],
+      affectedRows: 1,
+      insertId: 5001,
+      info: 'Records: 1  Duplicates: 0  Warnings: 2',
+      warnings: 2,
+      elapsedMs: 2,
+    });
+    const out = await registry.runQuery('c1', "INSERT INTO `order` (amount) VALUES (1)");
+    expect(out.affectedRows).toBe(1);
+    expect(out.insertId).toBe(5001);
+    expect(out.warnings).toBe(2);
+  });
+
+  it('DDL：statementKind=ddl（文案该说执行成功，不该提行数）', async () => {
+    driver.handler = () => ({
+      rows: [],
+      fields: [],
+      affectedRows: 0,
+      insertId: null,
+      info: null,
+      warnings: 0,
+      elapsedMs: 2,
+    });
+    const out = await registry.runQuery('c1', 'CREATE TABLE `tmp_x` (id int)');
+    expect(out.statementKind).toBe('ddl');
+    expect(out.affectedRows).toBe(0);
+  });
+});
+
+/**
+ * 0.7.1 需求 4：心跳保活的**接线**（纯函数判据已在 core-connection 里钉过）。
+ *
+ * 这里验的是三件真机上才会出事的接线错误：
+ *   - 心跳走了 runQuery → 连接被标 busy → 用户点执行吃「已有查询在执行」
+ *   - 用户查询在跑时心跳抢连接
+ *   - 心跳失败一次就弹断线横幅（网络抖动被当成真断线）
+ */
+describe('0.7.1 心跳保活（替身驱动 + 假定时器）', () => {
+  /** 保活间隔 1s（扫描周期 = 一半 = 500ms），让门禁跑得快 */
+  const KA = 1000;
+
+  const makeReg = () => new SessionRegistry(cache, () => driver, null, null, KA);
+  const heartbeats = () => driver.calls.filter((c) => c.sql === 'SELECT 1').length;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('空闲到点发 SELECT 1，且不推进状态机（UI 不该为后台心跳闪 busy）', async () => {
+    const reg = makeReg();
+    const { events } = collectEvents(reg);
+    await reg.connect(cfg({ idleTimeoutMs: 0 }), 'pwd');
+    await vi.advanceTimersByTimeAsync(1200);
+
+    expect(heartbeats()).toBeGreaterThanOrEqual(1);
+    expect(events.map((e) => e.state)).not.toContain('busy');
+    expect(reg.stateOf('c1')).toBe('connected');
+    await reg.disconnect('c1');
+  });
+
+  it('🔴 有查询在跑时不插队（插队会让用户查询直接吃 BUSY）', async () => {
+    const reg = makeReg();
+    await reg.connect(cfg({ idleTimeoutMs: 0 }), 'pwd');
+
+    driver.queryDelayMs = 3000;
+    const running = reg.runQuery('c1', 'SELECT * FROM `order`');
+    // 查询占了 3s，期间跨越两个扫描周期
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(heartbeats()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await running;
+    driver.queryDelayMs = 0;
+    await reg.disconnect('c1');
+  });
+
+  it('心跳成功会刷新空闲计时：不会因为「有心跳」反而被 idle 断开', async () => {
+    const reg = makeReg();
+    // idle 2.5s：若心跳不刷新活跃时间，2.5s 后必然 closed
+    await reg.connect(cfg({ idleTimeoutMs: 2500 }), 'pwd');
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(reg.stateOf('c1')).toBe('connected');
+    expect(heartbeats()).toBeGreaterThanOrEqual(4);
+    await reg.disconnect('c1');
+  });
+
+  it('🔴 心跳失败 1 次不弹断线，连续 2 次才交给重连链路', async () => {
+    const reg = makeReg();
+    const { events } = collectEvents(reg);
+    await reg.connect(cfg({ idleTimeoutMs: 0 }), 'pwd');
+
+    // 只让心跳失败（用户查询照常）
+    driver.throwOn = (sql) => (sql === 'SELECT 1' ? LOST() : null);
+
+    await vi.advanceTimersByTimeAsync(1200); // 第 1 次心跳失败
+    expect(reg.stateOf('c1')).toBe('connected');
+    expect(events.map((e) => e.state)).not.toContain('disconnected');
+
+    await vi.advanceTimersByTimeAsync(1200); // 第 2 次心跳失败 → 判死
+    expect({
+      beats: heartbeats(),
+      failures: (reg as unknown as { keepAliveFailures: Map<string, number> }).keepAliveFailures.get('c1') ?? null,
+      state: reg.stateOf('c1'),
+    }).toEqual({ beats: 2, failures: null, state: 'disconnected' });
+    expect(events.map((e) => e.state)).toContain('disconnected');
+
+    driver.throwOn = null;
+    await vi.advanceTimersByTimeAsync(2000); // 自动重连
+    expect(reg.stateOf('c1')).toBe('connected');
+    await reg.disconnect('c1');
+  });
+
+  it('保活关闭（keepAliveMs = 0）时一条心跳都不发', async () => {
+    const reg = new SessionRegistry(cache, () => driver, null, null, 0);
+    await reg.connect(cfg({ idleTimeoutMs: 0 }), 'pwd');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(heartbeats()).toBe(0);
+    await reg.disconnect('c1');
+  });
+
+  it('退出时停掉扫描器（不再往已关闭的驱动发 SQL）', async () => {
+    const reg = makeReg();
+    await reg.connect(cfg({ idleTimeoutMs: 0 }), 'pwd');
+    await vi.advanceTimersByTimeAsync(1200);
+    const before = heartbeats();
+    await reg.closeAll();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(heartbeats()).toBe(before);
+  });
+
+  /**
+   * 🔴 2026-10-28 事故：0.7.1 上线后 `verify` 链卡在 `e2e:conflict`。
+   *
+   * 冲突门禁的断言全绿（17/17），但**进程不退出** —— 那个脚本成功路径没有
+   * `process.exit(0)`，靠事件循环自然排空来结束；而保活用的是 `setInterval`，
+   * 是活跃句柄，Node 会一直等它。结果是整条门禁链静默挂死 10 分钟。
+   *
+   * 两条防线都要有，缺一条就会复现：
+   *  ① 建定时器时 `unref()` —— 它永远不该成为进程退出的阻碍；
+   *  ② 最后一条活连接断开时停掉定时器 —— 否则用户断开全部连接后它还在空转。
+   */
+  it('🔴 定时器必须 unref（否则 verify 链会挂死在一个永远不退出的进程上）', async () => {
+    const reg = makeReg();
+    await reg.connect(cfg({ idleTimeoutMs: 0 }), 'pwd');
+    const timer = (reg as unknown as { keepAliveTimer: unknown }).keepAliveTimer;
+    // 假定时器（vi.useFakeTimers）在 Node 里返回对象，真浏览器返回数字 —— 两种都要认
+    const unref = (timer as { unref?: unknown } | null)?.unref;
+    expect({ hasTimer: timer !== null, unrefable: typeof unref }).toEqual({
+      hasTimer: true,
+      // 数字定时器没法 unref，但那时也不存在"挂住事件循环"的问题；Node 下必须是函数
+      unrefable: typeof timer === 'number' ? 'number' : 'function',
+    });
+    await reg.disconnect('c1');
+  });
+
+  it('🔴 断开最后一条连接后停掉扫描器（不留空转的心跳）', async () => {
+    const reg = makeReg();
+    const timerOf = () => (reg as unknown as { keepAliveTimer: unknown }).keepAliveTimer;
+
+    await reg.connect(cfg({ idleTimeoutMs: 0 }), 'pwd');
+    expect(timerOf()).not.toBeNull();
+
+    await reg.disconnect('c1');
+    expect(timerOf()).toBeNull();
+
+    // 还有活连接时不能停：两条连接，只断一条
+    await reg.connect(cfg({ id: 'c2', idleTimeoutMs: 0 }), 'pwd');
+    await reg.connect(cfg({ id: 'c3', idleTimeoutMs: 0 }), 'pwd');
+    await reg.disconnect('c2');
+    expect(timerOf()).not.toBeNull();
+    await reg.disconnect('c3');
+    expect(timerOf()).toBeNull();
   });
 });

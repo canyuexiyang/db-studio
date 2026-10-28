@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   ConnectionRuntime,
+  DEFAULT_IDLE_TIMEOUT_MS,
+  DEFAULT_KEEPALIVE_MS,
+  KEEPALIVE_MAX_FAILURES,
   MAX_RECONNECT_ATTEMPTS,
   RECONNECT_DELAYS_MS,
   buildGroupTree,
@@ -8,6 +11,8 @@ import {
   defaultConnectionConfig,
   hasBlockingError,
   isProduction,
+  keepAliveDead,
+  shouldKeepAlive,
   validateConnectionConfig,
   type Clock,
   type ConnectionConfig,
@@ -278,6 +283,111 @@ describe('生命周期状态机', () => {
     const rt = new ConnectionRuntime('c1', fakeClock().clock);
     expect(rt.connect()).toBe(true);
     expect(rt.connect()).toBe(false);
+  });
+});
+
+/**
+ * 0.7.1 需求 4：心跳保活的调度判据。
+ *
+ * 这组断言的价值：任何一个条件写漏，代价都是**用户正在跑的查询被抢连接**
+ * （点执行报「已有查询在执行」）或者**连接被误判死**（弹断线横幅）。
+ */
+describe('0.7.1 心跳保活：shouldKeepAlive', () => {
+  const base = {
+    state: 'connected' as const,
+    idleForMs: 60_000,
+    hasRunningQuery: false,
+    consecutiveFailures: 0,
+    keepAliveMs: 60_000,
+  };
+
+  it('到点且空闲 → 该发', () => {
+    expect(shouldKeepAlive(base)).toBe(true);
+  });
+
+  it('保活关闭（keepAliveMs = 0）→ 不发', () => {
+    expect(shouldKeepAlive({ ...base, keepAliveMs: 0 })).toBe(false);
+  });
+
+  it('🔴 busy 状态绝不插队（否则用户查询会吃 BUSY）', () => {
+    expect(shouldKeepAlive({ ...base, state: 'busy' })).toBe(false);
+    expect(shouldKeepAlive({ ...base, state: 'disconnected' })).toBe(false);
+    expect(shouldKeepAlive({ ...base, state: 'closed' })).toBe(false);
+  });
+
+  it('🔴 有查询在跑就不发（与状态机双保险）', () => {
+    expect(shouldKeepAlive({ ...base, hasRunningQuery: true })).toBe(false);
+  });
+
+  it('刚活动过（不足一个间隔）→ 不发，省一次多余往返', () => {
+    expect(shouldKeepAlive({ ...base, idleForMs: 59_999 })).toBe(false);
+  });
+
+  it('已连续失败到阈值 → 不再发（等重连杆）', () => {
+    expect(shouldKeepAlive({ ...base, consecutiveFailures: KEEPALIVE_MAX_FAILURES })).toBe(false);
+    expect(shouldKeepAlive({ ...base, consecutiveFailures: 1 })).toBe(true);
+  });
+
+  it('连续失败 2 次判死（偶发 1 次不判）', () => {
+    expect(KEEPALIVE_MAX_FAILURES).toBe(2);
+    expect(keepAliveDead(1)).toBe(false);
+    expect(keepAliveDead(2)).toBe(true);
+  });
+});
+
+describe('0.7.1 心跳保活：touchActive 与默认值', () => {
+  it('touchActive 刷新空闲计时（心跳成功不该让用户被 idle 断开）', () => {
+    const { clock, advance } = fakeClock();
+    const rt = new ConnectionRuntime('c1', clock, 60_000);
+    rt.connect();
+    rt.onConnected();
+    advance(50_000);
+    // 心跳成功：重置计时
+    rt.touchActive();
+    advance(50_000);
+    expect(rt.state).toBe('connected');
+    // 再过 11s 真到点了才断
+    advance(11_000);
+    expect(rt.state).toBe('closed');
+  });
+
+  it('touchActive 不迁移状态（心跳不该让 UI 闪 busy 或 connected）', () => {
+    const { clock } = fakeClock();
+    const rt = new ConnectionRuntime('c1', clock, 60_000);
+    rt.connect();
+    rt.onConnected();
+    const before = rt.changes.length;
+    rt.touchActive();
+    expect(rt.state).toBe('connected');
+    expect(rt.changes.length).toBe(before); // 没有任何状态迁移记录
+  });
+
+  it('busy 期间的 touchActive 不刷新计时（心跳回执说明不了查询仍在跑）', () => {
+    const { clock } = fakeClock();
+    const rt = new ConnectionRuntime('c1', clock, 60_000);
+    rt.connect();
+    rt.onConnected();
+    rt.beginQuery();
+    const before = rt.changes.length;
+    rt.touchActive();
+    expect(rt.state).toBe('busy');
+    expect(rt.changes.length).toBe(before);
+  });
+
+  it('默认空闲超时是 120 分钟（0.7.1 由 10 分钟调整）', () => {
+    expect(DEFAULT_IDLE_TIMEOUT_MS).toBe(120 * 60 * 1000);
+    expect(DEFAULT_KEEPALIVE_MS).toBe(60_000);
+    // 连接默认值必须引用这个常量（不是各自写死）
+    expect(defaultConnectionConfig().idleTimeoutMs).toBe(DEFAULT_IDLE_TIMEOUT_MS);
+  });
+
+  it('idleTimeoutMs = 0 → 永不自动断开', () => {
+    const { clock, advance } = fakeClock();
+    const rt = new ConnectionRuntime('c1', clock, 0);
+    rt.connect();
+    rt.onConnected();
+    advance(24 * 60 * 60 * 1000); // 一整天
+    expect(rt.state).toBe('connected');
   });
 });
 

@@ -442,7 +442,9 @@ export function ConnectionEditor({
                     label="空闲超时（分钟）"
                     field="idleTimeoutMs"
                     issues={issues} touched={touched}
-                    hint={`默认 ${DEFAULT_IDLE_TIMEOUT_MS / 60000} 分钟，0 表示不断开`}
+                    /* 0.7.1：默认 10 → 120 分钟。文案必须说清「0 = 不断开」，
+                       否则用户不知道这个输入框能为 0 做什么 */
+                    hint={`默认 ${DEFAULT_IDLE_TIMEOUT_MS / 60000} 分钟；0 表示永不自动断开。工具会每 60 秒自动保活一次，长时间挂着也能直接查`}
                   >
                     <input
                       type="number"
@@ -450,6 +452,11 @@ export function ConnectionEditor({
                       value={Math.floor(form.idleTimeoutMs / 60000)}
                       onChange={(e) => patch({ idleTimeoutMs: Math.max(0, Number(e.target.value)) * 60000 })}
                     />
+                    {form.idleTimeoutMs === 0 ? (
+                      <span className="ce-hint ce-hint-warn">
+                        不会自动断开：这条连接会一直占着服务端的一个连接名额（长连接请留意数据库的 max_connections）
+                      </span>
+                    ) : null}
                   </Field>
                 </div>
               </section>

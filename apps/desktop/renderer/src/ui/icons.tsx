@@ -172,6 +172,30 @@ export function IconLock({ size = 11 }: IconProps) {
   );
 }
 
+/**
+ * 执行(实心三角)。
+ *
+ * 0.7.1 起工具栏按钮在窄宽度下只留图标（见 .sql-toolbar 容器查询），
+ * 所以「执行」需要一个真正的 SVG —— 之前的 ▶ 是个文字字符，
+ * 一旦要跟 label 分开控制显隐就没法单独留下来了。
+ */
+export function IconRun({ size = 11 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** 取消(实心方块):与 IconRun 成对,窄宽度下靠形状区分「跑」和「停」 */
+export function IconStop({ size = 11 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** 终端提示符:SQL 查询 */
 export function IconTerminal({ size = 12 }: IconProps) {
   return (

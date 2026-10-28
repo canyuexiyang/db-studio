@@ -24,6 +24,18 @@
  * 时，选中其中一个的 `order_db`，中间清单会把两个连接的表全列出来、还出现同名
  * 两条。库名不是全局唯一身份 —— 唯一身份是 `(connId, database, kind, name)`。
  * 过滤/排序/连接名的纯逻辑已抽到 `objectBrowserModel.ts`，由单测钉住。
+ *
+ * ## 🔴 0.7.1（真机反馈 3）：单击 = 选中，双击 = 打开
+ *
+ * 旧实现单击就 `onOpenObject` —— 用户只是想看看这张表的 DDL，结果标签越开越多。
+ * 现在与左侧树、Finder、Navicat 一致：
+ *   单击 → `onSelectObject`（右侧详情面板显示表设计/DDL，清单内高亮该行）
+ *   双击 → `onOpenObject`（真的把表打开成标签）
+ *   键盘 → Enter / ⌘↓ 等价双击；空格 = 选中（原生 button 行为）
+ *
+ * **不做「单击延迟 300ms 等双击」那套**：那会让单击有肉眼可感的迟滞，
+ * 而本产品的差异点正是"反应最快"。双击的 dblclick 之前会先触发一次 click，
+ * 那次 click 只更新选中态（幂等、无副作用），不会误开标签。
  */
 
 import { useMemo } from 'react';
@@ -43,15 +55,31 @@ const KIND_ICON: Record<ObjectKind, (p: { size?: number }) => React.ReactNode> =
 
 export interface ObjectBrowserProps {
   roots: TreeNode[];
-  /** 左侧树当前选中的节点 key（联动源） */
+  /**
+   * 决定清单**作用域**的 key（来自左侧树的库/类别选择）。
+   *
+   * 🔴 0.7.1 起它**不等于**"当前选中项" —— 单击清单里的表会把选中项指到那张表，
+   * 但清单内容不该跟着跳（作用域只由树决定）。二者拆开见 App 的 `obScopeKey`。
+   */
   activeKey: string | null;
-  /** 点清单里的一项 → 打开该表 */
+  /** 当前选中项 key（清单内高亮；由 App 的 activeKey 传入） */
+  selectedKey?: string | null;
+  /** 单击清单项 → 选中（右侧详情跟随），**不打开**表 */
+  onSelectObject: (node: TreeNode) => void;
+  /** 双击 / Enter / ⌘↓ → 打开该表 */
   onOpenObject: (node: TreeNode) => void;
-  /** 按 key 反查节点（点清单项时要拿到完整 TreeNode 才能 open） */
+  /** 按 key 反查节点（选中/打开都要拿到完整 TreeNode） */
   findByKey: (roots: TreeNode[], key: string) => TreeNode | null;
 }
 
-export function ObjectBrowser({ roots, activeKey, onOpenObject, findByKey }: ObjectBrowserProps) {
+export function ObjectBrowser({
+  roots,
+  activeKey,
+  selectedKey = null,
+  onSelectObject,
+  onOpenObject,
+  findByKey,
+}: ObjectBrowserProps) {
   const scope = useMemo(() => scopeFromActiveKey(activeKey), [activeKey]);
 
   const connNames = useMemo(() => collectConnNames(roots), [roots]);
@@ -99,16 +127,38 @@ export function ObjectBrowser({ roots, activeKey, onOpenObject, findByKey }: Obj
       <div className="ob-list">
         {objects.map((o) => {
           const Ico = KIND_ICON[o.table.kind];
+          const selected = o.key === selectedKey;
+          const selectNode = () => {
+            const node = findByKey(roots, o.key);
+            if (node) onSelectObject(node);
+          };
+          const openNode = () => {
+            const node = findByKey(roots, o.key);
+            if (node) onOpenObject(node);
+          };
           return (
             <button
               key={o.key}
               className="ob-item"
-              title={showConn ? `${o.connName} · ${o.database}.${o.name}` : `${o.database}.${o.name}`}
+              title={
+                (showConn ? `${o.connName} · ${o.database}.${o.name}` : `${o.database}.${o.name}`) +
+                '\n单击查看表设计 / DDL，双击打开'
+              }
               data-testid={`ob-item-${o.name}`}
               data-conn-id={o.connId}
-              onClick={() => {
-                const node = findByKey(roots, o.key);
-                if (node) onOpenObject(node);
+              /* 语义钩子：e2e 靠它判"当前选中哪一行"，别改用 class 或观感 */
+              data-active={selected ? '1' : undefined}
+              aria-current={selected ? 'true' : undefined}
+              onClick={selectNode}
+              onDoubleClick={openNode}
+              onKeyDown={(e) => {
+                // 键盘等价双击：Enter / ⌘↓ 打开。这里必须 preventDefault ——
+                // 否则 <button> 的 Enter 激活会紧接着再触发一次 onClick（选中）。
+                // 空格不抢：空格 = 选中（原生行为），与 Finder 一致。
+                if (e.key === 'Enter' || (e.key === 'ArrowDown' && (e.metaKey || e.ctrlKey))) {
+                  e.preventDefault();
+                  openNode();
+                }
               }}
             >
               <Ico size={12} />

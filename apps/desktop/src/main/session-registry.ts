@@ -33,9 +33,24 @@ import {
   type ReferencedValueQuery,
   type ReferencedValueLookup,
 } from '@dbstudio/core-driver-mysql';
-import { ConnectionRuntime, systemClock, type Clock, type ConnectionState } from '@dbstudio/core-connection';
+import {
+  ConnectionRuntime,
+  systemClock,
+  DEFAULT_KEEPALIVE_MS,
+  shouldKeepAlive,
+  keepAliveDead,
+  type Clock,
+  type ConnectionState,
+} from '@dbstudio/core-connection';
 import { SchemaCache, type DatabaseMeta, type TableMeta, type ObjectKind } from '@dbstudio/core-schema-cache';
-import { checkReadOnly, checkMutationStatement, checkDdlStatement, extractSingleTable } from '@dbstudio/core-sql-guard';
+import {
+  checkReadOnly,
+  checkMutationStatement,
+  checkDdlStatement,
+  extractSingleTable,
+  statementKindOf,
+  type StatementKind,
+} from '@dbstudio/core-sql-guard';
 import { encodeColumnar, type ColumnarPayload } from '@dbstudio/core-ipc-codec';
 import type { ConnectionConfig, SslConfig } from '@dbstudio/core-connection';
 import { interpretResult } from '@dbstudio/core-mutation';
@@ -78,7 +93,30 @@ export interface OpenTableOptions {
 export interface QueryOutcome {
   payload: ColumnarPayload;
   elapsedMs: number;
+  /**
+   * 结果集行数（`payload` 里的行数）。
+   *
+   * 🔴 对非 SELECT 语句它**恒为 0**（写操作不返回结果集）—— 要展示影响行数
+   *    必须用 `affectedRows`。0.7.0 及以前只有这一个字段，于是 UPDATE 在 UI 上
+   *    显示成「返回 0 行」，用户以为没生效。
+   */
   rowCount: number;
+  /**
+   * 0.7.1：OkPacket.affectedRows。
+   *
+   * 🔴 UPDATE 时是 **匹配行数（matched）**（mysql2 默认 CLIENT_FOUND_ROWS）；
+   *    真实变更数在 `info` 的 `Changed:` 里。文案口径见渲染层 resultMessage。
+   *    INSERT / DELETE 不受该标志影响，就是插入/删除的行数。
+   */
+  affectedRows: number;
+  /** 0.7.1：INSERT 的自增值；无自增 / 非 INSERT 为 null */
+  insertId: number | null;
+  /** 0.7.1：语句分类，决定 UI 用哪套文案（见 core-sql-guard statementKindOf） */
+  statementKind: StatementKind;
+  /** 0.7.1：OkPacket.info 原文（含 Rows matched / Changed），无则 null */
+  info: string | null;
+  /** 0.7.1：服务端告警数 */
+  warnings: number;
   /** 是否因取消而提前返回（mysql2 被 KILL 是 resolve，不是 reject） */
   cancelled: boolean;
   /** 是否命中截断（行数 == limit，可能还有更多） */
@@ -280,6 +318,16 @@ export class SessionRegistry {
   private onSchemaChangeCb: ((connId: string, dbs: DatabaseMeta[]) => void) | null = null;
   /** v0.6.0：在飞的后台回源（按连接去重，避免 CONN_LIST 打出一排 introspect） */
   private readonly inFlightSchema = new Map<string, Promise<void>>();
+  /**
+   * 0.7.1：心跳保活扫描器（懒启动；null = 还没启动过）。
+   *
+   * 用一个**全局**定时器扫所有会话，而不是每个连接一个 setInterval：
+   * 连接数上来后一堆定时器既难清理也难测。扫描周期取保活间隔的一半，
+   * 保证「到点后最迟再过半个周期就发」。
+   */
+  private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+  /** 0.7.1：各连接的心跳连续失败次数（成功后清零） */
+  private readonly keepAliveFailures = new Map<string, number>();
 
   constructor(
     private readonly cache: SchemaCache,
@@ -293,6 +341,13 @@ export class SessionRegistry {
      * 可后续用 setPasswordProvider 覆盖（接线不必关心构造顺序）。
      */
     private passwordProvider: ((connId: string) => Promise<string | null>) | null = null,
+    /**
+     * 0.7.1：心跳保活间隔（ms）。0 = 关闭保活。
+     *
+     * 为什么默认 60s：云托管 / RDS / 代理层的 `wait_timeout` 常见 60~600s，
+     * 60s 一次 `SELECT 1` 的成本可以忽略，但足以让服务端认为连接是活的。
+     */
+    private readonly keepAliveMs: number = DEFAULT_KEEPALIVE_MS,
   ) {}
 
   // ---------- D1：连接状态变化推送 ----------
@@ -482,6 +537,97 @@ export class SessionRegistry {
     this.emitState(s.cfg.id);
   }
 
+  // ---------- 0.7.1：心跳保活 ----------
+
+  /**
+   * 启动保活扫描器（幂等）。
+   *
+   * 懒启动：第一条连接成功时才建定时器 —— 应用开着但一个连接都没连时，
+   * 后台不该有心跳定时器在空转。
+   *
+   * 🔴 `unref()` 不是可选项：0.7.1 上线后 `e2e:conflict` 断言全绿却**进程不退出**，
+   * 整条 `verify` 链卡在那一格（10 分钟无输出）。原因是 `setInterval` 是活跃句柄，
+   * Node 会一直等它 —— 而脚本成功路径没有 `process.exit(0)`。
+   * 心跳是「有连接才需要」的后台行为，绝不能成为进程退出的阻碍。
+   */
+  private armKeepAlive(): void {
+    if (this.keepAliveMs <= 0 || this.keepAliveTimer !== null) return;
+    const period = Math.max(1000, Math.floor(this.keepAliveMs / 2));
+    this.keepAliveTimer = setInterval(() => {
+      void this.keepAliveSweep();
+    }, period);
+    // 浏览器/Electron 主进程里定时器是对象（有 unref）；测试替身可能是数字。
+    (this.keepAliveTimer as { unref?: () => void }).unref?.();
+  }
+
+  /**
+   * 没有活着的连接就停掉扫描器（幂等）。
+   *
+   * `unref()` 只解决"不挡进程退出"，不解决"空转"：用户手动断开最后一条连接后，
+   * 定时器还在每 30 秒扫一遍空会话表。这里让它随最后一个 connected 会话一起收工。
+   */
+  private disarmKeepAliveIfIdle(): void {
+    if (this.keepAliveTimer === null) return;
+    for (const s of this.sessions.values()) {
+      if (s.driver) return; // 还有活连接，继续保活
+    }
+    clearInterval(this.keepAliveTimer);
+    this.keepAliveTimer = null;
+  }
+
+  /** 该连接上是否有查询在跑（心跳必须让路） */
+  private hasRunningQuery(connId: string): boolean {
+    for (const q of this.running.values()) {
+      if (q.connectionId === connId) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 扫一遍所有会话，谁该心跳就给谁发一条 `SELECT 1`。
+   *
+   * 🔴 两条不能违反的约束：
+   *  1. **不走 runQuery** —— 那会过 `beginQueryTracked` 的串行闸门，把连接标成
+   *     busy 并推送状态；用户在心跳那一刻点执行会直接吃 `BUSY`（"已有查询在执行"）。
+   *     心跳是后台行为，不该让 UI 有任何变化。
+   *  2. **不自己推进状态机** —— 失败交给 `noteDriverFailure`（判定连接级错误后
+   *     走既有 `onNetworkBreak` → 自动重连链路），所以偶发一次抖动不会把连接打成
+   *     失败态、也不会弹横幅。连续 `KEEPALIVE_MAX_FAILURES` 次才判死。
+   */
+  private async keepAliveSweep(): Promise<void> {
+    for (const [connId, s] of [...this.sessions]) {
+      const driver = s.driver;
+      if (!driver) continue;
+      const failures = this.keepAliveFailures.get(connId) ?? 0;
+      const due = shouldKeepAlive({
+        state: s.runtime.state,
+        idleForMs: s.runtime.idleFor(),
+        hasRunningQuery: this.hasRunningQuery(connId),
+        consecutiveFailures: failures,
+        keepAliveMs: this.keepAliveMs,
+      });
+      if (!due) continue;
+
+      try {
+        // 用驱动直查：不经过 runQuery 的守卫/忙碌闸门/结果编码（心跳不需要结果）
+        await driver.query('SELECT 1');
+        this.keepAliveFailures.delete(connId);
+        // 刷新活跃时间 + 重置空闲计时器（否则 idle 会从「上次真实查询」起算，
+        // 心跳再健康用户也会在 120 分钟整被断开 —— 那不符合「保活」的语义）
+        s.runtime.touchActive();
+      } catch (e) {
+        const n = failures + 1;
+        if (!keepAliveDead(n)) {
+          this.keepAliveFailures.set(connId, n);
+          continue;
+        }
+        this.keepAliveFailures.delete(connId);
+        // 判死：交给既有断线链路（识别连接级错误 → onNetworkBreak → 自动重连）
+        this.noteDriverFailure(s, e);
+      }
+    }
+  }
+
   /**
    * 造一个"用完即弃"的驱动，用于测试连接。
    * 不进注册表 —— 测试连接不该占用会话槽位，也不该写 schema 缓存。
@@ -618,6 +764,8 @@ export class SessionRegistry {
         }
         s.driver = driver;
         s.runtime.onConnected();
+        // 0.7.1：有活连接了才启动保活扫描器（懒启动，幂等）
+        this.armKeepAlive();
         this.emitState(cfg.id);
         return info;
       } catch (e) {
@@ -660,6 +808,10 @@ export class SessionRegistry {
     s.driver = null;
     s.tunnel = null;
     s.schema = null;
+    // 0.7.1：失败计数跟着连接走 —— 重连成功后不该继承旧连接的失败次数
+    this.keepAliveFailures.delete(connId);
+    // 最后一条活连接断开后停掉保活扫描器（不然会一直空转，见文档里的 verify 卡死事故）
+    this.disarmKeepAliveIfIdle();
     const before = s.runtime.state;
     s.runtime.disconnect();
     // 手动断开也要推送（closed→idle 同步两跳，推最终态；lastError 保持原样，
@@ -1038,10 +1190,21 @@ export class SessionRegistry {
        */
       const budget = applyResultBudget(res.rows);
       const payload = encodeColumnar(budget.rows, descriptors, opts.columnTypes);
+      // 0.7.1：语句分类决定 UI 文案。放在这里而不是让渲染层自己再解析一遍 ——
+      // 渲染层拿不到方言、也不该为了显示一行字去跑 AST。
+      const statementKind = statementKindOf(sql, 'mysql');
+      const rowCount = budget.rows.length;
       return {
         payload,
         elapsedMs,
-        rowCount: budget.rows.length,
+        rowCount,
+        // 判据用 statementKind 而不是「有没有列」：空结果集（0 行但有列）也该
+        // 报 0 行，而 OkPacket 才取服务端真实的受影响行数。
+        affectedRows: statementKind === 'select' ? rowCount : res.affectedRows,
+        insertId: res.insertId,
+        statementKind,
+        info: res.info,
+        warnings: res.warnings,
         cancelled,
         truncated: budget.truncated,
         queryId,
@@ -1217,6 +1380,12 @@ export class SessionRegistry {
   // ---------- 释放 ----------
 
   async closeAll(): Promise<void> {
+    // 0.7.1：退出前先停心跳扫描器（否则它在 disconnect 过程中还会往已关闭的驱动发 SQL）
+    if (this.keepAliveTimer !== null) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    this.keepAliveFailures.clear();
     for (const id of [...this.sessions.keys()]) {
       try {
         await this.disconnect(id);

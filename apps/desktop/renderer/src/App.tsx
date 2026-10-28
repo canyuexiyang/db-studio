@@ -459,6 +459,19 @@ export function App() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [activeKey, setActiveKey] = useState<string | null>(null);
   /**
+   * 0.7.1（真机反馈 3）：中间对象清单的**作用域锚点**。
+   *
+   * 为什么不直接用 `activeKey`：单击清单里的表会把选中项指到那张表
+   * （`obj:...`），而 `scopeFromActiveKey('obj:...')` 返回 null —— 清单会从
+   * "本库的表"瞬间跳成"全部连接的对象"。用户点一下行，列表内容全变，很难受。
+   *
+   * 所以拆成两份状态：
+   *   `activeKey`    = 当前选中项（树与清单共用，右侧详情/树高亮都看它）
+   *   `obScopeKey`   = 清单作用域（**只有树上选库/类别/连接时才更新**，obj 选择不动）
+   * 初始都是 null（= 全部连接概览），行为与拆分前一致。
+   */
+  const [obScopeKey, setObScopeKey] = useState<string | null>(null);
+  /**
    * v0.6.0：树上被多选的对象节点 key（由 TreeView 经 onSelectionChange 回传）。
    *
    * 状态放在宿主而不是树内部：批量删除要在这里弹危险确认、走 mutationApply，
@@ -3880,7 +3893,12 @@ if (table.kind === 'table') {
             onExpandedChange={setExpanded}
             activeKey={activeKey}
             onOpenObject={onOpenObject}
-            onSelectNode={(n) => setActiveKey(n.key)}
+            onSelectNode={(n) => {
+              setActiveKey(n.key);
+              // 0.7.1：只有"库/类别/连接"这类选择才改清单作用域；
+              // 选中具体表（obj:...）时清单内容保持不动，只是那一行被高亮
+              if (n.kind !== 'object') setObScopeKey(n.key);
+            }}
             columnIndex={columnIndex}
             onOpenTableRef={onOpenTableRef}
             connStates={connStates}
@@ -3928,6 +3946,10 @@ if (table.kind === 'table') {
           // 2) 在树中定位：选中该节点并展开它的祖先链（组/连接/库/类别）
           onRevealInTree={(key) => {
             setActiveKey(key);
+            // 0.7.1：与树单击同一口径 —— 定位到库/类别时才同步清单作用域；
+            // 定位到具体表时清单不动（否则"在树中定位一张表"会把中间清单也换掉）
+            const hit = findTreeNode(treeRoots, key);
+            if (hit && hit.kind !== 'object') setObScopeKey(key);
             setExpanded((prev) => expandAncestors(prev, treeRoots, key));
           }}
           onToast={setToast}
@@ -4246,7 +4268,10 @@ if (table.kind === 'table') {
              */
             <ObjectBrowser
               roots={treeRoots}
-              activeKey={activeKey}
+              /* 作用域用 obScopeKey（只由树驱动），高亮用 activeKey（树与清单共用） */
+              activeKey={obScopeKey}
+              selectedKey={activeKey}
+              onSelectObject={(node) => setActiveKey(node.key)}
               onOpenObject={onOpenObject}
               findByKey={findTreeNode}
             />

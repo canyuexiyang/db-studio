@@ -77,7 +77,7 @@ class FakeDriver implements DriverLike {
     rows: [],
     fields: [],
     affectedRows: 0,
-    insertId: null,
+    insertId: null, info: null, warnings: 0,
     elapsedMs: 1,
   });
   throwOn: ((sql: string) => string | null) | null = null;
@@ -448,7 +448,7 @@ describe('查询与历史', () => {
         { name: 'title', type: 253 },
       ],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 3,
     });
     const r = await ipc.call(IPC.QUERY_RUN, { connId: 'c1', sql: 'SELECT * FROM `order`' });
@@ -474,7 +474,7 @@ describe('查询与历史', () => {
       rows: [['1']],
       fields: [{ name: 'id', type: 8 }],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 5,
     });
     await ipc.call(IPC.QUERY_RUN, { connId: 'c1', sql: 'SELECT id FROM `order`' });
@@ -484,12 +484,41 @@ describe('查询与历史', () => {
     expect(list[0].durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  /**
+   * 0.7.1 需求 1（T06）：历史里的行数口径。
+   *
+   * 🔴 反例值很明确：旧实现把 `rowCount`（写操作恒 0）写进历史，
+   *    于是「我刚才到底改了几行」在历史面板里永远是 0。
+   */
+  it('0.7.1 UPDATE 进历史记的是影响行数，不是 0', async () => {
+    driver.handler = () => ({
+      rows: [],
+      fields: [],
+      affectedRows: 4,
+      insertId: null,
+      info: 'Rows matched: 4  Changed: 4  Warnings: 0',
+      warnings: 0,
+      elapsedMs: 2,
+    });
+    const r = await ipc.call(IPC.QUERY_RUN, {
+      connId: 'c1',
+      sql: 'UPDATE `order` SET title = "x" WHERE id > 0',
+    });
+    expect(r.ok).toBe(true);
+    expect(r.data.affectedRows).toBe(4);
+    expect(r.data.statementKind).toBe('update');
+
+    const list = history.listHistory('c1', 10);
+    expect(list[0].sql).toContain('UPDATE');
+    expect(list[0].rowCount).toBe(4);
+  });
+
   it('queryOpenTable 走 buildOpenTableSql（带 LIMIT 与服务端排序）', async () => {
     driver.handler = () => ({
       rows: [],
       fields: [{ name: 'id', type: 8 }],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     const r = await ipc.call(IPC.QUERY_OPEN_TABLE, {
@@ -518,7 +547,7 @@ describe('查询与历史', () => {
       rows: [],
       fields: [],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     await ipc.call(IPC.QUERY_RUN, { connId: 'c1', sql: 'SELECT * FROM user_profile' });
@@ -541,7 +570,7 @@ describe('写操作 handler', () => {
       rows: [],
       fields: [],
       affectedRows: 2,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     const r = await ipc.call(IPC.MUTATION_APPLY, {
@@ -560,7 +589,7 @@ describe('写操作 handler', () => {
       rows: [],
       fields: [],
       affectedRows: 0,
-      insertId: null,
+      insertId: null, info: null, warnings: 0,
       elapsedMs: 1,
     });
     const r = await ipc.call(IPC.MUTATION_APPLY, {
@@ -580,7 +609,7 @@ describe('写操作 handler', () => {
   });
 
   it('🔴 T08：命中多行 → ambiguous（定位缺陷，绝不能继续）', async () => {
-    driver.handler = () => ({ rows: [], fields: [], affectedRows: 3, insertId: null, elapsedMs: 1 });
+    driver.handler = () => ({ rows: [], fields: [], affectedRows: 3, insertId: null, info: null, warnings: 0, elapsedMs: 1 });
     const r = await ipc.call(IPC.MUTATION_APPLY, {
       connId: 'c1',
       database: 'app_db',
@@ -601,7 +630,7 @@ describe('写操作 handler', () => {
         fields: [],
         // 第 1 条 UPDATE 命中 1 行（成功），第 2 条命中 0 行（冲突）
         affectedRows: isUpdate ? (seen === 1 ? 1 : 0) : 0,
-        insertId: null,
+        insertId: null, info: null, warnings: 0,
         elapsedMs: 1,
       };
     };
@@ -622,7 +651,7 @@ describe('写操作 handler', () => {
   });
 
   it('🔴 T08：mode=ddl 时 DROP 命中 0 行**不算冲突**（DROP IF EXISTS 已删表就是 0）', async () => {
-    driver.handler = () => ({ rows: [], fields: [], affectedRows: 0, insertId: null, elapsedMs: 1 });
+    driver.handler = () => ({ rows: [], fields: [], affectedRows: 0, insertId: null, info: null, warnings: 0, elapsedMs: 1 });
     const r = await ipc.call(IPC.MUTATION_APPLY, {
       connId: 'c1',
       database: 'app_db',
@@ -711,7 +740,7 @@ describe('写操作 handler', () => {
   });
 
   it('🔴 表达式值（NOW()）走正常写链路放行，不被误拦', async () => {
-    driver.handler = () => ({ rows: [], fields: [], affectedRows: 1, insertId: null, elapsedMs: 1 });
+    driver.handler = () => ({ rows: [], fields: [], affectedRows: 1, insertId: null, info: null, warnings: 0, elapsedMs: 1 });
     const r = await ipc.call(IPC.MUTATION_APPLY, {
       connId: 'c1',
       database: 'app_db',

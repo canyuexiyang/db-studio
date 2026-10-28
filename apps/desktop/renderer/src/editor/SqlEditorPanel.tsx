@@ -37,7 +37,7 @@ import {
 } from '@dbstudio/core-sql-editor';
 import { DataGrid, type GridColumn } from '../grid/DataGrid';
 import { useGridDataSource } from '../grid/useGridData';
-import { IconX, IconSave, IconExport, IconBraces, IconStarFilled, IconFolder } from '../ui/icons';
+import { IconX, IconSave, IconExport, IconBraces, IconStarFilled, IconFolder, IconRun, IconStop, IconInfo } from '../ui/icons';
 // T33：值查看器**只调用不改**（detail/ 归别的并行任务）
 import { CellValueModal } from '../detail/CellValueModal';
 // T33：结果网格取值的纯逻辑（值与原字节一致 + 回调装配）
@@ -77,6 +77,10 @@ import {
   resultTabTitle,
   type ResultTabMeta,
 } from './resultTabs';
+// 0.7.1：执行结果文案的唯一真值（SELECT/INSERT/UPDATE/DELETE/DDL 各一套口径）
+import { describeRunResult, type RunResultText, type StatementKind } from './resultMessage';
+// 0.7.1：非结果集语句的执行摘要卡（替代空网格）
+import { RunSummaryCard } from './RunSummaryCard';
 import type { ConnectionConfig } from '@dbstudio/core-connection';
 // T28/T29：右键菜单与工具栏执行对象的纯逻辑（不依赖 React/DOM，可单测）
 import {
@@ -128,6 +132,17 @@ export interface SqlEditorPanelProps {
     cancelled: boolean;
     truncated: boolean;
     queryId: string | null;
+    /**
+     * 0.7.1：影响行数与语句分类（结果文案的判据）。
+     *
+     * 全部**可选**：旧宿主（或测试里手写的 onRun）不传时按「结果是 SELECT」
+     * 退回旧文案，不让类型升级变成破坏性变更。
+     */
+    affectedRows?: number;
+    insertId?: number | null;
+    statementKind?: StatementKind;
+    info?: string | null;
+    warnings?: number;
     /** A12：单表 SELECT 检测结果（主进程 extractSingleTable），null/缺省 = 只读 */
     source?: { database: string | null; table: string } | null;
   }>;
@@ -188,7 +203,15 @@ export interface SqlEditorPanelProps {
    * （`onRun` 的返回值里本来就有 elapsedMs / rowCount / cancelled），
    * 传了就以宿主为准（多面板共享同一次执行的场景）。
    */
-  lastRun?: { elapsedMs: number; rowCount: number; cancelled: boolean } | null;
+  lastRun?: {
+    elapsedMs: number;
+    rowCount: number;
+    cancelled: boolean;
+    /** 0.7.1：本次执行的语句条数（>1 时内联只说「共 N 条语句」，合计行数对混合语句无意义） */
+    count?: number;
+    /** 0.7.1：单条语句的结果文案（由 describeRunResult 产出，宿主不自己拼文案） */
+    single?: RunResultText | null;
+  } | null;
   /**
    * T41：SQL 文件的脏状态上报（**宿主可选**）。
    *
@@ -214,6 +237,17 @@ interface ResultTab extends ResultTabMeta {
   payload: ColumnarPayload | null;
   elapsedMs: number;
   rowCount: number;
+  /**
+   * 0.7.1：语句分类。决定渲染「结果网格」还是「执行摘要卡」——
+   * 非 SELECT 语句的载荷是 0 列 0 行，画成网格只会给人「查了个空表」的错觉。
+   */
+  statementKind: StatementKind;
+  /** 0.7.1：文案快照（describeRunResult 的输出，三处展示共用同一份） */
+  text: RunResultText;
+  /** 0.7.1：OkPacket.info 原文（摘要卡里可复制，用于追溯 matched/changed） */
+  info: string | null;
+  /** 0.7.1：服务端告警数 */
+  warnings: number;
   truncated: boolean;
   error: string | null;
   cancelled: boolean;
@@ -375,7 +409,13 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
    */
   const lastRowRef = useRef<Record<string, ResultRowValue[]>>({});
   /** V17：最近一次执行的结果（耗时/行数/是否取消），渲染在编辑器区域内联 */
-  const [lastRun, setLastRun] = useState<{ elapsedMs: number; rowCount: number; cancelled: boolean } | null>(null);
+  const [lastRun, setLastRun] = useState<{
+    elapsedMs: number;
+    rowCount: number;
+    cancelled: boolean;
+    count: number;
+    single: RunResultText | null;
+  } | null>(null);
   /**
    * S1：编辑器内右键菜单状态；null = 不显示。
    *
@@ -633,6 +673,18 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
         for (let i = 0; i < spans.length; i++) {
           const st = spans[i].text;
           const r = await onRun({ connId, sql: st, database, queryId });
+          // 0.7.1：语句分类与影响行数（旧宿主不传时按 SELECT 退回旧文案）
+          const kind: StatementKind = r.statementKind ?? 'select';
+          const text = describeRunResult({
+            statementKind: kind,
+            rowCount: r.rowCount,
+            affectedRows: r.affectedRows ?? r.rowCount,
+            insertId: r.insertId ?? null,
+            info: r.info ?? null,
+            warnings: r.warnings ?? 0,
+            cancelled: r.cancelled,
+            elapsedMs: r.elapsedMs,
+          });
           produced.push({
             id: nextTabId(),
             sql: st,
@@ -646,11 +698,16 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
             payload: r.payload,
             elapsedMs: r.elapsedMs,
             rowCount: r.rowCount,
+            statementKind: kind,
+            text,
+            info: r.info ?? null,
+            warnings: r.warnings ?? 0,
             truncated: r.truncated,
             error: null,
             cancelled: r.cancelled,
             explain: false,
-            message: r.cancelled ? '已取消' : `返回 ${formatCount(r.rowCount)} 行`,
+            // 0.7.1：三处展示共用 text —— 这里是消息行，标签标题与内联耗时读的是同一份
+            message: text.headline,
             source: r.source ?? null,
           });
         }
@@ -669,6 +726,11 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
           payload: null,
           elapsedMs: 0,
           rowCount: 0,
+          // 失败语句没有行数口径：分类给 other，文案只说失败（不出现「0 行」）
+          statementKind: 'other',
+          text: { title: '执行失败', detail: null, headline: '执行失败', inline: '执行失败' },
+          info: null,
+          warnings: 0,
           truncated: false,
           error: e instanceof Error ? e.message : String(e),
           cancelled: false,
@@ -686,6 +748,9 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
             elapsedMs: produced.reduce((s, t) => s + t.elapsedMs, 0),
             rowCount: produced.reduce((s, t) => s + t.rowCount, 0),
             cancelled: produced.some((t) => t.cancelled),
+            count: produced.length,
+            // 单条语句才有「一个」结果文案；多语句的合计行数对混合语句没意义
+            single: produced.length === 1 ? produced[0].text : null,
           });
         }
       }
@@ -951,6 +1016,20 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
         payload: r.payload,
         elapsedMs: r.elapsedMs,
         rowCount: r.rowCount,
+        // EXPLAIN 恒为结果集；文案走 explain 分支（「执行计划」）
+        statementKind: 'select',
+        text: describeRunResult({
+          statementKind: 'select',
+          rowCount: r.rowCount,
+          affectedRows: r.rowCount,
+          insertId: null,
+          info: null,
+          warnings: 0,
+          cancelled: r.cancelled,
+          elapsedMs: r.elapsedMs,
+        }),
+        info: null,
+        warnings: 0,
         truncated: r.truncated,
         error: null,
         cancelled: r.cancelled,
@@ -969,12 +1048,20 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
     }
   }, [connId, database, onRun, onToast]);
 
-  /** V17 文案：取消与正常返回要说不同的话（"耗时 xx ms · N 行" 对取消没有意义） */
+  /**
+   * V17 文案：取消与正常返回要说不同的话（"耗时 xx ms · N 行" 对取消没有意义）。
+   *
+   * 0.7.1：正常返回的措辞不再由这里拼 —— 直接用 `describeRunResult` 产出的
+   * 主文案（UPDATE 是「已修改 2 行」而不是「2 行」）。多语句只说条数，
+   * 因为「3 行」这种合计对 UPDATE+SELECT 混合执行毫无意义。
+   */
   const elapsedText = useMemo<string | null>(() => {
     const r = props.lastRun !== undefined ? props.lastRun : lastRun;
     if (r === null || r === undefined) return null;
     if (r.cancelled) return `已取消 · ${r.elapsedMs} ms`;
-    return `耗时 ${r.elapsedMs} ms · ${formatCount(r.rowCount)} 行`;
+    if ((r.count ?? 1) > 1) return `耗时 ${r.elapsedMs} ms · 共 ${r.count} 条语句`;
+    const title = r.single?.title ?? `${formatCount(r.rowCount)} 行`;
+    return `耗时 ${r.elapsedMs} ms · ${title}`;
   }, [props.lastRun, lastRun]);
 
   const toggleComment = useCallback(() => {
@@ -1064,6 +1151,18 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
   return (
     <div className="sql-editor">
       <div className="sql-toolbar">
+        {/*
+         * 0.7.1（真机反馈 2）：按钮内部必须拆成 图标 / 文案 / 快捷键 三段 span。
+         *
+         * 旧实现把快捷键拼进可见文本（`{`▶ ${label} ⌘R`}`），CSS 无从单独控制它 ——
+         * 于是窄宽度下只能整体折行（用户截图里 9 个按钮全部两行）。
+         * 拆开之后三段可以按容器宽度独立降级：
+         *   ≥900px  图标+文案+快捷键 ／ 620–900px 丢快捷键 ／ <620px 只留图标。
+         *
+         * 🔴 图标用真 SVG 而不是 "▶" 字符：字符和 label 在同一个文本节点里，
+         *    没法在「只留图标」那一档单独活下来。
+         * 🔴 aria-label / title 在任何一档都必须齐 —— 图标态下它是唯一的语义来源。
+         */}
         {/* T29：按钮 1 的可见文案必须自己说清是「全部」——
             早先它只写「▶ 执行 ⌘R」，与右边那个「执行当前语句」并排时
             用户根本分不出哪个跑全部（这正是 T29 要修的问题点）。
@@ -1073,63 +1172,75 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
           className="primary"
           onClick={() => void execute('all')}
           disabled={running || !connId}
-          aria-label={scope.runAll}
+          aria-label={`${scope.runAll}（${displayOf('sql-run-all') ?? '⌘R'}）`}
           data-testid="sql-run-all"
-          title={`${scope.runAll}：运行编辑器中的所有语句`}
+          title={`${scope.runAll}（${displayOf('sql-run-all') ?? '⌘R'}）：运行编辑器中的所有语句`}
         >
-          {`▶ ${scope.runAll} ${displayOf('sql-run-all') ?? '⌘R'}`}
+          <span className="sql-btn-icon"><IconRun size={11} /></span>
+          <span className="sql-btn-label">{scope.runAll}</span>
+          <span className="sql-btn-kbd">{displayOf('sql-run-all') ?? '⌘R'}</span>
         </button>
         {/* T29：⌘⏎ 的执行对象随选区实时改名 —— 无选区时叫「执行当前语句」，不叫「执行选中」 */}
         <button
           onClick={() => void execute('selection')}
           disabled={running || !connId}
-          title={`${scope.runSelection}：有选区时执行选中内容，无选区时执行光标所在的那条语句`}
+          aria-label={`${scope.runSelection}（${displayOf('sql-run-selection') ?? '⌘⏎'}）`}
+          title={`${scope.runSelection}（${displayOf('sql-run-selection') ?? '⌘⏎'}）：有选区时执行选中内容，无选区时执行光标所在的那条语句`}
           data-testid="sql-run-selection"
         >
-          {`${scope.runSelection} ${displayOf('sql-run-selection') ?? '⌘⏎'}`}
+          <span className="sql-btn-icon"><IconRun size={11} /></span>
+          <span className="sql-btn-label">{scope.runSelection}</span>
+          <span className="sql-btn-kbd">{displayOf('sql-run-selection') ?? '⌘⏎'}</span>
         </button>
         <button
           onClick={() => void runExplain()}
           disabled={running || !connId}
+          aria-label={`${scope.explain}（${displayOf('sql-explain') ?? '⇧⌘X'}）`}
+          title={`${scope.explain}（${displayOf('sql-explain') ?? '⇧⌘X'}）：不真正执行，只看优化器打算怎么跑`}
           data-testid="sql-run-explain"
         >
-          {`${scope.explain} ${displayOf('sql-explain') ?? '⇧⌘X'}`}
+          <span className="sql-btn-icon"><IconInfo size={11} /></span>
+          <span className="sql-btn-label">{scope.explain}</span>
+          <span className="sql-btn-kbd">{displayOf('sql-explain') ?? '⇧⌘X'}</span>
         </button>
-        <button onClick={() => void cancel()} disabled={!running}>
-          {`取消 ${displayOf('sql-cancel') ?? '⌘.'}`}
+        <button
+          onClick={() => void cancel()}
+          disabled={!running}
+          aria-label={`取消查询（${displayOf('sql-cancel') ?? '⌘.'}）`}
+          title={`取消查询（${displayOf('sql-cancel') ?? '⌘.'}）：向服务端发 KILL QUERY`}
+        >
+          <span className="sql-btn-icon"><IconStop size={11} /></span>
+          <span className="sql-btn-label">取消</span>
+          <span className="sql-btn-kbd">{displayOf('sql-cancel') ?? '⌘.'}</span>
         </button>
         {/* T41：SQL 文件三件套（打开 / 另存为 / 保存）—— 只操作文件，绝不执行 */}
-        <button onClick={openSqlFile} title={OPEN_BUTTON_TITLE} data-testid="sql-open-file">
-          <IconFolder size={11} /> 打开文件
+        <button onClick={openSqlFile} title={OPEN_BUTTON_TITLE} aria-label="打开 SQL 文件" data-testid="sql-open-file">
+          <IconFolder size={11} />
+          <span className="sql-btn-label">打开文件</span>
         </button>
         <button
           onClick={() => void saveSqlFile({ saveAs: true })}
           title={SAVE_AS_BUTTON_TITLE}
+          aria-label="另存为 SQL 文件"
           data-testid="sql-save-as-file"
         >
-          另存为
+          <span className="sql-btn-label">另存为</span>
         </button>
         <button
           onClick={onSaveClick}
           title={SAVE_BUTTON_TITLE}
+          aria-label={saveButtonLabel(fileState, fileDirty)}
           data-testid="sql-save-file"
         >
-          <IconSave size={11} /> {saveButtonLabel(fileState, fileDirty)}
+          <IconSave size={11} />
+          <span className="sql-btn-label">{saveButtonLabel(fileState, fileDirty)}</span>
         </button>
         {/* T41：文件状态徽标 —— 草稿 / 文件名 / 未保存，让用户知道内容属于谁 */}
         <span
+          className="sql-file-badge"
           data-testid="sql-file-badge"
           data-dirty={fileDirty ? '1' : '0'}
           data-has-file={fileState.path !== null ? '1' : '0'}
-          style={{
-            whiteSpace: 'nowrap',
-            fontSize: 10,
-            color: 'var(--text-dim)',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            padding: '1px 6px',
-            background: 'var(--bg-alt)',
-          }}
         >
           {fileBadgeText(fileState, fileDirty)}
         </span>
@@ -1137,17 +1248,22 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
           onClick={openSnippetSave}
           disabled={running}
           title="把当前编辑器内容存为可复用的 SQL 片段"
+          aria-label="保存片段"
           data-testid="sql-save-snippet"
         >
-          <IconSave size={11} /> 保存片段
+          <IconSave size={11} />
+          <span className="sql-btn-label">保存片段</span>
         </button>
         {/* S1：格式化。只在这里 / ⌘I / 右键菜单触发 —— 绝不在 change 时自动跑 */}
         <button
           onClick={() => handleRef.current?.format()}
           title="格式化当前语句或选区（⌘I）"
+          aria-label="格式化（⌘I）"
           data-testid="sql-format"
         >
-          <IconBraces size={11} /> 格式化 ⌘I
+          <IconBraces size={11} />
+          <span className="sql-btn-label">格式化</span>
+          <span className="sql-btn-kbd">⌘I</span>
         </button>
         {onDatabaseChange && databases.length > 0 ? (
           <select
@@ -1167,22 +1283,15 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
         ) : null}
         {/* T29：⌘⏎ 此刻会执行哪个对象（全部在按钮 1，这里区分「当前语句 / 选中」） */}
         <span
+          className="sql-exec-target"
           data-testid="sql-exec-target"
           title={`⌘⏎（${displayOf('sql-run-selection') ?? '⌘⏎'}）的执行对象；⌘R 执行全部语句`}
-          style={{
-            whiteSpace: 'nowrap',
-            fontSize: 10,
-            color: 'var(--text-dim)',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            padding: '1px 6px',
-            background: 'var(--bg-alt)',
-          }}
         >
           {`执行对象：${scope.hint}`}
         </span>
         {/* T29：这条 SQL 会发往哪个连接、哪个环境 —— 生产环境用红底突出 */}
         <span
+          className="sql-conn-target"
           data-testid="sql-conn-target"
           data-production={connTarget.production ? '1' : '0'}
           title={
@@ -1190,15 +1299,6 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
               ? `执行目标连接：${connTarget.name}${connTarget.environment ? ` · ${connTarget.environment}` : ''}`
               : '未能从连接列表匹配到该连接，仅显示连接 id'
           }
-          style={{
-            whiteSpace: 'nowrap',
-            fontSize: 10,
-            borderRadius: 4,
-            padding: '1px 6px',
-            border: `1px solid ${connTarget.production ? 'var(--error-bar)' : 'var(--border)'}`,
-            background: connTarget.production ? 'var(--error-bg)' : 'var(--bg-alt)',
-            color: connTarget.production ? 'var(--error-bar)' : 'var(--text-dim)',
-          }}
         >
           {`${connTarget.production ? '⚠ ' : ''}${connTarget.name}${connTarget.environment ? ` · ${connTarget.environment}` : ''}`}
         </span>
@@ -1297,8 +1397,13 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
                   />
                 ) : (
                   <span className="sql-tab-title">
-                    {/* T42：标题优先级 = 自定义名 > 执行计划/失败 > 行数（纯函数已钉死） */}
-                    {resultTabTitle(t, { rowCount: t.rowCount, explain: t.explain, error: t.error })}
+                    {/* T42：标题优先级 = 自定义名 > 执行计划/失败 > 结果文案（0.7.1 起含影响行数） */}
+                    {resultTabTitle(t, {
+                      rowCount: t.rowCount,
+                      explain: t.explain,
+                      error: t.error,
+                      text: t.text.title,
+                    })}
                   </span>
                 )}
                 <button
@@ -1394,7 +1499,11 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
                 ) : null}
               </div>
             ) : null}
-            {active.payload ? (
+            {/* 0.7.1：非结果集语句（UPDATE/INSERT/DELETE/DDL）不再画空网格 */}
+            {active.payload && !active.explain && !active.error && active.statementKind !== 'select' ? (
+              <RunSummaryCard tab={active} onToast={onToast} />
+            ) : null}
+            {active.payload && (active.explain || active.statementKind === 'select') ? (
               active.explain ? (
                 <ExplainView payload={active.payload} injectorKey={props.injectorKey} onToast={onToast} />
               ) : (

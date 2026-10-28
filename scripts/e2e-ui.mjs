@@ -2050,6 +2050,60 @@ try {
     }
 
     /**
+     * 0.7.1（真机反馈 3）：中间清单**单击 = 选中，双击 = 打开**。
+     *
+     * 旧实现单击就 onOpenObject，用户只想看 DDL 却越开越多标签。四条断言各自
+     * 守住一件不能被"顺手改回去"的事：
+     *  ① 单击后标签数不变（否则等于还是一次单击打开）
+     *  ② 单击后右侧详情换成那张表（选中是有意义的，不是死高亮）
+     *  ③ 双击真的打开（`pane-<table>` 出现）—— 否则改成了"点了没反应"
+     *  ④ 连点两项后 `[data-active="1"]` 只有一个（多选残留 = 用户分不清选的是谁）
+     *
+     * 收尾要按 ⌘W 关掉新开的标签：后面的章节都建立在"此刻没有标签"的前提上。
+     */
+    {
+      const items = page.locator('.ob-item');
+      const tabCount = () => page.locator('.ws-tab').count();
+      if ((await items.count()) >= 2) {
+        const tabsBefore = await tabCount();
+        const nameOf = async (i) => ((await items.nth(i).locator('.ob-name').innerText()) ?? '').trim();
+        const nameA = await nameOf(0);
+        const nameB = await nameOf(1);
+
+        await items.nth(0).click();
+        await page.waitForTimeout(400);
+        const afterA = await tabCount();
+        ok('单击清单项不打开标签（标签数不变）', afterA === tabsBefore, `${tabsBefore} → ${afterA}`);
+
+        const dA = await page.locator('.detail-panel').innerText().catch(() => '');
+        ok('单击清单项后右侧详情换成该表', dA.includes(nameA),
+          `详情「${(dA.split('\n')[1] ?? dA.split('\n')[0] ?? '').trim()}」vs 选中「${nameA}」`);
+
+        await items.nth(1).click();
+        await page.waitForTimeout(400);
+        const activeCount = await page.locator('.ob-item[data-active="1"]').count();
+        const activeName = ((await page.locator('.ob-item[data-active="1"] .ob-name').first().innerText().catch(() => '')) ?? '').trim();
+        ok('连点两项后清单只有一行是选中态，且是后点的那行',
+          activeCount === 1 && activeName === nameB, `选中 ${activeCount} 行（${activeName || '无'}），期望 ${nameB}`);
+
+        await items.nth(1).dblclick();
+        await page.waitForTimeout(1200);
+        ok('双击清单项打开表（出现 pane-' + nameB + '）',
+          (await page.locator(`.ws-tab-pane[data-testid="pane-${nameB}"]`).count()) === 1,
+          `标签数=${await tabCount()}`);
+
+        // 收尾：关掉刚打开的标签，回到空态（后续章节依赖这个前提）
+        await page.keyboard.press('Meta+w');
+        await page.waitForTimeout(500);
+        ok('收尾：双击打开的标签可正常关闭', (await tabCount()) === tabsBefore,
+          `${await tabCount()} 个标签（期望 ${tabsBefore}）`);
+      } else {
+        ok('单击清单项不打开标签（标签数不变）', false,
+          `清单只有 ${await items.count()} 项，无法验证单击/双击语义`);
+      }
+    }
+
+    /**
      * 展开到对象层。
      *
      * 🔴 必须**逐层全展开**：树是分组→连接→库→类别→对象 四层，
@@ -2135,7 +2189,8 @@ try {
       await page.waitForTimeout(400);
       const obOrder = page.locator('[data-testid="ob-item-order"]');
       if ((await obOrder.count()) > 0) {
-        await obOrder.first().click();
+        // 0.7.1：单击只选中，双击才打开（见 ObjectBrowser 注释）
+        await obOrder.first().dblclick();
         await page.waitForTimeout(1200);
         opened = true;
       }
@@ -2247,8 +2302,14 @@ try {
      */
     const runAllText = (await page.locator('.sql-toolbar [data-testid="sql-run-all"]').innerText()).replace(/\s+/g, '');
     ok('T29「执行全部」可见文案自己说清了是全部', /全部/.test(runAllText), `可见文案=「${runAllText}」`);
-    ok('T29「执行全部」aria-label 也在（读屏可达）',
-      (await page.locator('.sql-toolbar button[aria-label="执行全部"]').count()) === 1);
+    /**
+     * 这里断的是**可访问名里有没有「全部」**，不是「aria-label 恰好等于 执行全部」。
+     * 0.7.1 T12 给 aria-label 补上了快捷键（`执行全部（⌘R）`）—— 纯图标密度档下
+     * 按钮只剩图标，读屏和 tooltip 是用户唯一能拿到「这是什么」的地方，把快捷键
+     * 一起念出来是改进。原来那种全等断言等于让测试钉死一句话，改文案就假红。
+     */
+    const runAllAria = (await page.locator('.sql-toolbar [data-testid="sql-run-all"]').getAttribute('aria-label')) || '';
+    ok('T29「执行全部」的可访问名带「全部」（读屏可达）', /全部/.test(runAllAria), `aria-label=「${runAllAria}」`);
 
     // 无选区（点一下编辑器塌陷光标）：⌘⏎ 对象应为「当前语句」而不是含糊的「执行选中」
     await page.locator('.cm-content').click();
@@ -2461,7 +2522,8 @@ try {
         await page.waitForTimeout(400);
         const ob = page.locator('[data-testid="ob-item-order"]');
         if ((await ob.count()) > 0) {
-          await ob.first().click();
+          // 0.7.1：单击只选中，双击才打开
+          await ob.first().dblclick();
           await page.waitForTimeout(1200);
           opened20 = true;
         }

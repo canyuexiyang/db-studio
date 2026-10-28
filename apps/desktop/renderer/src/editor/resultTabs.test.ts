@@ -129,6 +129,21 @@ describe('T42 标签标题与来源', () => {
     expect(resultTabTitle(tab('a'), facts)).toBe('12 行');
   });
 
+  /**
+   * 0.7.1 需求 1：标签标题是「第三个消费点」。
+   *
+   * 反例：如果不传 text 就退回 rowCount，UPDATE 的标签会显示「0 行」而消息行显示
+   * 「已修改 2 行」—— 同一份结果两套说法。这里钉住「text 优先于行数」。
+   */
+  it('0.7.1 带结果文案时优先用它（写操作不再显示「0 行」）', () => {
+    const facts = { rowCount: 0, explain: false, error: null };
+    expect(resultTabTitle(tab('a'), { ...facts, text: '已修改 2 行' })).toBe('已修改 2 行');
+    // 自定义名优先级仍高于结果文案
+    expect(resultTabTitle(tab('a', false, '我的结果'), { ...facts, text: '已修改 2 行' })).toBe('我的结果');
+    // 失败时仍是「执行失败」，不让结果文案盖掉错误
+    expect(resultTabTitle(tab('a'), { ...facts, error: 'boom', text: '已修改 2 行' })).toBe('执行失败');
+  });
+
   it('来源摘要含连接 / 库 / 时间 / 行数', () => {
     const s = describeResultOrigin({
       sql: 'SELECT 1',

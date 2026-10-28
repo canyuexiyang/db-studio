@@ -347,7 +347,17 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
             success: !failure,
             error: failure,
             durationMs: outcome?.elapsedMs ?? Date.now() - startedAt,
-            rowCount: outcome?.rowCount ?? 0,
+            /**
+             * 0.7.1：历史里的「行数」对写操作必须是影响行数。
+             *
+             * 早先一律用 `rowCount`，而写操作的结果集恒为空 → 历史面板里每次
+             * UPDATE/DELETE 都记成 0 行，回溯「我刚才到底改了多少」直接失效。
+             */
+            rowCount: outcome
+              ? outcome.statementKind === 'select'
+                ? outcome.rowCount
+                : outcome.affectedRows
+              : 0,
             executedAt: startedAt,
           });
         }
@@ -358,6 +368,12 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
         payload: o.payload,
         elapsedMs: o.elapsedMs,
         rowCount: o.rowCount,
+        // 0.7.1：影响行数三件套 + 语句分类，渲染层据此决定文案
+        affectedRows: o.affectedRows,
+        insertId: o.insertId,
+        statementKind: o.statementKind,
+        info: o.info,
+        warnings: o.warnings,
         cancelled: o.cancelled,
         truncated: o.truncated,
         queryId: o.queryId,
@@ -383,6 +399,12 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
         payload: o.payload,
         elapsedMs: o.elapsedMs,
         rowCount: o.rowCount,
+        // 打开表恒为 SELECT：影响行数 = 行数（字段仍要带，契约是必填）
+        affectedRows: o.affectedRows,
+        insertId: null,
+        statementKind: 'select' as const,
+        info: null,
+        warnings: 0,
         cancelled: o.cancelled,
         truncated: o.truncated,
         queryId: o.queryId,

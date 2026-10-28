@@ -5,8 +5,7 @@
  * 刻意造了 5 万行：网格必须在这个量级下验证"只解可视区"真的生效。
  */
 
-import { encodeColumnar } from '@dbstudio/core-ipc-codec';
-import { buildTree, type TreeNode } from '@dbstudio/core-tree-view';
+import { encodeColumnar } from '@dbstudio/core-ipc-codec';import { buildTree, type TreeNode } from '@dbstudio/core-tree-view';
 import type { TableMeta, ColumnMeta, DatabaseMeta } from '@dbstudio/core-schema-cache';
 import type { PaletteItem } from '@dbstudio/core-command-palette';
 import { defaultConnectionConfig, type ConnectionConfig } from '@dbstudio/core-connection';
@@ -74,6 +73,16 @@ export function buildDemoPayload(n: number) {
     DEMO_TABLE_META.columns.map((c) => c.name),
     DEMO_TABLE_META.columns.map((c) => c.dataType),
   );
+}
+
+/**
+ * 0.7.1：非结果集语句（UPDATE / INSERT / DELETE / DDL）的载荷。
+ *
+ * 真主进程对这类语句返回的是「0 列 0 行」的合法空载荷（MySQL 只回 OkPacket）。
+ * demo 必须同形，否则「非结果集不画空网格」这条在 demo 上永远测不到。
+ */
+export function buildDemoEmptyPayload() {
+  return encodeColumnar([], [], []);
 }
 
 /** demo 后端内存态：连接列表可被"新增/删除"改写，便于 UI 联动验证 */

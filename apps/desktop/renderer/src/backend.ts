@@ -63,8 +63,41 @@ import {
   DEMO_WIDE_TABLE_NAME,
   buildDemoPayload,
   buildDemoWidePayload,
+  buildDemoEmptyPayload,
   DEMO_CONNECTIONS,
 } from './demoData';
+
+/**
+ * 0.7.1：demo 侧的语句分类（真链路用 core-sql-guard 的 AST，这里只为 demo/e2e 服务）。
+ *
+ * 只认语句**开头**的关键字，覆盖 e2e 用到的常见语句即可；判不出来的落 `other`
+ * （与真链路 fail-safe 口径一致：不给行数口径，显示中性文案）。
+ */
+type DemoStatementKind = 'select' | 'insert' | 'update' | 'delete' | 'ddl' | 'other';
+
+function demoStatementKind(sql: string): DemoStatementKind {
+  // 去掉开头的空白与注释（-- / # / 块注释），否则「-- 注释\nUPDATE ...」会判不出来
+  const head = sql
+    .replace(/^(?:\s+|--[^\n]*\n|--[^\n]*$|#[^\n]*\n|#[^\n]*$|\/\*[\s\S]*?\*\/)*/g, '')
+    .trim()
+    .toUpperCase();
+  if (/^(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|WITH)\b/.test(head)) return 'select';
+  if (/^(INSERT|REPLACE)\b/.test(head)) return 'insert';
+  if (/^UPDATE\b/.test(head)) return 'update';
+  if (/^DELETE\b/.test(head)) return 'delete';
+  if (/^(CREATE|DROP|ALTER|TRUNCATE|RENAME)\b/.test(head)) return 'ddl';
+  return 'other';
+}
+
+/** demo 各语句类型的模拟影响行数（e2e 断言文案时以此为准） */
+const DEMO_AFFECTED: Record<DemoStatementKind, number> = {
+  select: 0,
+  insert: 1,
+  update: 3,
+  delete: 2,
+  ddl: 0,
+  other: 0,
+};
 
 /** 是否有真 IPC（preload 注入的运行时标记） */
 export function hasIpc(): boolean {
@@ -454,14 +487,45 @@ const demoBackend: Backend = {
     return { items: truncated ? items.slice(0, limit) : items, truncated };
   },
 
-  queryRun: async () => ({
-    payload: buildDemoPayload(2000),
-    elapsedMs: 4,
-    rowCount: 2000,
-    cancelled: false,
-    truncated: false,
-    queryId: 'demo-query',
-  }),
+  queryRun: async (req) => {
+    /**
+     * 0.7.1：demo 也要按语句类型分流 —— 早先恒返回 2000 行结果集，
+     * 于是「执行 UPDATE 应显示已修改 N 行」在 demo 上永远是假绿（永远 2000 行）。
+     *
+     * ⚠️ 这里用前缀正则而不是 core-sql-guard 的 AST：渲染层不该为了 demo
+     *    把 node-sql-parser 打进首屏 bundle（S2 预算）。真链路的判据仍是 AST，
+     *    demo 只需要覆盖 e2e 用到的常见语句。
+     */
+    const kind = demoStatementKind(req.sql);
+    if (kind === 'select') {
+      return {
+        payload: buildDemoPayload(2000),
+        elapsedMs: 4,
+        rowCount: 2000,
+        affectedRows: 2000,
+        insertId: null,
+        statementKind: 'select' as const,
+        info: null,
+        warnings: 0,
+        cancelled: false,
+        truncated: false,
+        queryId: 'demo-query',
+      };
+    }
+    return {
+      payload: buildDemoEmptyPayload(),
+      elapsedMs: 3,
+      rowCount: 0,
+      affectedRows: DEMO_AFFECTED[kind],
+      insertId: kind === 'insert' ? 5001 : null,
+      statementKind: kind,
+      info: kind === 'update' ? 'Rows matched: 5  Changed: 3  Warnings: 0' : null,
+      warnings: 0,
+      cancelled: false,
+      truncated: false,
+      queryId: 'demo-query',
+    };
+  },
   queryOpenTable: async (req) => {
     // 🔴 按表名路由 payload：宽表必须回宽表的载荷。
     //    若一律回 buildDemoPayload(50_000)（7 列），打开 wide_metrics 时
@@ -473,6 +537,11 @@ const demoBackend: Backend = {
         payload: buildDemoWidePayload(n),
         elapsedMs: 8,
         rowCount: n,
+        affectedRows: n,
+        insertId: null,
+        statementKind: 'select' as const,
+        info: null,
+        warnings: 0,
         cancelled: false,
         truncated: req.limit ? n >= req.limit : false,
         queryId: 'demo-query',
@@ -482,6 +551,11 @@ const demoBackend: Backend = {
       payload: buildDemoPayload(50_000),
       elapsedMs: 8,
       rowCount: 50_000,
+      affectedRows: 50_000,
+      insertId: null,
+      statementKind: 'select' as const,
+      info: null,
+      warnings: 0,
       cancelled: false,
       truncated: req.limit ? 50_000 >= req.limit : false,
       queryId: 'demo-query',

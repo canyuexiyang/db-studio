@@ -82,13 +82,25 @@ export interface ResultTabFacts {
   /** EXPLAIN 结果走另一套标题 */
   explain: boolean;
   error: string | null;
+  /**
+   * 0.7.1：预先算好的结果标题（`describeRunResult().title`）。
+   *
+   * 为什么不让这里自己按 rowCount 拼：标签标题是**第三个**消费点，一旦它自己拼，
+   * UPDATE 就会在标签上显示「0 行」而消息行显示「已修改 2 行」—— 同一份结果两套说法。
+   */
+  text?: string | null;
 }
 
-/** 标签标题优先级：自定义名 > 执行计划 > 行数；出错时补 ⚠ */
+/**
+ * 标签标题优先级：自定义名 > 执行计划 > 执行失败 > 结果文案 > 行数。
+ *
+ * 最后的「N 行」只是兜底（旧调用方没传 text 时）；0.7.1 起正常执行一定带 text。
+ */
 export function resultTabTitle(meta: ResultTabMeta, facts: ResultTabFacts): string {
   if (meta.name !== null) return meta.name;
   if (facts.explain) return '执行计划';
   if (facts.error !== null) return '执行失败';
+  if (facts.text) return facts.text;
   return `${facts.rowCount.toLocaleString('en-US')} 行`;
 }
 

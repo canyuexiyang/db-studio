@@ -88,11 +88,24 @@ export interface ConnectionConfig {
   readOnly: boolean;
   ssh: SshConfig;
   ssl: SslConfig;
-  /** 空闲多久自动断开（ms），默认 10 分钟 */
+  /**
+   * 空闲多久自动断开（ms）。0 = 永不自动断开。
+   *
+   * 0.7.1 起默认 120 分钟（原 10 分钟）。10 分钟对「开着工具间歇性查数据」
+   * 的使用姿态明显偏短 —— 用户去开个会回来就得重连。配合 60s 心跳保活，
+   * 长连接不会因为服务端 wait_timeout 被半路掐掉。
+   */
   idleTimeoutMs: number;
 }
 
-export const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+/**
+ * 默认空闲超时：120 分钟（0.7.1 由 10 分钟调整）。
+ *
+ * 🔴 这是**默认值**不是硬编码：每条连接可在设置里覆盖，0 表示永不自动断开。
+ *    调长的前提是有心跳保活（见 DEFAULT_KEEPALIVE_MS）—— 否则只是把
+ *    「本地温和断开」换成「服务端硬杀 + 首次查询报错」，体验更差。
+ */
+export const DEFAULT_IDLE_TIMEOUT_MS = 120 * 60 * 1000;
 
 export function emptySsh(): SshConfig {
   return {
@@ -296,6 +309,60 @@ export type ConnectionState =
 export const RECONNECT_DELAYS_MS = [1000, 2000, 4000] as const;
 export const MAX_RECONNECT_ATTEMPTS = RECONNECT_DELAYS_MS.length;
 
+// ---------- 0.7.1：心跳保活（keepalive） ----------
+
+/**
+ * 默认保活间隔：60s。
+ *
+ * 为什么需要它：本地的空闲超时只管「我们要不要主动断」，管不了**服务端**
+ * 单方面杀连接。MySQL 的 `wait_timeout` 在建连时被设置为一个较短值的场景，
+ * 云托管 / RDS / 代理层非常常见（60s ~ 600s）。不保活的话，用户在「间歇性
+ * 查看数据」的使用姿态下几乎一定会撞到「回来一查就报错」。
+ */
+export const DEFAULT_KEEPALIVE_MS = 60_000;
+
+/** 连续失败几次判定连接真的死了（偶发抖动不该把连接打成失败态） */
+export const KEEPALIVE_MAX_FAILURES = 2;
+
+export interface KeepAliveInput {
+  /** 连接当前状态 */
+  state: ConnectionState;
+  /** 距上次真实活动（查询 / 心跳成功）过去了多久 */
+  idleForMs: number;
+  /** 该连接上是否有查询正在跑 */
+  hasRunningQuery: boolean;
+  /** 已连续失败次数 */
+  consecutiveFailures: number;
+  /** 保活间隔；<= 0 表示关闭保活 */
+  keepAliveMs: number;
+}
+
+/**
+ * 此刻是否该发一次心跳。
+ *
+ * 五条全部满足才发，任何一条不满足都**不发**（保守）：
+ *  1. 保活开启（keepAliveMs > 0）
+ *  2. 状态是 connected —— busy 时绝不插队（会和用户查询抢连接，
+ *     表现是「点执行报已有查询在执行」）；其他状态没有可用连接
+ *  3. 没有查询在跑（同 2，双保险：状态机与 running 表可能短暂不同步）
+ *  4. 已连续失败次数还没到判死阈值
+ *  5. 距上次活动超过一个间隔（刚查过就不必再发 —— 每一次多余心跳都是
+ *     一次白白的网络往返）
+ */
+export function shouldKeepAlive(i: KeepAliveInput): boolean {
+  if (i.keepAliveMs <= 0) return false;
+  if (i.state !== 'connected') return false;
+  if (i.hasRunningQuery) return false;
+  if (i.consecutiveFailures >= KEEPALIVE_MAX_FAILURES) return false;
+  return i.idleForMs >= i.keepAliveMs;
+}
+
+/** 连续失败到阈值就判死（交给既有断线重连链路，不直接打 failed） */
+export function keepAliveDead(consecutiveFailures: number): boolean {
+  return consecutiveFailures >= KEEPALIVE_MAX_FAILURES;
+}
+
+
 /** 可注入的时钟与定时器 —— 让重连退避可被单测确定性驱动 */
 export interface Clock {
   now(): number;
@@ -477,6 +544,22 @@ export class ConnectionRuntime {
       this.transition('closed', reason);
       this.transition('idle', '资源已释放');
     }
+  }
+
+  /**
+   * 0.7.1：记录一次「外部保活成功」。
+   *
+   * 与 `beginQuery()` 的区别：心跳不是用户查询，**不迁移状态**（UI 不该为一次
+   * 后台心跳闪一下「运行中」），只刷新活跃时间并重置空闲计时器 ——
+   * 否则「每 60s 心跳一次」和「idle 120 分钟」会互相打架：心跳不让服务端杀连接，
+   * 但 idle 计时仍按最后一次真实活动算，用户还是会在 120 分钟后被断开（那其实是对的）。
+   *
+   * 只在 connected 时生效：busy 期间来了心跳成功回执，说明不了什么，不该重置计时。
+   */
+  touchActive(): void {
+    if (this._state !== 'connected') return;
+    this._lastActiveAt = this.clock.now();
+    this.armIdleTimer();
   }
 
   /** 是否可执行查询 */
