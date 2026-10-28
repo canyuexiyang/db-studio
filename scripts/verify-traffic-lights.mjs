@@ -20,6 +20,17 @@
  *   渲染层安全区宽 78px（styles.css .traffic-light-safe / .sidebar-head padding-left）。
  *   ⚠️ 旧口径「x∈[10,62]、直径 12px」是 setWindowButtonPosition 时代的，已作废 ——
  *      改用 trafficLightPosition 构造参数后 macOS 的实际渲染几何变了。
+ *
+ * 🔴 2026-10-28 复测：中心实测 (23,21) / (46,21) / (69,21)，直径 14，间距 23/23。
+ *    **门禁故意不断言绝对中心**，只断「等距 + 同一水平线 + 右缘 ≤78px 安全区」——
+ *    绝对坐标随 macOS 版本与 trafficLightPosition 配置变，钉死它只会制造假红。
+ *
+ * 🔴 同日另一件事：第一次跑报「一个都没检测到」，而截图里三枚圆点清清楚楚 ——
+ *    原因是窗口没抢到焦点，macOS 把非 key 窗口的交通灯渲染成**灰色**，而旧判据
+ *    要求色度 >35，灰圆直接被滤掉。修法：①加强激活（moveTop + 窗口级 focus +
+ *    轮询 + AppleScript 兜底）；②判据拆两段 —— 存在性用「彩色 ∪ 灰度」的形状检测，
+ *    颜色单独判，无彩色时明确记为 skipped 而不是红。**灰色圆点是"灯在但没着色"，
+ *    不是"灯不见了"**，把后者当前者报会把环境状态说成产品缺陷。
  */
 
 import { existsSync, mkdtempSync, rmSync, mkdirSync, readFileSync } from 'node:fs';
@@ -75,9 +86,9 @@ if (!electron) {
  * @param cropRect 只分析这块区域（css 坐标）。区域截图路径传 null（全图即窗口区）。
  * @returns {Promise<Array|null>} 检测到的彩色圆形控件（css 坐标）；null = 解码失败
  */
-async function analyzeScreenshot(shotPath, page, cropRect = null) {
+async function analyzeScreenshot(shotPath, page, cropRect = null, relaxed = false) {
   const b64 = readFileSync(shotPath).toString('base64');
-  return page.evaluate(async ({ dataUrl, crop }) => {
+  return page.evaluate(async ({ dataUrl, crop, relaxed }) => {
     const img = new Image();
     img.src = dataUrl;
     await img.decode();
@@ -120,7 +131,11 @@ const scale = crop?.scale && crop.scale > 0 ? crop.scale : 1;
 
     // 只看左上角（交通灯必然在窗口左上）
     const RX = Math.min(RW, 320);
-    const RY = Math.min(RH, 130);
+    /**
+     * relaxed 模式只看标题栏那一行（css 40px 内）：判的是「圆点在不在」，
+     * 不是「颜色对不对」。纵向收紧是为了避开侧栏文字，减少假阳性。
+     */
+    const RY = Math.min(RH, Math.round(40 * (crop?.scale && crop.scale > 0 ? crop.scale : 1)));
     if (RX <= 0 || RY <= 0) return [];
     const d = ctx.getImageData(ox, oy, RX, RY).data;
 
@@ -130,13 +145,27 @@ const scale = crop?.scale && crop.scale > 0 ? crop.scale : 1;
       const rr = d[r], gg = d[g], bb = d[b];
       return Math.max(rr, gg, bb) - Math.min(rr, gg, bb) > 35 && Math.max(rr, gg, bb) > 90;
     };
+    /**
+     * 🔴 relaxed 判据：**与窗口底色有对比**即当前景，不管有没有着色。
+     *
+     * 背景（2026-10-28 真机）：截图里三枚圆点清清楚楚，但全是灰色 ——
+     * macOS 会按窗口激活态决定交通灯着色。原判据要求色度 >35，灰圆直接被滤掉，
+     * 于是报「一个都没检测到 / frame:false 静默失效」——**把渲染状态误报成缺失**。
+     * 底色取裁剪区左上角像素（窗口内容原点，必然是应用背景色）。
+     */
+    const bg = [d[0], d[1], d[2]];
+    const isContrast = (x, y) => {
+      const [r, g, b] = at(x, y);
+      return Math.abs(d[r] - bg[0]) + Math.abs(d[g] - bg[1]) + Math.abs(d[b] - bg[2]) > 18;
+    };
+    const isFore = relaxed ? isContrast : isColor;
 
     const seen = new Uint8Array(RX * RY);
     const comps = [];
     for (let y = 0; y < RY; y++) {
       for (let x = 0; x < RX; x++) {
         const i = y * RX + x;
-        if (seen[i] || !isColor(x, y)) continue;
+        if (seen[i] || !isFore(x, y)) continue;
         // BFS 连通域
         const stack = [i];
         seen[i] = 1;
@@ -156,7 +185,7 @@ const scale = crop?.scale && crop.scale > 0 ? crop.scale : 1;
           for (let k = 0; k < 4; k++) {
             if (!okIdx[k]) continue;
             const ni = nb[k];
-            if (!seen[ni] && isColor(ni % RX, (ni - (ni % RX)) / RX)) {
+            if (!seen[ni] && isFore(ni % RX, (ni - (ni % RX)) / RX)) {
               seen[ni] = 1;
               stack.push(ni);
             }
@@ -178,10 +207,29 @@ const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
          *    正确判据是看**蓝通道相对绿通道低多少**：黄灯 b 远低于 g（差 >50），
          *    红灯的 g 与 b 接近（都是 ~110）。真机实测三色均值：
          *    红 (250,121,111) / 黄 (253,197,50) / 绿 (123,211,80)。
+         *
+         *    另加 GRAY：未激活窗口的交通灯是纯灰（实测 rgb 约 200~235 无彩色），
+         *    relaxed 模式下要能认出来是"灯在、只是没着色"，而不是"没有灯"。
          */
-const hue = ag > ar && ag > ab ? 'GREEN' : ar > ag && ag - ab > 50 ? 'YELLOW' : 'RED';
+const chroma = Math.max(ar, ag, ab) - Math.min(ar, ag, ab);
+const hue = chroma <= 20 ? 'GRAY'
+  : ag > ar && ag > ab ? 'GREEN'
+  : ar > ag && ag - ab > 50 ? 'YELLOW' : 'RED';
      // 像素 → css：除以实际缩放（retina 通常 2），不写死 2
 const k = Math.max(1, Math.round(scale));
+        /**
+         * relaxed 模式的额外收紧（只在判"灯在不在"时生效）。
+         *
+         * 放宽前景判据会连带把标题栏文字（「连接」等）当成前景 —— 那会让
+         * 连通域数量变成 4、5，凭空造出一个"多了一盏灯"的假红。
+         * 交通灯有确定的几何：近正圆（填充率≈π/4）、正方形包围盒、x 中心 <90 css。
+         * 用几何收口，比"把阈值调高点"更可靠 —— 后者只是把误检推迟。
+         */
+        if (relaxed) {
+          if (n / (bw * bh) < 0.7) continue;
+          if (Math.abs(bw - bh) > 4) continue;
+          if (((x0 + x1 + 1) / 2) / k > 90) continue;
+        }
      comps.push({
           hue,
         n,
@@ -196,7 +244,7 @@ cx: ((x0 + x1 + 1) / 2) / k, // css 中心（相对裁剪原点 = 窗口左上�
       }
     }
     return comps.sort((a, b) => a.cx - b.cx);
-  }, { dataUrl: `data:image/png;base64,${b64}`, crop: cropRect });
+  }, { dataUrl: `data:image/png;base64,${b64}`, crop: cropRect, relaxed });
 }
 
 // ---- 起真实产物 ----
@@ -236,6 +284,15 @@ try {
     const w = BrowserWindow.getAllWindows()[0];
     w.setPosition(0, 0);
     w.show();
+    /**
+     * 🔴 2026-10-28：只调 `ea.focus({steal:true})` 不够。
+     *
+     * 真机复现：截图里三枚圆点**都在**，但全是**灰色** —— macOS 把非 key 窗口的
+     * 交通灯渲成灰，于是「三色齐全」被判红。这不是产品缺陷，是门禁自己没把窗口
+     * 激活起来。补 `moveTop()` + 窗口级 `focus()`（app 级 focus 只管应用菜单栏）。
+     */
+    w.moveTop();
+    w.focus();
     ea.focus({ steal: true });
     const b = w.getBounds();
     return {
@@ -255,7 +312,44 @@ try {
       })(),
     };
   });
-  // 等窗口稳定（首次 show 后 macOS 还要画一轮）
+
+  /**
+   * 轮询确认窗口真的成了 key window。
+   *
+   * 从后台进程（本脚本由终端/CI 拉起）抢焦点时 macOS 可能拒绝，或抢到后又被
+   * 抢回去。抢不到时 AppleScript 兜底再试一次 —— 仍失败就把「颜色判定」标成
+   * **未成立（skipped）**，绝不报成产品缺陷（那会指向一个不存在的回归方向）。
+   */
+  const isFocused = () => app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]?.isFocused() ?? false);
+  let windowFocused = false;
+  for (let i = 0; i < 10 && !windowFocused; i++) {
+    windowFocused = await isFocused();
+    if (!windowFocused) await page.waitForTimeout(200);
+  }
+  if (!windowFocused) {
+    try {
+      const pid = app.process().pid;
+      execFileSync('osascript', [
+        '-e',
+        `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
+      ], { stdio: 'pipe' });
+      for (let i = 0; i < 10 && !windowFocused; i++) {
+        windowFocused = await isFocused();
+        if (!windowFocused) await page.waitForTimeout(200);
+      }
+    } catch {
+      /* AppleScript 也不可用（无辅助功能权限）；下面按未激活处理 */
+    }
+  }
+  if (!windowFocused) {
+    console.log('⚠️  窗口未能获得焦点：macOS 会把非 key 窗口的交通灯渲染成**灰色**，');
+    console.log('    颜色判定因此不成立（不是「灯不见了」）。已尝试 window.focus / moveTop /');
+    console.log('    app.focus({steal}) / AppleScript 四路激活。');
+  }
+  // 常驻诊断：焦点态直接决定交通灯着色，出问题时第一眼看这里
+  console.log(`ℹ️ 窗口焦点：${windowFocused ? '已获得（灯应为红/黄/绿）' : '未获得（灯会是灰色）'}`);
+  // 等窗口稳定（首次 show 后 macOS 还要画一轮；抢到焦点后要等重绘完再截）
   await page.waitForTimeout(2500);
 
   mkdirSync(OUT_DIR, { recursive: true });
@@ -370,37 +464,69 @@ try {
    *    阈值（10~20 css px）与实际 28 物理像素的灯错开 → "一个都没检测到"，
    *    而同一张图肉眼明明三灯齐全。
    */
-  const lights = windowVisible.visible
-    ? await analyzeScreenshot(
-   regionShotOk ? shot : join(OUT_DIR, 'traffic-lights-fullscreen.png'),
-        page,
- { ...cropRect, offset: !regionShotOk },
-      )
+  const shotPath = regionShotOk ? shot : join(OUT_DIR, 'traffic-lights-fullscreen.png');
+  const cropArg = { ...cropRect, offset: !regionShotOk };
+
+  /** 第一遍：彩色检测（正常路径 —— 窗口已激活时三灯是有色的） */
+  const lights = windowVisible.visible ? await analyzeScreenshot(shotPath, page, cropArg) : null;
+  /**
+   * 第二遍：形状检测（彩色 ∪ 灰度）。只在第一遍一个彩色圆都没检到时才跑。
+   *
+   * 🔴 为什么必须分两遍、而不是直接把阈值放宽：
+   *    「灯在不在」与「灯什么颜色」是两个独立结论。混成一个判据的后果是
+   *    2026-10-28 真机实测到的假红 —— 三枚圆点清清楚楚在截图里，只因为
+   *    macOS 按窗口激活态把它们渲染成灰色，就被判成「一个都没检测到 /
+   *    frame:false 静默失效」，直接指向一个不存在的回归方向。
+   *    存在性用形状判（灰也算），颜色单独判（无彩色就明确记为跳过）。
+   */
+  const shapes = windowVisible.visible && lights && lights.length === 0
+    ? await analyzeScreenshot(shotPath, page, cropArg, true)
     : null;
+
   if (!windowVisible.visible) {
     // 已在上面记过一条 skipped，这里不再重复报红
   } else if (!lights) {
     ok('截图可解析', false, 'PNG 解码失败（Chromium canvas），无法做像素判定');
   } else {
-    ok('🔴 检测到三个原生交通灯', lights.length === 3,
-      lights.length ? lights.map((l) => `${l.hue}@(${l.cx.toFixed(0)},${l.cy.toFixed(0)}) d=${l.d.toFixed(0)}`).join(' ') : '一个都没检测到（frame:false 时代的静默失效症状）');
+    const found = lights.length > 0 ? lights : (shapes ?? []);
+    const how = lights.length > 0 ? '彩色' : '彩色+灰度';
+    ok('🔴 检测到三个原生交通灯', found.length === 3,
+      found.length
+        ? `[${how}] ${found.map((l) => `${l.hue}@(${l.cx.toFixed(0)},${l.cy.toFixed(0)}) d=${l.d.toFixed(0)}`).join(' ')}`
+        : '一个都没检测到（连灰度圆都没有 → frame:false 时代的静默失效症状）');
 
-    const hues = lights.map((l) => l.hue).sort().join(',');
-    ok('三色齐全（红/黄/绿）', hues === 'GREEN,RED,YELLOW', hues || '无');
+    if (found.length === 3) {
+      const hues = found.map((l) => l.hue).sort().join(',');
+      if (hues === 'GREEN,RED,YELLOW') {
+        ok('三色齐全（红/黄/绿）', true, hues);
+      } else if (found.every((l) => l.hue === 'GRAY')) {
+        // 灯在、只是没着色。颜色结论不成立 —— 明确记为跳过，不冒充通过
+        console.log('');
+        console.log('⏭️  跳过颜色判定：三枚圆点都在，但都是灰色（macOS 按窗口激活态着色）。');
+        console.log('    灯存在性已由上一条断言确认；颜色需在已激活的桌面会话里重跑才能给出结论。');
+        console.log(`    （焦点态：${windowFocused ? '已获得' : '未获得'}）`);
+        results.push({
+          name: '交通灯颜色判定',
+          pass: true,
+          detail: '跳过：三灯渲染为灰色，颜色判据不成立（灯存在性已验证）',
+          skipped: true,
+        });
+      } else {
+        ok('三色齐全（红/黄/绿）', false, hues);
+      }
 
-    if (lights.length === 3) {
-      const left = lights[0].x0;
-      const right = lights[2].x1;
+      const left = found[0].x0;
+      const right = found[2].x1;
       // 安全区口径：styles.css 的 .traffic-light-safe width（78px）
       const SAFE_AREA_WIDTH = 78;
       ok('🔴 三灯全部落在渲染层安全区内（右缘 ≤78px）', right <= SAFE_AREA_WIDTH,
         `灯占 css x∈[${left.toFixed(0)}, ${right.toFixed(0)}]，安全区 ${SAFE_AREA_WIDTH}px`);
       ok('三灯水平等距（几何正常，没有被裁切）',
-        Math.abs((lights[1].cx - lights[0].cx) - (lights[2].cx - lights[1].cx)) < 3,
-        `间距 ${(lights[1].cx - lights[0].cx).toFixed(1)} / ${(lights[2].cx - lights[1].cx).toFixed(1)} css px`);
+        Math.abs((found[1].cx - found[0].cx) - (found[2].cx - found[1].cx)) < 3,
+        `间距 ${(found[1].cx - found[0].cx).toFixed(1)} / ${(found[2].cx - found[1].cx).toFixed(1)} css px`);
       ok('三灯同一水平线（y 一致）',
-        Math.max(...lights.map((l) => l.cy)) - Math.min(...lights.map((l) => l.cy)) < 2,
-        `y = ${lights.map((l) => l.cy.toFixed(1)).join(' / ')}`);
+        Math.max(...found.map((l) => l.cy)) - Math.min(...found.map((l) => l.cy)) < 2,
+        `y = ${found.map((l) => l.cy.toFixed(1)).join(' / ')}`);
     }
   }
   console.log(`\n📸 截图已存：${shot}`);
