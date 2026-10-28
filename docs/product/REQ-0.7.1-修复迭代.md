@@ -473,11 +473,11 @@ RICE 简评（Reach = 受影响用户比例，Confidence = 证据强度）：
 
 - [x] 版本号唯一来源 `package.json` → `0.7.1`（修 bug 必升补丁号，避免同号两二进制）
 - [x] `npm run verify` **exit 0**（16 道 → **19 道**：新增 `e2e:affected` / `e2e:keepalive` / `verify:toolbar-fit`；单测 2200 → **2273**）
-- [ ] `npm run verify:installed` 22/22（**先清实例**：`pgrep -fl "MacOS/DB Studio"` → `kill -15`）
-- [ ] `npm run verify:traffic-lights` 6/6（**先查锁屏**，锁屏下 CDP 必超时）
+- [x] `npm run verify:installed` **22/22**（已覆盖安装 0.7.1；装前先清实例、旧包备份到 `release/.prev-installed-0.7.0.app`）
+- [x] `npm run verify:traffic-lights` **6/6**（顺手修了门禁自身一处假红，见 §8.2）
 - [ ] 真机人工：4 项各自按 §1.6/§2.5/§3.6/§4.6 复验一次（含双击手感、合盖唤醒）
 - [x] `docs/RELEASES.md` 追加 v0.7.1 条目（4 项 + 新增门禁 + 已知限制「合盖唤醒需首次查询触发重连」）
-- [ ] GitHub Release：资产名**连字符**（`DB-Studio-0.7.1-arm64.dmg`），核对 `latest-mac.yml` 的
+- [x] GitHub Release：资产名**连字符**（`DB-Studio-0.7.1-arm64.dmg`），核对 `latest-mac.yml` 的
       sha512 + size 与远程一致；旧 `.app` 先 `mv` 到 `release/.prev-installed-0.7.0.app`
 
 ### 8.1 已取得的证据（2026-10-28）
@@ -491,12 +491,38 @@ RICE 简评（Reach = 受影响用户比例，Confidence = 证据强度）：
 | 回归 | `check:bundle` 9/9（首屏 538.0 KB，未增长）；`typecheck` 全绿 | 通过 |
 | 证伪检验 | `parseMatchedRows` 临时退化为 `null` → 2 条断言变红后恢复；工具栏旧实现 → 门禁 14/22 | 断言不是照着实现写的 |
 
-**门禁自身事故（已修，值得记住）**：首轮 `verify` 卡在 `e2e:conflict`，断言其实**已经 17/17 全绿**，
-但进程 10 分钟不退出。原因是 0.7.1 新增的保活 `setInterval` 是活跃句柄，而那个脚本成功路径
+**门禁自身事故（已修，值得记住）**：首轮 `verify` 卡在 `e2e:conflict`，断言其实**已经 17/17 全绿**，但进程 10 分钟不退出。原因是 0.7.1 新增的保活 `setInterval` 是活跃句柄，而那个脚本成功路径
 没有 `process.exit(0)`，靠事件循环自然排空结束。修法两条防线：①建定时器时 `unref()`；
 ②最后一条活连接断开时 `clearInterval`（否则用户断开全部连接后它还在空转）。已补 2 条单测钉住。
 教训：**"断言全绿"与"门禁跑完"是两件事** —— 一个永远不退出的进程会让整条链静默挂死，
 而且因为 `tee` 缓冲+`tail` 看不到任何输出，看起来像"没报错"。
+
+### 8.2 打包后真机验收（2026-10-28）
+
+| 项 | 结果 | 备注 |
+|---|---|---|
+| dmg 打包 | ✅ `DB-Studio-0.7.1-arm64.dmg` 152,459,744 B | 资产名连字符；`latest-mac.yml` 的 `url` 与之逐字一致 |
+| 覆盖安装 | ✅ 0.7.1（ad-hoc 签名） | 旧 0.7.0 `mv` 到 `release/.prev-installed-0.7.0.app` |
+| `verify:installed` | ✅ **22/22** | 含「已安装版本 === package.json 版本」这条钉子 |
+| `verify:traffic-lights` | ✅ **6/6** | 首轮曾报 1/3，是门禁假红，见下 |
+| GitHub Release | ✅ [v0.7.1](https://github.com/canyuexiyang/db-studio/releases/tag/v0.7.1) | 远程 `latest-mac.yml` 的 sha512/size 已核对 |
+
+**第二起门禁假红（交通灯）**：`verify:traffic-lights` 首轮报「一个都没检测到 / frame:false
+静默失效」，但截图里三枚圆点清清楚楚 —— 它们是**灰色**。macOS 按窗口激活态给交通灯着色，
+非 key 窗口渲成灰；旧判据要求色度 >35，灰圆被直接滤掉。这是把**渲染状态**说成了**产品缺陷**，
+指向一个不存在的回归方向。两条修法：
+1. 加强激活 —— 原来只有 app 级 `focus({steal:true})`（那只管菜单栏），补 `moveTop()` +
+   窗口级 `focus()` + 轮询 `isFocused()` + AppleScript 兜底，并常驻打印焦点态；
+2. **判据拆两段** —— 存在性用「彩色 ∪ 灰度」的形状检测（放宽前景判据，但用几何收口：
+   填充率 ≥0.7、包围盒近正方、x 中心 <90px，避免把标题栏文字当成第四盏灯）；
+   颜色单独判，三灯全灰时明确记为 `skipped` 而不是红。
+
+判定强度没被削弱：窗口已激活却连灰圆都没有依然报红。最终 6/6，
+RED@(23,21) / YELLOW@(46,21) / GREEN@(69,21)，直径 14，间距 23/23，右缘 76 ≤ 78 安全区。
+
+> 两次假红的共同教训：**先问「这个红是我造成的，还是环境造成的」**。
+> 两个案例里被测产品都是好的，坏的是门禁自己的判据 —— 而门禁假红的代价是
+> 让人去修一个不存在的问题。
 
 ---
 

@@ -80,7 +80,11 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 - 双击才打开数据是**行为变更**：老用户可能「点一下没反应」。单击有明确高亮 + Enter
   也能开，本说明即告知渠道。
 
-**发布**：⏳ 待打包（本机安装的 0.7.0 先 `mv` 到 `release/.prev-installed-0.7.0.app` 再覆盖安装）
+**发布**：[GitHub Release v0.7.1](https://github.com/canyuexiyang/db-studio/releases/tag/v0.7.1)（2026-10-28）
+资产三件：`DB-Studio-0.7.1-arm64.dmg`（152,459,744 B ≈145 MB）+ `.blockmap` + **`latest-mac.yml`**。
+资产名用连字符，与 `latest-mac.yml` 里 `url` 逐字一致；发布后已核对远程 yml 的 `sha512`
+（`Yok8yB3pbBVx…`）与 `size`（152459744）与实际资产一致。本机已覆盖安装并跑
+`verify:installed` 22/22、`verify:traffic-lights` 6/6。
 
 ---
 
