@@ -10,7 +10,7 @@
 视图改定义、重命名表（F2）+ ⇧F2 进设计器、清单右键与 ↑↓ 巡行、整库导出、测试连接、
 标签「关闭左侧/关闭全部」、表维护（优化/分析/检查）、复制表（结构/结构+数据）、分组管理。
 
-门禁：单测 2391 → **2470（92 文件）**、e2e:ui 434 → **476**（新增第 14 章）、
+门禁：单测 2391 → **2473（92 文件）**、e2e:ui 434 → **476**（新增第 14 章）、
 `npm run verify` exit 0（19 道）、`verify:installed` **22/22**。
 
 ## 二、e2e 抓出的 4 个既有真缺陷（都不是本轮写坏的）
@@ -27,6 +27,22 @@
 4. **demo 后端恒返回同一份库结构**：`DEMO_DATABASES` 常量直接返回 →
    建库/删库/改名/复制在纯浏览器 e2e 里**全是假绿**。改成可变 `demoDatabases` + 每次产出新数组
    （同一 ref 会让 `useMemo` 判未变）+ `demoApplyDdl` 真改结构。
+
+## 二之二、发版准备时抓出的第 5 个：发布通道 owner 拼错
+
+`electron-builder.yml` 的 `publish.owner` 是 `canyuexiang`，真实账号 `canyuexiyang`（少一个 y）。
+`api.github.com/repos/canyuexiang/db-studio` 实测 **404**，而 `canyuexiyang` **200**。
+
+这属于**沉默的错误**：产物里 `app-update.yml` 指向一个不存在的仓库 → 应用内「检查更新」
+永远 `failed`；而 Release 页本身是好的（0.7.2 发版时手工验的是 `canyuexiyang` 的下载 URL，
+根本没经过 owner 这一行），所以两轮发版都没发现。
+
+修法：owner 改成 `canyuexiyang`；`updater.ts` 的回退 URL 同步；给 `package.json` 补
+`repository` 当**第二证据源**；加 3 项单测钉住「`publish.owner/repo` == `repository.url`
+== `releaseBaseUrl()`」。**新断言在错 owner 上实测 2 红**（先确认会红再加进来）。
+
+教训：凡是「配置项 + 代码常量 + 产物里生成的文件」三处都写同一个外部标识的，
+必须有一个测试把它钉成等式 —— 否则错的那个永远不会报错，只会静默失效。
 
 ## 三、守卫层的真实缺口（`core-sql-guard`）
 

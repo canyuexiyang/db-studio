@@ -10,7 +10,7 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 
 | 版本 | 日期 | 主题 | 门禁 | 分发 |
 |---|---|---|---|---|
-| **0.7.3** | 2026-10-29 | **交互完备性缺口全量落地（12 项 / 11 子任务）**：库生命周期闭环（新建/删除数据库）、视图等 5 类对象新建模板 + 视图改定义、重命名表 + F2 语义修正（⇧F2 进设计器等）、清单右键与 ↑↓ 巡行、整库导出、测试连接、标签关闭左侧/全部、表维护（优化/分析/检查）、复制表（结构 / 结构+数据）、分组管理（空分组可见可删）；顺带修 4 个门禁抓出的真缺陷（删库/维护回执被刷新 toast 盖掉、设计器是唯一退不出的模态、DDL 后树不定位、demo 后端恒返回同一份结构导致假绿） | **2470 单测（92 文件）** / verify exit 0（**19 道**）/ e2e:ui **476** / e2e:app **72** / e2e:keys 47 / e2e 74 / e2e:transfer 36 / e2e:ssh 18 / e2e:idle 16 / e2e:keepalive 17 / e2e:idle:ui 4 / verify:toolbar-fit 22 / e2e:script:data 10 / e2e:affected 21 / e2e:conflict 17 / e2e:script:ui 18 | ✅ GitHub Release + 本机安装 |
+| **0.7.3** | 2026-10-29 | **交互完备性缺口全量落地（12 项 / 11 子任务）**：库生命周期闭环（新建/删除数据库）、视图等 5 类对象新建模板 + 视图改定义、重命名表 + F2 语义修正（⇧F2 进设计器等）、清单右键与 ↑↓ 巡行、整库导出、测试连接、标签关闭左侧/全部、表维护（优化/分析/检查）、复制表（结构 / 结构+数据）、分组管理（空分组可见可删）；顺带修 **5 个真缺陷**（4 个门禁抓出：删库/维护回执被刷新 toast 盖掉、设计器是唯一退不出的模态、DDL 后树不定位、demo 后端恒返回同一份结构导致假绿；1 个发版准备时抓出：**`publish.owner` 拼错 → 应用内检查更新永远 404**） | **2473 单测（92 文件）** / verify exit 0（**19 道**）/ e2e:ui **476** / e2e:app **72** / e2e:keys 47 / e2e 74 / e2e:transfer 36 / e2e:ssh 18 / e2e:idle 16 / e2e:keepalive 17 / e2e:idle:ui 4 / verify:toolbar-fit 22 / e2e:script:data 10 / e2e:affected 21 / e2e:conflict 17 / e2e:script:ui 18 | ✅ GitHub Release + 本机安装 |
 | **0.7.2** | 2026-10-28 | **审计改进清单全量落地（22 项 / 27 子任务）**：P0 六项收口（导出范围 / 全树搜索 / 标签滚进视野+固定加 / confirmDanger 目标连接 / 生产库第三层保护 / BLOB-Date 口径）、键盘与标签三件套、筛选器 ⌘⇧F+去 window.prompt+条件停用、设计器失败重拉 diff、多语句续跑、**连接配置导入/导出（白名单剥密文）**、字号/间距 token 收敛 | **2391 单测（89 文件）** / verify exit 0（**19 道**）/ e2e:ui **434** / e2e:app **72** / e2e:keys 47 / e2e 74 / e2e:transfer 36 / e2e:affected 22 / e2e:keepalive 18 / e2e:conflict 18 / e2e:ssh 18 / e2e:idle 17 / verify:toolbar-fit 23 / e2e:idle:ui 5 | ✅ GitHub Release + 本机安装 |
 | **0.7.1** | 2026-10-28 | **真机反馈 4 项修复**：非 SELECT 执行结果显示影响行数 / 工具栏任何宽度按钮尺寸一致 / 中间清单单击选中·双击打开 / 连接有效期 10→120 分钟 + 心跳保活 | 2273 单测（81 文件）/ verify exit 0（**19 道**）/ e2e:ui 377 / e2e:app 60 / e2e:keys 47 / e2e:affected 21 / e2e:keepalive 17 / verify:toolbar-fit 22 | ✅ GitHub Release + 本机安装 |
 | **0.7.0** | 2026-10-18 | **体验与安全加固**：竞品调研 52 项落地（身份条 / 网格六态 / 撤销栈 / ENUM·日期编辑器 / 打开源表 / 导出范围 / 视图记忆 / 结果预算 / 更新四态）+ 修 5 个真实缺陷 | 2200 单测 / verify exit 0（16 道）/ e2e:ui 372 / e2e:app 60 / e2e:keys 47 / verify:installed 22 / traffic-lights 6 | ✅ GitHub Release + 本机安装 |
@@ -55,7 +55,13 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
      把后面所有点击吃掉（表现为一串 30s 超时）；
   3. 建库/改名后**树不展开定位**（`useMemo` 依赖时序）→ `pendingRevealRef` + effect；
   4. **demo 后端恒返回同一份库结构** → 建库/删库/改名/复制全是假绿（demo 侧改成可变 + 每次产出新数组）。
-- 门禁数字变化：单测 2391 → **2470**（92 文件）、e2e:ui 434 → **476**（新增第 14 章 40 条）。
+- **发布通道的仓库 owner 拼错（发版准备时抓出）**：`electron-builder.yml` 的
+  `publish.owner` 写的是 `canyuexiang`，真实账号是 `canyuexiyang`（少一个 y，API 实测 404）。
+  后果是**沉默的错误**：产物里 `app-update.yml` 指向不存在的仓库 → 应用内「检查更新」
+  永远 `failed`；而 Release 页本身是好的（手工验 URL 走的是另一个账号），所以一直没人发现。
+  已修 owner，并把 `package.json.repository` 立成第二证据源 + 3 项单测钉住
+  「`publish.owner/repo` == `repository` == `releaseBaseUrl()`」（在错 owner 上确认会红）。
+- 门禁数字变化：单测 2391 → **2473**（92 文件）、e2e:ui 434 → **476**（新增第 14 章 40 条）。
 - 本轮未发 Release（代码与门禁完成）。
 
 ---

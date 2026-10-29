@@ -152,6 +152,7 @@ npm run dist:dir         # 只打 .app + ad-hoc 外层重签 + 签名自检(本�
 - 🔴 **demo 后端每次必须返回新对象**:返回同一个常量/同一 ref → `useMemo` 判未变 → 建库/删库/改名在纯浏览器 e2e 里**全是假绿**。
 - **树行断言按 key 不按标签**:demo 两个连接共享同一份库结构,同名表会出现两行;`filter({ hasText })` 又是**子串**匹配(`access_log` 命中 `access_log_zz`)。`data-node-key` + 精确等值,两道都要。
 - **菜单项点击必须精确等值**:`hasText: '复制表'` 会先命中「复制表名」→ 弹窗永不出现,看着像「点了没反应」。
+- 🔴 **同一个外部标识写在多处时必须钉成等式**:`publish.owner`(electron-builder.yml)/ 回退 URL(updater.ts)/ 产物里的 `app-update.yml` 三处都写 GitHub owner,曾把 `canyuexiyang` 写成 `canyuexiang`(少一个 y)→ 应用内检查更新永远 404,而 Release 页是好的,两轮发版都没发现。现在 `package.json.repository` 是第二证据源,`updater.test.ts` 断言三者相等。
 
 ## 九、工作习惯约定
 

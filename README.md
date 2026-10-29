@@ -10,7 +10,7 @@ MySQL 优先、单机自用、macOS 原生观感 —— 对标 Navicat Premium�
 Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · 虚拟滚动
 
 [![version](https://img.shields.io/badge/version-0.7.3-blue)](docs/RELEASES.md)
-[![tests](https://img.shields.io/badge/tests-2470_passed-brightgreen)](#验证)
+[![tests](https://img.shields.io/badge/tests-2473_passed-brightgreen)](#验证)
 [![platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue)](#系统与环境限制)
 [![arch](https://img.shields.io/badge/arch-Apple%20Silicon%20%C2%B7%20Intel-orange)](#适配芯片)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
@@ -383,7 +383,7 @@ npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染�
 
 | 门禁 | 结果 |
 |---|---|
-| 单元测试 | **2470 passed / 92 文件** |
+| 单元测试 | **2473 passed / 92 文件** |
 | `check:bundle` | 9/9 体积断言通过（首屏 563.0 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip；功能弹窗合计 61.1 KB / 64 KB gzip） |
 | e2e:ui（真浏览器 UI 回归） | 476 |
 | e2e:app（Electron 真机） | 72 |
