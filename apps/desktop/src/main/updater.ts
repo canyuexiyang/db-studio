@@ -256,7 +256,7 @@ function parse(v: string): [number, number, number] | null {
  */
 export function releaseBaseUrl(): string {
   const base = process.env.DB_STUDIO_RELEASE_URL;
-  return base && base.trim() !== '' ? base.trim() : 'https://github.com/canyuexiang/db-studio/releases';
+  return base && base.trim() !== '' ? base.trim() : 'https://github.com/canyuexiyang/db-studio/releases';
 }
 
 /**

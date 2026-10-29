@@ -3,6 +3,14 @@
   "version": "0.7.3",
   "private": true,
   "description": "DB Studio - 反应最快的 macOS 数据库查看器",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/canyuexiyang/db-studio.git"
+  },
+  "homepage": "https://github.com/canyuexiyang/db-studio#readme",
+  "bugs": {
+    "url": "https://github.com/canyuexiyang/db-studio/issues"
+  },
   "type": "module",
   "workspaces": [
     "packages/*",

@@ -124,7 +124,10 @@ extraResources:
 # ⚠️ 只声明通道，不上传：打包命令显式带 `--publish never`（见 package.json dist 脚本）。
 publish:
   provider: github
-  owner: canyuexiang
+  # 🔴 owner 必须与 git remote 完全一致（canyuexiyang）。
+  #    曾误写成 canyuexiang（少一个 y）→ 产物里的 app-update.yml 指向不存在的仓库，
+  #    应用内「检查更新」永远 404（表现为 failed，而不会有人去查 owner）。
+  owner: canyuexiyang
   repo: db-studio
 
 # ssh2 可选原生依赖（cpu-features 等）若被收进包，.node 必须解包出 asar

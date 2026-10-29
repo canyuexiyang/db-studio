@@ -6,7 +6,7 @@
  *  · 断网和配置缺失混为一谈，用户不知道该重试还是该补配置。
  * 四态必须能被区分，且每一条的中文结论要能对上处置动作。
  */
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -90,7 +90,7 @@ describe('hasUpdateConfig', () => {
 
 describe('releaseBaseUrl', () => {
   it('默认指向本仓库的 GitHub Releases', () => {
-    expect(releaseBaseUrl()).toBe('https://github.com/canyuexiang/db-studio/releases');
+    expect(releaseBaseUrl()).toBe('https://github.com/canyuexiyang/db-studio/releases');
   });
 
   it('环境变量写了自建通道就用它', () => {
@@ -100,7 +100,7 @@ describe('releaseBaseUrl', () => {
 
   it('环境变量是空白串时回落默认值', () => {
     process.env.DB_STUDIO_RELEASE_URL = '   ';
-    expect(releaseBaseUrl()).toBe('https://github.com/canyuexiang/db-studio/releases');
+    expect(releaseBaseUrl()).toBe('https://github.com/canyuexiyang/db-studio/releases');
   });
 });
 
@@ -118,7 +118,7 @@ describe('checkForUpdate 四态', () => {
     expect(r.state).toBe('unconfigured');
     expect(r.message).toContain('未配置发布通道');
     expect(r.message).not.toContain('已是最新');
-    expect(r.downloadUrl).toBe('https://github.com/canyuexiang/db-studio/releases');
+    expect(r.downloadUrl).toBe('https://github.com/canyuexiyang/db-studio/releases');
   });
 
   it('已配置且远端更新：update', async () => {
@@ -161,5 +161,39 @@ describe('checkForUpdate 四态', () => {
     const r = await checkForUpdate(null);
     expect(r.state).toBe('latest');
     expect(r.available).toBe(true);
+  });
+});
+
+/**
+ * 发布通道的「仓库身份」必须三处一致（0.7.3 修过的 typo 不许复发）。
+ *
+ * 起因：`electron-builder.yml` 的 `publish.owner` 曾误写成 `canyuexiang`
+ * （真实账号 `canyuexiyang`，少一个 y）。后果不是报错，而是**沉默的错误**：
+ * 产物里的 `app-update.yml` 指向一个 404 的仓库，应用内「检查更新」永远 failed，
+ * 而 release 页本身是好的（手工验证 URL 走的是另一个账号），所以没人会发现。
+ *
+ * 这里用 `package.json.repository` 当第二证据源：两处必须指同一个 owner/repo。
+ */
+describe('发布通道仓库身份一致性', () => {
+  const root = process.cwd();
+  const yml = readFileSync(join(root, 'electron-builder.yml'), 'utf8');
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+    repository?: { url?: string };
+  };
+  const owner = /^\s*owner:\s*(\S+)\s*$/m.exec(yml)?.[1];
+  const repo = /^\s*repo:\s*(\S+)\s*$/m.exec(yml)?.[1];
+
+  it('package.json 声明了 repository（否则没有第二证据源可比）', () => {
+    expect(pkg.repository?.url).toMatch(/github\.com\/[^/]+\/db-studio\.git$/);
+  });
+
+  it('publish.owner/repo 与 repository 完全一致', () => {
+    expect(owner).toBeTruthy();
+    expect(repo).toBe('db-studio');
+    expect(pkg.repository?.url).toContain(`${owner}/${repo}`);
+  });
+
+  it('应用内回退的 releaseBaseUrl 指向同一仓库', () => {
+    expect(releaseBaseUrl()).toBe(`https://github.com/${owner}/${repo}/releases`);
   });
 });
