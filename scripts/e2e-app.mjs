@@ -18,7 +18,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -165,6 +165,66 @@ if (!electronPath) {
 const userData = mkdtempSync(join(tmpdir(), 'dbstudio-app-'));
 
 /**
+ * P2-18j 的接缝：连接配置的导入/导出默认要弹原生打开/保存框，自动化弹不出来。
+ *
+ * - `DB_STUDIO_E2E_SAVE_DIR`：导出直接落到该目录（与 CSV 导出共用同一变量，
+ *   语义一致：都是"跳过保存框，落到确定位置"）
+ * - `DB_STUDIO_E2E_BUNDLE_FILE`：导入直接从该文件读（**独立变量**，不与
+ *   `DB_STUDIO_E2E_IMPORT_FILE` 共用 —— 一次运行里两种导入可能同时存在）
+ *
+ * 预置文件里**故意塞了 `passwordEnc` 与 `promptEveryTime: false`**：
+ * 这是"用户手工改过 / 来自别处"的配置文件，用来证伪"导入会把密文带进内存模型"。
+ */
+const bundleDir = join(userData, 'bundle-io');
+const bundleIn = join(bundleDir, 'incoming.json');
+mkdirSync(bundleDir, { recursive: true });
+writeFileSync(
+  bundleIn,
+  JSON.stringify(
+    {
+      format: 'dbstudio.connections',
+      version: 1,
+      exportedAt: 1_700_000_000_000,
+      count: 1,
+      connections: [
+        {
+          name: 'e2e-import-probe',
+          type: 'mysql',
+          host: '127.0.0.1',
+          port: 3306,
+          user: 'probe',
+          // 故意与"应当"相反：导入侧必须把它改回 true
+          promptEveryTime: false,
+          // 手工塞的假密文：导入后绝不许留在内存模型里
+          passwordEnc: 'c25lYWt5LXNlY3JldA==',
+          defaultDatabase: null,
+          // group 留空：分组会把新连接藏进折叠的组节点里，断言就退化成"看不见"
+          group: null,
+          colorTag: 'blue',
+          note: '来自另一台机器',
+          readOnly: false,
+          ssh: {
+            enabled: false,
+            host: '',
+            port: 22,
+            user: '',
+            authType: 'password',
+            passwordEnc: null,
+            privateKeyPath: null,
+            passphraseEnc: null,
+          },
+          ssl: { enabled: false, caPath: null, certPath: null, keyPath: null, rejectUnauthorized: true },
+          idleTimeoutMs: 7_200_000,
+        },
+      ],
+    },
+    null,
+    2,
+  ),
+  'utf8',
+);
+
+/**
  * ⚠️ 必须清掉 ELECTRON_RUN_AS_NODE。
  * 某些宿主环境（如本机的 Agent 运行时，它自己就是 Electron 应用）会把这个
  * 变量导出到子进程。置位时 Electron 二进制【退化成纯 Node】，
@@ -213,6 +273,9 @@ const electronApp = await electron.launch({
   env: {
     ...childEnv,
     DB_STUDIO_E2E_USER_DATA: userData,
+    // P2-18j：连接配置导入/导出的文件接缝（跳过原生对话框）
+    DB_STUDIO_E2E_SAVE_DIR: bundleDir,
+    DB_STUDIO_E2E_BUNDLE_FILE: bundleIn,
     // 关掉单实例锁：自动化下残留进程会占住锁导致新实例立刻退出
     DB_STUDIO_NO_SINGLE_LOCK: '1',
     NODE_ENV: 'production',
@@ -818,6 +881,18 @@ try {
   //     新窗口带上了 --dbstudio-open 初始标签。断言落在主进程窗口数上，
   //     而不是只看 handler 返回值 —— 那样测不到 createWindow 是否真被调用。
   const beforeCount = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  /**
+   * 记下开窗前的窗口 id —— 收尾要靠**差集**找出"新开的那个"。
+   *
+   * 🔴 原来用 `getAllWindows()[length-1]` 当"新窗口"：这个顺序 API 不保证，
+   *    实测在这台机器上末尾是**主窗口**，于是收尾把主窗口关掉了。
+   *    后果很隐蔽：之后所有 `page.xxx` 都是在已关闭的页面上操作，
+   *    「无控制台错误」那条断言因此变成永远为真的假绿（空数组），
+   *    直到有人在收尾后加了新的页面断言（P2-18j）才炸出 "Target page closed"。
+   */
+  const beforeWinIds = await electronApp.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().map((w) => w.id),
+  );
   const openProbe = await page.evaluate(() =>
     window.dbStudio.openWindowInNew({ connId: 'e2e-open-conn', database: 'e2e_open_db', table: 'e2e_open_tbl' }),
   );
@@ -854,13 +929,144 @@ try {
     newWinInitial && newWinInitial.database === 'e2e_open_db' && newWinInitial.table === 'e2e_open_tbl',
     JSON.stringify(newWinInitial));
 
-  // 关掉新窗口，避免污染后续断言（窗口数上限 = 4，多留一个不影响，但保持干净）
-  await electronApp.evaluate(({ BrowserWindow }) => {
-    const wins = BrowserWindow.getAllWindows();
-    const w = wins[wins.length - 1];
-    if (wins.length > 1 && w) w.close();
-  });
+  // 关掉新开的窗口，避免污染后续断言（窗口数上限 = 4，多留一个不影响，但保持干净）
+  // 🔴 按 id 差集认定"新窗口"，不用数组顺序；用 destroy() 而不是 close() ——
+  //    主进程装了关闭拦截，close() 会被询问流程挂起，等于没关。
+  const closedExtra = await electronApp.evaluate(({ BrowserWindow }, keepIds) => {
+    const extra = BrowserWindow.getAllWindows().filter((w) => !keepIds.includes(w.id));
+    for (const w of extra) w.destroy();
+    return extra.length;
+  }, beforeWinIds);
+  ok('V23 收尾只关掉新开的那个窗口（主窗口仍在）', closedExtra === 1, `closed=${closedExtra}`);
   await new Promise((r) => setTimeout(r, 300));
+  ok(
+    'V23 收尾后主窗口仍可操作（后续断言用的还是同一个页面）',
+    await page.evaluate(() => document.readyState).then((s) => s !== 'unloaded').catch(() => false),
+  );
+
+  // ---------- 9.7 P2-18j：连接配置导入 / 导出 ----------
+  /**
+   * 为什么这一组必须放在**真机**而不是 e2e:ui：
+   * e2e:ui 跑的是纯浏览器 demo，没有 fs、没有主进程 —— 两个通道在 demo 里
+   * 只会明确报"需要桌面应用环境"。文件真的写下去了吗？导出文件里到底有没有
+   * 密文？只有真 Electron + 真文件系统能回答。
+   *
+   * 走的是**右键菜单**而不是直接调 window.dbStudio：这样断言的链路包含
+   * 「菜单项存在 → App handler → 解析/计划 → connSave → reload → toast」，
+   * 只调 IPC 的话，App 里把 parse 结果接错地方照样全绿。
+   */
+  console.log('\n【9.7】P2-18j 连接配置导入 / 导出（真机真读写）');
+
+  /**
+   * 🔴 先 reload 一次再操作界面。
+   *
+   * 本脚本的连接是**直接走 IPC 建的**（connCreate），而渲染层的连接列表是
+   * 启动时那一次 `connList()` 读的 —— 不 reload 的话左树还停在"还没有连接"，
+   * `.tree-row[data-node-kind="connection"]` 一个都不存在，右键菜单无从打开。
+   * 这不是产品缺陷，是自动化"绕过 UI 造数据"的固有账，这里补一次重新装载。
+   */
+  await page.reload();
+  await page.waitForFunction(() => window.dbStudioRuntime?.hasIpc === true, { timeout: 20_000 });
+  await page.waitForTimeout(1500);
+
+  const connTotal =
+    (await page.evaluate(() => window.dbStudio.connList())).data?.connections?.length ?? 0;
+  const menuPick = async (label) => {
+    const row = page.locator('.tree-row[data-node-kind="connection"]').first();
+    await row.waitFor({ state: 'visible', timeout: 10_000 });
+    await row.click({ button: 'right' });
+    const item = page.locator('.ctx-item', { hasText: label });
+    await item.waitFor({ state: 'visible', timeout: 5_000 });
+    await item.click();
+    await page.waitForTimeout(500);
+    return (await page.locator('[data-testid="toast"] .toast-text').innerText().catch(() => '')).replace(/\s+/g, ' ');
+  };
+
+  const exportToastText = await menuPick('导出全部连接…');
+  ok(
+    'P2-18j 导出回执写明条数与「不含密码」',
+    exportToastText.includes(`已导出 ${connTotal} 条连接`) && exportToastText.includes('不含密码'),
+    exportToastText,
+  );
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const exportedPath = join(bundleDir, `dbstudio-connections-${stamp}.json`);
+  const exportedRaw = existsSync(exportedPath) ? readFileSync(exportedPath, 'utf8') : '';
+  ok('P2-18j 导出真的落盘（文件名可预期）', exportedRaw.length > 0, exportedPath);
+
+  let exportedBundle = null;
+  try {
+    exportedBundle = JSON.parse(exportedRaw);
+  } catch {
+    exportedBundle = null;
+  }
+  ok(
+    'P2-18j 落盘内容是合法 bundle（format / version / count 自洽）',
+    exportedBundle?.format === 'dbstudio.connections' &&
+      exportedBundle?.version === 1 &&
+      exportedBundle?.count === connTotal &&
+      exportedBundle?.connections?.length === connTotal,
+    `format=${exportedBundle?.format} version=${exportedBundle?.version} count=${exportedBundle?.count}`,
+  );
+
+  /**
+   * 🔴 这条是整个 P2-18j 的核心断言：备份文件不许变成凭据文件。
+   * 判据分四层，因为"漏一处"就够泄一次：顶层密文 / SSH 密文 /
+   * SSH 私钥路径 / SSL 私钥路径。嵌套对象最容易在"只删顶层字段"时漏掉。
+   */
+  const leaks = (exportedBundle?.connections ?? []).flatMap((c) =>
+    [
+      'passwordEnc' in c ? `「${c.name}」顶层仍带 passwordEnc` : null,
+      c.ssh?.passwordEnc ? `「${c.name}」ssh.passwordEnc 有值` : null,
+      c.ssh?.passphraseEnc ? `「${c.name}」ssh.passphraseEnc 有值` : null,
+      c.ssh?.privateKeyPath ? `「${c.name}」ssh.privateKeyPath 有值` : null,
+      c.ssl?.keyPath ? `「${c.name}」ssl.keyPath 有值` : null,
+    ].filter(Boolean),
+  );
+  ok('🔴 P2-18j 导出文件不含任何密文 / 私钥路径', leaks.length === 0, leaks.slice(0, 3).join('；'));
+  ok(
+    'P2-18j 导出的每条都标成「每次手动输入密码」',
+    (exportedBundle?.connections ?? []).length > 0 &&
+      (exportedBundle?.connections ?? []).every((c) => c.promptEveryTime === true),
+  );
+
+  // 导入：预置文件里手工塞了 passwordEnc + promptEveryTime:false，两者都必须被纠正
+  const importToast1 = await menuPick('导入连接…');
+  const list1 = (await page.evaluate(() => window.dbStudio.connList())).data?.connections ?? [];
+  const probe1 = list1.find((c) => c.name === 'e2e-import-probe');
+  ok('P2-18j 导入后连接真的落库（名字原样保留）', !!probe1 && importToast1.includes('已导入 1 条连接'),
+    importToast1 || list1.map((c) => c.name).join(','));
+  ok(
+    '🔴 P2-18j 文件里手工塞的密文不进内存模型（且强制回手输）',
+    !!probe1 && !probe1.passwordEnc && probe1.promptEveryTime === true,
+    probe1 ? `passwordEnc=${String(probe1.passwordEnc)} promptEveryTime=${probe1.promptEveryTime}` : '未找到导入的连接',
+  );
+  ok(
+    'P2-18j 保留重建所需字段（user/host/port/颜色/备注）',
+    probe1?.user === 'probe' && probe1?.host === '127.0.0.1' && probe1?.port === 3306 &&
+      probe1?.colorTag === 'blue' && probe1?.note === '来自另一台机器',
+    probe1 ? `${probe1.user}@${probe1.host}:${probe1.port} color=${probe1.colorTag}` : '',
+  );
+
+  // 同一个文件再导入一次 → 必须改名而不是覆盖（覆盖会连带丢掉本地那条的密码）
+  const importToast2 = await menuPick('导入连接…');
+  const list2 = (await page.evaluate(() => window.dbStudio.connList())).data?.connections ?? [];
+  const renamedProbe = list2.find((c) => c.name === 'e2e-import-probe (2)');
+  ok(
+    '🔴 P2-18j 同名再导入自动改名，不覆盖本地那条',
+    !!renamedProbe && list2.filter((c) => c.name === 'e2e-import-probe').length === 1,
+    list2.filter((c) => c.name.startsWith('e2e-import-probe')).map((c) => c.name).join(','),
+  );
+  ok(
+    'P2-18j 改名在回执里如实说出（否则用户按名字找不到新连接）',
+    importToast2.includes('重名已改名') && importToast2.includes('e2e-import-probe (2)'),
+    importToast2,
+  );
+
+  // 收尾：把导入的探针连接删掉，别把「连接数」这类基线留给后面的断言
+  for (const c of list2.filter((x) => x.name.startsWith('e2e-import-probe'))) {
+    await page.evaluate((id) => window.dbStudio.connDelete(id), c.id);
+  }
 
   // ---------- 10. 控制台干净 ----------
   console.log('\n【10】控制台');

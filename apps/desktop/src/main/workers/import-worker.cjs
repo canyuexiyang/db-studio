@@ -3,8 +3,12 @@
  * 导入 worker（D3）—— utilityProcess 里跑。
  *
  * 输入（parentPort 首条消息）：
- *   { jobId, filePath, format: 'csv'|'tsv'|'xlsx'|'json', delimiter?, hasHeader, batchSize,
- *     mapping, columns, connection, database, tableName, retryRows? }
+ *   { jobId, filePath, format: 'csv'|'tsv'|'xlsx'|'json', delimiter?, encoding?, hasHeader,
+ *     batchSize, mapping, columns, connection, database, tableName, retryRows? }
+ *
+ * encoding（P1-10）：'utf8'（默认）| 'gbk'，只对文本格式生效；xlsx 自带编码。
+ *   🔴 必须是用户在向导里看到并确认过的那个值 —— 探测只是**预选**，
+ *      按 UTF-8 硬读 GBK 文件不会报错，只会把乱码写进库。
  *
  * 阶段：
  *   parse   —— 读文件 → 二维表格（xlsx 用 exceljs 流式读；json 用 core-import 规范化）
@@ -42,6 +46,7 @@ async function main() {
     filePath,
     format,
     delimiter,
+    encoding,
     hasHeader,
     batchSize,
     mapping,
@@ -86,9 +91,10 @@ async function main() {
       if (stat.size > JSON_MAX_BYTES) {
         throw new Error('JSON 文件超过 100MB，暂不支持导入（请先拆分文件）');
       }
-      const raw = fs.readFileSync(filePath, 'utf8');
-      const { stripBom, normalizeJsonRows, jsonCellText } = require('@dbstudio/core-import');
-      // 带 BOM 的文件 JSON.parse 会直接抛 "Unexpected token"，先剥掉
+      const { stripBom, normalizeJsonRows, jsonCellText, decodeBytes } = require('@dbstudio/core-import');
+      // P1-10：编码由用户定（默认 utf8）；decodeBytes 已剥掉 UTF-8 BOM，
+      // 否则 JSON.parse 会抛 "Unexpected token"（旧系统导出的 JSON 常带 BOM）
+      const raw = decodeBytes(fs.readFileSync(filePath), encoding);
       const parsed = JSON.parse(stripBom(raw));
       const { rows: objs, keys } = normalizeJsonRows(parsed);
       // 行 = 对象值序列（按 keys 对齐），列 = keys。keys 与渲染层 peek 用同一
@@ -97,10 +103,11 @@ async function main() {
       // 长度的列由 buildInsertBatches 自然跳过（只遍历 mapping 下标）。
       rows = objs.map((o) => keys.map((k) => jsonCellText(o[k])));
     } else {
-      const text = fs.readFileSync(filePath, 'utf8');
+      const { parseDelimited, decodeBytes } = require('@dbstudio/core-import');
+      // P1-10：以前这里是硬编码 'utf8' —— GBK 文件进来就是满屏乱码，且不报错
+      const text = decodeBytes(fs.readFileSync(filePath), encoding);
       const delim = delimiter || (format === 'tsv' ? '\t' : ',');
       // 纯逻辑在 core-import，worker 不重复实现 —— 从编译后的包加载
-      const { parseDelimited } = require('@dbstudio/core-import');
       rows = parseDelimited(text, delim);
     }
   } catch (e) {

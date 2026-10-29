@@ -79,6 +79,11 @@ async function main() {
   const { jobId, format, outputPath, columns, connection, sql, tableName, batchSize } = job;
   // E4：'database' = 整库全部表（仅 sql/markdown）；其余一律按单表处理
   const scope = job.scope === 'database' ? 'database' : 'table';
+  /**
+   * P0-1：快照行（选区 / 当前已加载）。有它就是**纯编码任务**：
+   * 不建连接、不查库、不受连接状态影响。行数组由渲染层按输出列裁好。
+   */
+  const snapshotRows = Array.isArray(job.rows) ? job.rows : null;
   // E2 细化选项：缺省回各格式历史默认值。xlsx/json/sql 刻意忽略 options（见各分支注释）
   const options = job.options || {};
   const delimiter =
@@ -91,39 +96,45 @@ async function main() {
   let rowsWritten = 0;
   const batch = Math.max(1, batchSize || 1000);
 
-  // ---- 连库（worker 自己建连接：主进程连接要跑 UI 查询，不能被导出长查询占用） ----
-  let mysql2;
-  try {
-    mysql2 = require('mysql2/promise');
-  } catch (e) {
-    send({ type: 'error', jobId, message: 'worker 无法加载 mysql2：' + String(e && e.message), fatal: true });
-    return;
-  }
-
-  let conn;
-  try {
-    conn = await mysql2.createConnection({
-      host: connection.host,
-      port: connection.port,
-      user: connection.user,
-      password: connection.password ?? '',
-      database: connection.database,
-      // R10 参数（与主进程驱动一致，保证数据形态相同）
-      supportBigNumbers: true,
-      bigNumberStrings: true,
-      decimalNumbers: false,
-      dateStrings: true,
-      timezone: 'local',
-      jsonStrings: true,
-      multipleStatements: false,
-      rowsAsArray: true,
-    });
-  } catch (e) {
-    send({ type: 'error', jobId, message: '导出建连失败：' + String(e && e.message), fatal: true });
-    return;
-  }
-
   const fs = require('node:fs');
+
+  /**
+   * ---- 连库（**懒建**：快照导出不需要数据库） ----
+   *
+   * worker 自己建连接：主进程连接要跑 UI 查询，不能被导出长查询占用。
+   * 抛出的错误消息与改造前逐字一致（原来在函数开头就建连并就地 send）。
+   */
+  let conn = null;
+  async function connectDb() {
+    if (conn) return conn;
+    let mysql2;
+    try {
+      mysql2 = require('mysql2/promise');
+    } catch (e) {
+      throw new Error('worker 无法加载 mysql2：' + String(e && e.message));
+    }
+    try {
+      conn = await mysql2.createConnection({
+        host: connection.host,
+        port: connection.port,
+        user: connection.user,
+        password: connection.password ?? '',
+        database: connection.database,
+        // R10 参数（与主进程驱动一致，保证数据形态相同）
+        supportBigNumbers: true,
+        bigNumberStrings: true,
+        decimalNumbers: false,
+        dateStrings: true,
+        timezone: 'local',
+        jsonStrings: true,
+        multipleStatements: false,
+        rowsAsArray: true,
+      });
+    } catch (e) {
+      throw new Error('导出建连失败：' + String(e && e.message));
+    }
+    return conn;
+  }
 
   // 打开的 fd 登记在册：失败/收尾路径统一关闭，不留句柄（半截文件由外层 catch 负责删）
   const openFds = [];
@@ -150,24 +161,28 @@ async function main() {
   //    所以这里必须用 conn.connection（底层原生连接）。
   //    rowsWritten 是跨表累计值（E4 整库按全局行数推进度）。
   function streamQuery(query, onRow) {
-    return new Promise((resolve, reject) => {
-      const stream = conn.connection.query(query);
-      stream
-        .on('result', (row) => {
-          rowsWritten++;
-          onRow(row);
-          if (rowsWritten % batch === 0) {
-            send({ type: 'progress', jobId, rowsWritten, elapsedMs: Date.now() - startedAt });
-          }
-        })
-        .on('end', resolve)
-        .on('error', reject);
-    });
+    return connectDb().then(
+      (c) =>
+        new Promise((resolve, reject) => {
+          const stream = c.connection.query(query);
+          stream
+            .on('result', (row) => {
+              rowsWritten++;
+              onRow(row);
+              if (rowsWritten % batch === 0) {
+                send({ type: 'progress', jobId, rowsWritten, elapsedMs: Date.now() - startedAt });
+              }
+            })
+            .on('end', resolve)
+            .on('error', reject);
+        }),
+    );
   }
 
   /** 非流式查询（SHOW TABLES / SHOW COLUMNS / SHOW CREATE，结果集小） */
   async function queryRows(q) {
-    const [rows] = await conn.query(q);
+    const c = await connectDb();
+    const [rows] = await c.query(q);
     return rows;
   }
 
@@ -180,6 +195,8 @@ async function main() {
   try {
     if (scope === 'database') {
       // ================= E4 整库导出（mysqldump 语义的轻量版） =================
+      // 🔴 快照没有库范围：整库是「逐表重查」，两者语义冲突（宁可报错也不猜）
+      if (snapshotRows) throw new Error('快照导出不支持整库范围');
       if (format !== 'sql' && format !== 'markdown') {
         throw new Error('整库导出仅支持 SQL / Markdown 格式');
       }
@@ -369,34 +386,60 @@ async function main() {
       let headerDone = outCols.length > 0;
       if (headerDone) handle.header();
 
-      await new Promise((resolve, reject) => {
-        const stream = conn.connection.query(q);
-        // B7 兜底：渲染层给不出自定义 SQL 的列定义时，从 fields 事件取列名。
-        // 🔴 必须归一成 {name, dataType} 对象数组（与 job.columns 同形状）——
-        //    各格式表头都按 c.name 取值，直接塞字符串会全部退化成 NULL 文本。
-        // 只在 outCols 为空时生效 —— 单表路径的列来自元数据，优先级更高。
-        stream.on('fields', (fields) => {
-          if (!outCols.length && Array.isArray(fields)) {
-            outCols = fields
-              .map((f) => ({ name: String((f && f.name) || ''), dataType: String((f && f.type) ?? '') }))
-              .filter((c) => c.name);
-            if (!headerDone && outCols.length) {
-              headerDone = true;
-              handle.header();
-            }
+      if (snapshotRows) {
+        /**
+         * P0-1：快照路径 —— 行已经在渲染层手上，这里只编码写盘。
+         *
+         * 🔴 快照必须**原样**写出，不做任何「补一排」「再查一次」的补救：
+         *    用户选的是「导出眼前这份结果」，任何补数据都会让文件与屏幕不一致。
+         * 列数不符就报错 —— 悄悄少写几列会得到一个能打开但错位的文件。
+         */
+        if (!outCols.length) throw new Error('快照导出缺少列定义，无法确定表头');
+        for (const row of snapshotRows) {
+          if (!Array.isArray(row) || row.length !== outCols.length) {
+            throw new Error(
+              `快照列数不一致：第 ${rowsWritten + 1} 行有 ${Array.isArray(row) ? row.length : '?'} 列，` +
+                `表头有 ${outCols.length} 列`,
+            );
           }
-        });
-        stream
-          .on('result', (row) => {
-            rowsWritten++;
-            handle.row(row);
-            if (rowsWritten % batch === 0) {
-              send({ type: 'progress', jobId, rowsWritten, elapsedMs: Date.now() - startedAt });
+          rowsWritten++;
+          handle.row(row);
+          if (rowsWritten % batch === 0) {
+            send({ type: 'progress', jobId, rowsWritten, elapsedMs: Date.now() - startedAt });
+          }
+        }
+      } else {
+        // 重查路径才需要连接（懒建：快照路径上面已经写完了）
+        const c = await connectDb();
+        await new Promise((resolve, reject) => {
+          const stream = c.connection.query(q);
+          // B7 兜底：渲染层给不出自定义 SQL 的列定义时，从 fields 事件取列名。
+          // 🔴 必须归一成 {name, dataType} 对象数组（与 job.columns 同形状）——
+          //    各格式表头都按 c.name 取值，直接塞字符串会全部退化成 NULL 文本。
+          // 只在 outCols 为空时生效 —— 单表路径的列来自元数据，优先级更高。
+          stream.on('fields', (fields) => {
+            if (!outCols.length && Array.isArray(fields)) {
+              outCols = fields
+                .map((f) => ({ name: String((f && f.name) || ''), dataType: String((f && f.type) ?? '') }))
+                .filter((c) => c.name);
+              if (!headerDone && outCols.length) {
+                headerDone = true;
+                handle.header();
+              }
             }
-          })
-          .on('end', resolve)
-          .on('error', reject);
-      });
+          });
+          stream
+            .on('result', (row) => {
+              rowsWritten++;
+              handle.row(row);
+              if (rowsWritten % batch === 0) {
+                send({ type: 'progress', jobId, rowsWritten, elapsedMs: Date.now() - startedAt });
+              }
+            })
+            .on('end', resolve)
+            .on('error', reject);
+        });
+      }
 
       await handle.finish();
     }
@@ -411,9 +454,12 @@ async function main() {
     } catch {}
     send({ type: 'error', jobId, message: String((e && e.message) || e), fatal: true });
   } finally {
-    try {
-      await conn.end();
-    } catch {}
+    // 快照路径没建连接（conn = null）—— 不要对 null 调 end()
+    if (conn) {
+      try {
+        await conn.end();
+      } catch {}
+    }
   }
 }
 

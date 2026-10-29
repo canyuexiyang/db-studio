@@ -237,3 +237,87 @@ describe('连接配置持久化', () => {
     expect(store.get('c1')?.passwordEnc).toBeTruthy();
   });
 });
+
+/**
+ * P1-8 创建副本。
+ *
+ * 这一组的核心不是"能存下第二条连接"，而是**密文的来路**：渲染层拿到的
+ * `passwordEnc` 只是 '' 占位符，副本想沿用密码只能由主进程按字节复制。
+ * 复制错了（复制成 '' / 复制成别的连接的密文）都不会报错，
+ * 只会得到一条"看着正常、一连就 Access denied"的连接 —— 只能用测试钉住。
+ */
+describe('创建副本（copySecretsFrom）', () => {
+  it('副本沿用源连接已存密码，且源连接的密码不受影响', async () => {
+    await store.save({ config: baseCfg(), password: 'p@ss' });
+    const dup = await store.save({
+      config: baseCfg({ id: 'c2', name: 'prod 副本' }),
+      copySecretsFrom: 'c1',
+    });
+
+    expect(await store.passwordFor('c2')).toBe('p@ss');
+    expect(await store.passwordFor('c1')).toBe('p@ss');
+    // 拿到的必须是**真密文**，不是空串占位符（空串会让这条连接永远连不上）
+    expect(dup.passwordEnc).toBeTruthy();
+    expect(dup.passwordEnc).not.toBe('');
+  });
+
+  it('副本不覆盖源连接：两条都在，名字各自独立', async () => {
+    await store.save({ config: baseCfg(), password: 'pw' });
+    await store.save({ config: baseCfg({ id: 'c2', name: 'prod 副本' }), copySecretsFrom: 'c1' });
+
+    expect(store.listConnections().map((c) => c.id).sort()).toEqual(['c1', 'c2']);
+    expect(store.get('c1')?.name).toBe('prod');
+    expect(store.get('c2')?.name).toBe('prod 副本');
+  });
+
+  it('副本给了新密码 → 用新密码，源连接不动', async () => {
+    await store.save({ config: baseCfg(), password: 'old' });
+    await store.save({
+      config: baseCfg({ id: 'c2', name: 'prod 副本' }),
+      password: 'brand-new',
+      copySecretsFrom: 'c1',
+    });
+
+    expect(await store.passwordFor('c2')).toBe('brand-new');
+    expect(await store.passwordFor('c1')).toBe('old');
+  });
+
+  it('源连接是「每次手输」→ 副本也手输，且不落任何密文', async () => {
+    await store.save({ config: baseCfg(), password: 'x', promptEveryTime: true });
+    const dup = await store.save({
+      config: baseCfg({ id: 'c2', name: 'prod 副本', promptEveryTime: true }),
+      copySecretsFrom: 'c1',
+      promptEveryTime: true,
+    });
+
+    expect(dup.passwordEnc).toBeNull();
+    expect(dup.promptEveryTime).toBe(true);
+    expect(await store.passwordFor('c2')).toBeNull();
+  });
+
+  it('🔴 源连接不存在 → 显式报错，不静默产出没密码的连接', async () => {
+    await expect(
+      store.save({ config: baseCfg({ id: 'c2' }), copySecretsFrom: 'ghost' }),
+    ).rejects.toThrow(/源连接不存在/);
+    expect(store.get('c2')).toBeNull();
+    // 报错不该把列表写坏
+    expect(store.listConnections()).toEqual([]);
+  });
+
+  it('🔴 更新既有连接时忽略 copySecretsFrom（不能悄悄换掉密码来路）', async () => {
+    await store.save({ config: baseCfg(), password: 'mine' });
+    await store.save({ config: baseCfg({ id: 'c2', name: 'other' }), password: 'theirs' });
+
+    await store.save({ config: baseCfg({ name: 'renamed' }), copySecretsFrom: 'c2' });
+
+    expect(await store.passwordFor('c1')).toBe('mine');
+  });
+
+  it('副本的密文同样不落明文', async () => {
+    await store.save({ config: baseCfg(), password: 'dup_secret_plain' });
+    await store.save({ config: baseCfg({ id: 'c2', name: 'prod 副本' }), copySecretsFrom: 'c1' });
+
+    expect(rawFile()).not.toContain('dup_secret_plain');
+    expect(store.auditPlaintext()).toEqual([]);
+  });
+});

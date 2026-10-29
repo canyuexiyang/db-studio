@@ -9,6 +9,8 @@
  *  5. 导入闭环：CSV → import-worker → 行真的进库
  *  6. 导入校验：类型错误行被剔除，valid 行照常插入
  *  7. 导出失败（SQL 语法错）→ 半截文件被清理
+ *  8. P0-1 快照导出（rows 通道）：连接不可达也能写出，只写选中行、不重查
+ *  9. P0-1 快照列数不符 → 明确失败且不留半截文件
  *
  * 运行：node scripts/e2e-transfer.mjs（前置：docker dbstudio-mysql + npm run build）
  *
@@ -237,6 +239,47 @@ async function main() {
     check('导入值保真（big_no 精度）', rows.some((r) => String(r.big_no) === '9007199254740999'), JSON.stringify(rows).slice(0, 120));
   }
 
+  // 5.5 P1-10 GBK 导入（中文旧系统导出的 CSV 就是这个形态）
+  {
+    /**
+     * 「张三」「李四」的 GBK 字节，硬编码 —— Node 没有现成的 GBK 编码器。
+     *
+     * 🔴 断言落在**库里的字面中文**上：如果 worker 忽略 encoding 而按 utf8 硬读，
+     *    插进去的是一串替换字符（不报错），这条立刻红。这正是 P1-10 要防的形态。
+     */
+    const gbk = Buffer.concat([
+      Buffer.from('name,amount,note,big_no\\n'),
+      Buffer.from([0xd5, 0xc5, 0xc8, 0xfd]),
+      Buffer.from(',10.00,ok,9007199254741001\\n'),
+      Buffer.from([0xc0, 0xee, 0xcb, 0xc4]),
+      Buffer.from(',20.00,ok2,9007199254741002\\n'),
+    ]);
+    const gbkPath = join(workDir, 'gbk.csv');
+    writeFileSync(gbkPath, gbk);
+    const cols2 = [
+      { name: 'id', dataType: 'bigint', nullable: false, autoIncrement: true },
+      { name: 'name', dataType: 'varchar(64)', nullable: false, autoIncrement: false },
+      { name: 'amount', dataType: 'decimal(12,2)', nullable: false, autoIncrement: false },
+      { name: 'note', dataType: 'text', nullable: true, autoIncrement: false },
+      { name: 'ts', dataType: 'datetime(6)', nullable: true, autoIncrement: false },
+      { name: 'big_no', dataType: 'bigint', nullable: false, autoIncrement: false },
+    ];
+    const msg = await runWorker(join(workersDir, 'import-worker.cjs'), {
+      jobId: 'j5b', filePath: gbkPath, format: 'csv', delimiter: ',', encoding: 'gbk', hasHeader: true,
+      batchSize: 100, mapping: ['name', 'amount', 'note', 'big_no'],
+      columns: cols2, connection: connInfo, database: db, tableName: 'src',
+    });
+    check('GBK 导入 done（2 行）', msg.type === 'done' && msg.rowsDone === 2, JSON.stringify(msg).slice(0, 120));
+    const [zh] = await admin.query(
+      'SELECT name FROM src WHERE big_no IN (9007199254741001,9007199254741002) ORDER BY big_no',
+    );
+    check(
+      '🔴 GBK 中文按原文入库（不是替换字符）',
+      zh.length === 2 && zh[0].name === '张三' && zh[1].name === '李四',
+      JSON.stringify(zh),
+    );
+  }
+
   // 6. 导出失败 → 半截文件清理
   {
     const out = join(workDir, 'bad.csv');
@@ -246,6 +289,43 @@ async function main() {
     });
     check('坏 SQL → error 消息', msg.type === 'error', JSON.stringify(msg).slice(0, 100));
     check('失败后不留半截文件', !existsSync(out), existsSync(out) ? '残留 ' + out : '已清理');
+  }
+
+  // 7. P0-1 快照导出（rows 通道）
+  {
+    // 🔴 故意给一个**连不通**的连接（端口 1）：快照路径必须完全不建连、不查库。
+    //    这是这条用例的核心证伪能力 —— 如果实现偷偷去重查，这里会立刻失败。
+    const deadConn = { host: '127.0.0.1', port: 1, user: 'nobody', password: 'x', database: db };
+    const snapColumns = [
+      { name: 'id', dataType: 'bigint' },
+      { name: 'name', dataType: 'varchar(64)' },
+    ];
+    const out = join(workDir, 'snap.csv');
+    const msg = await runWorker(join(workersDir, 'export-worker.cjs'), {
+      jobId: 'j7', format: 'csv', outputPath: out, tableName: 'src', columns: snapColumns,
+      connection: deadConn, rows: [['9007199254740993', 'alpha'], ['9007199254740994', 'bravo']],
+      scope: 'snapshot', batchSize: 1,
+    });
+    check('快照导出 done（2 行，连接不可达也不受影响）', msg.type === 'done' && msg.rowsWritten === 2, JSON.stringify(msg).slice(0, 120));
+    const snapText = existsSync(out) ? readFileSync(out, 'utf8') : '';
+    const { parseDelimited } = require('@dbstudio/core-import');
+    const snapRows = parseDelimited(snapText, ',');
+    check('快照 CSV = 表头 + 2 数据行（不是整表 4 行）', snapRows.length === 3, 'rows=' + snapRows.length);
+    check('快照只含选中的两行（未混入 charlie/delta）', !/charlie|delta/.test(snapText), snapText.slice(0, 80));
+    check('快照 bigint 原样写出不丢精度', snapText.includes('9007199254740993'), '');
+  }
+
+  // 8. P0-1 快照列数不符 → 明确失败 + 不留半截文件
+  {
+    const deadConn = { host: '127.0.0.1', port: 1, user: 'nobody', password: 'x', database: db };
+    const out = join(workDir, 'snap-bad.csv');
+    const msg = await runWorker(join(workersDir, 'export-worker.cjs'), {
+      jobId: 'j8', format: 'csv', outputPath: out, tableName: 'src',
+      columns: [{ name: 'id', dataType: 'bigint' }, { name: 'name', dataType: 'varchar(64)' }],
+      connection: deadConn, rows: [['only-one-column']], scope: 'snapshot',
+    });
+    check('快照列数不符 → error（不写错位文件）', msg.type === 'error' && /列数不一致/.test(String(msg.message)), JSON.stringify(msg).slice(0, 140));
+    check('快照失败后不留半截文件', !existsSync(out), existsSync(out) ? '残留 ' + out : '已清理');
   }
 
   await admin.query('DROP DATABASE \\\`' + db + '\\\`');

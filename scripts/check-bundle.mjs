@@ -114,13 +114,20 @@ for (const { pattern, why } of FORBIDDEN_IN_FIRST_SCREEN) {
 //       （导出/导入/设计器/脚本…）都会挤爆这条线，但它们与编辑器加载体验无关。
 //     - sql-guard 组（JSON_TABLE 特征）：node-sql-parser，体积由上游库决定。
 //     - 功能组（其余 lazy chunk）：手写的低频功能弹窗，各自独立按需加载，
-//       合并给一个小预算（60KB），防止有人把大依赖顺手塞进某个弹窗。
+//       合并给一个小预算，防止有人把大依赖顺手塞进某个弹窗。
 const { gzipSync } = await import('node:zlib');
 
 const EDITOR_MARKER = 'cm-editor';
 const GUARD_MARKER = 'JSON_TABLE';
 const MAX_EDITOR_GZIP = 150 * 1024;
-const MAX_FEATURE_GZIP = 60 * 1024;
+/**
+ * 0.7.2：60 → 64KB。
+ * 增量来自本迭代给弹窗补的**真功能**（都是手写代码，没有塞依赖）：
+ * P1-12 设计器结构化失败报告块、P1-10 导入编码/分隔符选项、
+ * P2-18d 行高三档切换的弹窗侧文案。涨预算必须留理由 —— 这条线的本意是
+ * 防"顺手 import 个大库"，不是冻结功能。
+ */
+const MAX_FEATURE_GZIP = 64 * 1024;
 const MAX_GUARD_GZIP = 600 * 1024;
 
 let editorGzipTotal = 0;
@@ -148,7 +155,7 @@ ok(
   `${(editorGzipTotal / 1024).toFixed(1)} KB / ${(MAX_EDITOR_GZIP / 1024).toFixed(0)} KB gzip`,
 );
 ok(
-  '功能弹窗 lazy chunk 合计 ≤ 60KB gzip（导出/导入/脚本/设计器等，手写代码）',
+  `功能弹窗 lazy chunk 合计 ≤ ${MAX_FEATURE_GZIP / 1024}KB gzip（导出/导入/脚本/设计器等，手写代码）`,
   featureGzipTotal <= MAX_FEATURE_GZIP,
   `${(featureGzipTotal / 1024).toFixed(1)} KB / ${(MAX_FEATURE_GZIP / 1024).toFixed(0)} KB gzip`,
 );

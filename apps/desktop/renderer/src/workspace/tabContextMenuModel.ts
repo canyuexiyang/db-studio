@@ -14,7 +14,13 @@
 import type { WorkspaceTab } from './useWorkspaceTabs';
 
 /** 菜单动作；同时用作 data-testid 后缀（`tab-menu-<key>`） */
-export type TabMenuAction = 'close' | 'closeOthers' | 'closeRight' | 'revealInTree' | 'copyIdentity';
+export type TabMenuAction =
+  | 'close'
+  | 'closeOthers'
+  | 'closeRight'
+  | 'togglePin'
+  | 'revealInTree'
+  | 'copyIdentity';
 
 export interface TabMenuItem {
   key: TabMenuAction;
@@ -260,6 +266,15 @@ export function buildTabMenuItems(input: TabMenuInput): TabMenuItem[] {
       label: '关闭',
       disabled: false,
       shortcut: tab.id === activeId ? '⌘W' : undefined,
+    },
+    /**
+     * P1-7：固定/取消固定。
+     * 固定的标签会排到最左侧，且**不参与「关闭其他 / 关闭右侧」**（isClosable 钩子）。
+     */
+    {
+      key: 'togglePin',
+      label: tab.pinned ? '取消固定' : '固定标签',
+      disabled: false,
     },
     {
       key: 'closeOthers',

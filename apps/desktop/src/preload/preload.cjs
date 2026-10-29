@@ -82,7 +82,14 @@ contextBridge.exposeInMainWorld('dbStudio', {
   importStart: (req) => invoke(IPC.IMPORT_START, req),
   importCancel: (jobId) => invoke(IPC.IMPORT_CANCEL, jobId),
   importPickPath: () => invoke(IPC.IMPORT_PICK_PATH, null),
-  importPeek: (filePath, maxRows) => invoke(IPC.IMPORT_PEEK, { filePath, maxRows: maxRows ?? 50 }),
+  // P1-10：opts.encoding / opts.delimiter = 用户改过后的重新预览
+  importPeek: (filePath, maxRows, opts) =>
+    invoke(IPC.IMPORT_PEEK, {
+      filePath,
+      maxRows: maxRows ?? 50,
+      encoding: opts?.encoding ?? null,
+      delimiter: opts?.delimiter ?? null,
+    }),
 
   // ---- 运行 SQL 脚本 ----
   scriptStart: (req) => invoke(IPC.SCRIPT_START, req),
@@ -114,6 +121,10 @@ contextBridge.exposeInMainWorld('dbStudio', {
   sqlFilePick: () => invoke(IPC.SQL_FILE_PICK, null),
   sqlFileRead: (path) => invoke(IPC.SQL_FILE_READ, path),
   sqlFileSave: (req) => invoke(IPC.SQL_FILE_SAVE, req),
+
+  // ---- P2-18j：连接配置导入 / 导出 ----
+  connBundlePick: () => invoke(IPC.CONN_BUNDLE_PICK, null),
+  connBundleSave: (req) => invoke(IPC.CONN_BUNDLE_SAVE, req),
 
   // ---- 订阅 ----
   on: subscribe,

@@ -93,7 +93,15 @@ function groupNode(g: GroupNode, schemas: Record<string, DatabaseMeta[]>): TreeN
 
   const total = countConnections(g);
   return {
-    key: g.path ? `group:${g.path}` : `group:${g.name || 'ungrouped'}:${g.connections.map((c) => c.id).join(',')}`,
+    /**
+     * P2-18i：key 必须**稳定**。
+     *
+     * 旧写法 `group:${name}:${成员 id 用逗号拼}` 把"成员集合"编进了 key ——
+     * 增删任何一个连接都会让 key 变化，于是：展开记忆失效、`expandAncestors`
+     * 算不到祖先、「在树中定位」定位到不存在的节点。组路径本身已经是唯一身份
+     * （`buildGroupTree` 用 path 建索引），未分组只有一个（path === ''）。
+     */
+    key: g.path ? `group:${g.path}` : 'group-root:ungrouped',
     kind: 'group',
     label: g.name || '未分组',
     children,
@@ -163,6 +171,26 @@ export interface FlatNode {
   expanded: boolean;
   /** 父节点 key（根为空） */
   parentKey: string | null;
+}
+
+/**
+ * 全树扁平化（**忽略展开状态**）—— 搜索态专用（P0-2）。
+ *
+ * 🔴 为什么不能复用 `flattenTree(roots, expanded)`：它只输出「已展开」的行。
+ *    默认只展开到库层，于是**未展开库里的表按表名搜零结果** —— 用户判定
+ *    「搜索坏了」。搜索是「在整棵树里找」，前提就是整棵树都在候选集里。
+ */
+export function flattenAll(roots: TreeNode[]): FlatNode[] {
+  const out: FlatNode[] = [];
+  const walk = (nodes: TreeNode[], depth: number, parentKey: string | null) => {
+    for (const n of nodes) {
+      const children = n.children ?? [];
+      out.push({ node: n, depth, hasChildren: children.length > 0, expanded: children.length > 0, parentKey });
+      if (children.length > 0) walk(children, depth + 1, n.key);
+    }
+  };
+  walk(roots, 0, null);
+  return out;
 }
 
 /**
@@ -379,6 +407,11 @@ export interface TreeSearchHit {
   /** 命中原因 */
   matchedBy: 'name' | 'column';
   table?: TableMeta;
+  /**
+   * 命中节点的类型（P0-2）。容器节点（分组/连接/库）也能被搜到：
+   * 命中它们时 UI 应「选中 + 展开」，而不是当成可打开的表。
+   */
+  kind?: TreeNodeKind;
   /** 列命中（Q2）专有：命中字段所在的库与表 —— 树里没有对应节点，由渲染层跳转 */
   database?: string;
   tableName?: string;
@@ -387,7 +420,10 @@ export interface TreeSearchHit {
 /**
  * 搜索树节点。
  *
- * 只搜**对象节点**（表/视图/...）—— 搜分组和连接没有意义。
+ * P0-2（审计）：**全树可见 + 容器名可搜**。
+ *  - 旧实现只搜对象节点（表/视图/…），于是连接名、库名、分组名在任何维度都搜不到；
+ *  - 现在连容器节点一起搜（命中后 UI 表现为「可点击行」，点击 = 选中 + 展开）。
+ *
  * 命中字段名时（Q2）返回的是**包含该字段的表**，而不是字段本身。
  */
 export function searchTree(
@@ -405,16 +441,18 @@ export function searchTree(
   const push = (n: TreeNode, path: string, matchedBy: 'name' | 'column') => {
     if (hits.length >= limit || seen.has(n.key)) return;
     seen.add(n.key);
-    hits.push({ key: n.key, label: n.label, path, matchedBy, table: n.table });
+    hits.push({ key: n.key, label: n.label, path, matchedBy, table: n.table, kind: n.kind });
   };
 
   const walk = (nodes: TreeNode[], path: string) => {
     for (const n of nodes) {
+      const lower = n.label.toLowerCase();
+      const nameHit = lower.includes(q) || pinyinFirstLetters(n.label).startsWith(q);
       if (n.kind === 'object' && n.table) {
-        const lower = n.label.toLowerCase();
-        if (lower.includes(q) || pinyinFirstLetters(n.label).startsWith(q)) {
-          push(n, path, 'name');
-        }
+        if (nameHit) push(n, path, 'name');
+      } else if (n.kind === 'connection' || n.kind === 'database' || n.kind === 'group') {
+        // 容器节点也参战：搜「本地测试」「order_db」必须命中
+        if (nameHit) push(n, path, 'name');
       }
       const nextPath = n.kind === 'connection' ? n.label : n.kind === 'database' ? `${path} / ${n.label}` : path;
       walk(n.children ?? [], nextPath);

@@ -35,6 +35,7 @@ import {
   type ExportScopeId,
   type ScopeFacts,
 } from './exportScope';
+import type { GridSnapshotSource } from '../grid/exportSnapshot';
 import { IconCheck, IconGear, IconX } from '../ui/icons';
 
 
@@ -88,14 +89,14 @@ export interface ExportModalProps {
   /** 自定义 SQL 的列定义（给 csv/xlsx 表头与 markdown 列名；缺省由 worker 从 fields 事件兜底） */
   columns?: { name: string; dataType: string }[] | null;
   /**
-   * T40：网格选区快照（行数组，顺序对齐 columns）。不传 / null =
-   * 当前视图没有选区快照 → 「选区」范围禁用并说明原因。
+   * P0-1/T40：网格快照源（选区行 / 已加载行 / 可见列）。
+   *
+   * 不传 / null = 当前视图没有网格上下文（例如树右键导出未打开的表）→
+   * 「选区」「当前已加载」禁用并说明原因，绝不偷偷降级成「重查」。
+   * 🔴 传的是**取数能力**而不是行数组：行数即刻可读，行要等用户真的选了这个
+   *    范围才物化 —— 否则打开导出弹窗就要解 5 万行（一卡一卡的白屏）。
    */
-  selectedRows?: readonly (readonly unknown[])[] | null;
-  /** T40：网格当前已加载的结果快照。不传 / null = 没有已加载快照 → 「当前已加载」禁用 */
-  loadedRows?: readonly (readonly unknown[])[] | null;
-  /** T40：网格当前可见列名（显示顺序）。不传 / null = 网格未上报 → 「仅可见列」禁用 */
-  visibleColumns?: readonly string[] | null;
+  snapshot?: GridSnapshotSource | null;
   onClose: () => void;
   onToast: (msg: string) => void;
 }
@@ -108,9 +109,7 @@ export function ExportModal({
   filter,
   sql,
   columns,
-  selectedRows,
-  loadedRows,
-  visibleColumns,
+  snapshot,
   onClose,
   onToast,
 }: ExportModalProps) {
@@ -141,12 +140,13 @@ export function ExportModal({
   const resultColumns = hasSql ? columns ?? [] : table?.columns ?? [];
 
   // T40：范围选项的可用性完全由宿主能力决定 —— 缺什么就禁用并说清原因
+  const visibleColumns = snapshot?.visibleColumns ?? null;
   const facts: ScopeFacts = {
     hasSql,
     hasTable: Boolean(table),
     filterActive: Boolean(where),
-    selectionRowCount: selectedRows ? selectedRows.length : null,
-    loadedRowCount: loadedRows ? loadedRows.length : null,
+    selectionRowCount: snapshot ? snapshot.selectedRowCount : null,
+    loadedRowCount: snapshot ? snapshot.loadedRowCount : null,
     visibleColumnCount: visibleColumns ? visibleColumns.length : null,
     columnCount: resultColumns.length,
   };
@@ -200,6 +200,10 @@ export function ExportModal({
 
   const start = useCallback(async () => {
     try {
+      // 0. 快照行只在**这一刻**物化（范围确实是快照才读，重查不读）
+      const snapshotScope = scope === 'selection' || scope === 'loaded' ? scope : null;
+      const snapshotRows = snapshot && snapshotScope ? snapshot.readRows(snapshotScope) : null;
+
       // 1. 先解析范围（行从哪来、导哪些列），再弹保存框 ——
       //    否则用户选完路径才被告知「这个范围导不了」。
       const resolved = resolveExport({
@@ -208,19 +212,15 @@ export function ExportModal({
         tableName: table?.name ?? null,
         where,
         querySql: hasSql ? sql : null,
-        rows: scope === 'selection' ? selectedRows : scope === 'loaded' ? loadedRows : null,
+        rows: snapshotRows,
         columns: resultColumns,
         visibleColumns,
         onlyVisibleColumns: onlyVisible,
       });
 
-      // 🔴 快照不能交给 exportStart：worker 只认 SQL，会把「快照」偷偷变成重查。
-      //    当前宿主（App）尚未把行交给后台导出进程，所以先明确失败而不是给错数据。
-      if (resolved.source === 'snapshot') {
-        setError('快照导出暂未接入导出进程，当前只能按「全部匹配」重查导出');
-        setPhase('error');
-        return;
-      }
+      // 🔴 快照不能走 SQL：worker 只认 SQL 的话，会把「快照」偷偷变成重查。
+      //    P0-1 起快照走 `rows` 通道（数据已在渲染层，worker 不建连、不查库）。
+      const isSnapshot = resolved.source === 'snapshot';
 
       // 2. 主进程弹保存框（demo 模式返回 null → 直接提示）。
       //    整库用库名做默认文件名；自定义 SQL 结果集用「查询结果」。
@@ -244,9 +244,18 @@ export function ExportModal({
         database,
         table: dbScope ? '*' : table?.name ?? '查询结果',
         sql: resolved.sql,
-        // 列集合 = 计划里的输出列（仅可见列时已被裁过）；自定义 SQL 交给 worker 的 fields 兜底
-        columns: hasSql ? columns ?? null : resolved.columns.map((c) => ({ name: c.name, dataType: c.dataType ?? '' })),
-        scope: dbScope ? 'database' : 'table',
+        /**
+         * 列集合 = 计划里的输出列（仅可见列时已被裁过）。
+         * 自定义 SQL 重查时交给 worker 的 fields 兜底（列名要执行了才知道）。
+         */
+        columns: isSnapshot
+          ? resolved.columns.map((c) => ({ name: c.name, dataType: c.dataType ?? '' }))
+          : hasSql
+            ? columns ?? null
+            : resolved.columns.map((c) => ({ name: c.name, dataType: c.dataType ?? '' })),
+        // P0-1：快照行（已按可见列裁好，与 columns 严格对齐）
+        rows: isSnapshot ? resolved.rows : null,
+        scope: isSnapshot ? 'snapshot' : dbScope ? 'database' : 'table',
         options: { delimiter, encoding, nullText, includeHeader },
       });
       jobIdRef.current = r.jobId;
@@ -254,7 +263,7 @@ export function ExportModal({
       setError(e instanceof Error ? e.message : String(e));
       setPhase('error');
     }
-  }, [backend, connId, database, format, table, sql, columns, hasSql, dbScope, delimiter, encoding, nullText, includeHeader, scope, where, resultColumns, selectedRows, loadedRows, visibleColumns, onlyVisible, onToast]);
+  }, [backend, connId, database, format, table, sql, columns, hasSql, dbScope, delimiter, encoding, nullText, includeHeader, scope, where, resultColumns, snapshot, visibleColumns, onlyVisible, onToast]);
 
   const cancel = useCallback(async () => {
     if (jobIdRef.current) await backend.exportCancel(jobIdRef.current);

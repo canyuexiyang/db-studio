@@ -76,6 +76,10 @@ const IPC = {
   SQL_FILE_PICK: 'sqlfile:pick',
   SQL_FILE_READ: 'sqlfile:read',
   SQL_FILE_SAVE: 'sqlfile:save',
+
+  // P2-18j：连接配置导入/导出 —— 与 ipc-channels.ts 同值
+  CONN_BUNDLE_PICK: 'connbundle:pick',
+  CONN_BUNDLE_SAVE: 'connbundle:save',
 };
 
 /**

@@ -43,8 +43,15 @@ export interface ExportRequest {
   sql?: string | null;
   /** 不传 = 从表元数据取（渲染层负责传，worker 不查 schema） */
   columns?: { name: string; dataType: string }[] | null;
+  /**
+   * P0-1 快照：非空即直接写出这些行，worker 不建连、不查库。
+   *
+   * 🔴 快照必须走这条通道。若把它当 SQL 交给 worker 重查，用户以为导出的是
+   *    屏幕上那 20 行，实际拿到的是全表 —— 而且「成功」完成，没有任何迹象。
+   */
+  rows?: readonly (readonly unknown[])[] | null;
   /** 'table'（默认）= 单表；'database' = 整库全部表（E4 轻量备份，仅 sql/markdown） */
-  scope?: 'table' | 'database' | null;
+  scope?: 'table' | 'database' | 'snapshot' | null;
   /** 导出细化配置（E2） */
   options?: {
     delimiter?: string | null;
@@ -59,6 +66,11 @@ export interface ImportRequest {
   filePath: string;
   format: 'csv' | 'tsv' | 'xlsx' | 'json';
   delimiter?: string | null;
+  /**
+   * P1-10 文本编码（csv/tsv/json 生效；xlsx 自带编码，忽略）。
+   * 缺省按 UTF-8 读 —— 与 0.7.1 行为一致，老调用方不受影响。
+   */
+  encoding?: 'utf8' | 'gbk' | null;
   hasHeader: boolean;
   database: string;
   table: string;
@@ -151,14 +163,26 @@ export class TransferManager {
   // ---------- 导出 ----------
 
   async exportStart(req: ExportRequest): Promise<{ jobId: string }> {
-    const connection = await this.connectionFor(req.connId, req.database);
+    const snapshotRows = Array.isArray(req.rows) ? req.rows : null;
+    /**
+     * 快照导出**不建连接**：数据已经在渲染层，worker 只负责编码写盘。
+     *
+     * 这不只是省一次连接：`connectionFor` 在连接已断开时会抛
+     * 「连接未建立，先连接再导出」—— 而导出手里这份已经加载好的结果
+     * 与库连不连没有关系，报那个错是纯粹的阻碍。
+     * 表名/库名仍要传：SQL 格式的 INSERT 前缀需要限定名。
+     */
+    const connection = snapshotRows
+      ? { host: '', port: 0, user: '', password: null, database: req.database }
+      : await this.connectionFor(req.connId, req.database);
     const jobId = randomUUID();
 
-    // 列定义兜底：渲染层没传就查表元数据。两条路径例外（worker 自己解决列名）：
+    // 列定义兜底：渲染层没传就查表元数据。三条路径例外（worker 自己解决列名）：
     //  - 自定义 SQL（B7）：列集合要执行了才知道，worker 从 fields 事件兜底
     //  - 整库（E4）：逐表 SHOW COLUMNS，单表元数据没有意义
+    //  - 快照（P0-1）：列由渲染层随行走，缺列就是渲染层的 bug，不能在这里猜
     let columns = req.columns && req.columns.length > 0 ? req.columns : null;
-    if (!columns && !req.sql && req.scope !== 'database') {
+    if (!columns && !req.sql && !snapshotRows && req.scope !== 'database') {
       const table = await this.deps.sessions.getTable(req.connId, req.database, req.table);
       columns = (table?.columns ?? []).map((c) => ({ name: c.name, dataType: c.dataType }));
     }
@@ -171,6 +195,8 @@ export class TransferManager {
       columns: columns ?? [],
       connection,
       sql: req.sql || undefined,
+      // P0-1：快照行走独立字段，不走 sql（见 ExportRequest.rows 注释）
+      rows: snapshotRows,
       // E2 细化选项 / E4 范围：原样透传，worker 按格式自行取舍
       options: req.options ?? undefined,
       scope: req.scope ?? undefined,
@@ -257,6 +283,8 @@ export class TransferManager {
       filePath: req.filePath,
       format: req.format,
       delimiter: req.delimiter ?? undefined,
+      // P1-10：worker 按这个编码解码文本文件；xlsx 自带编码，worker 会忽略
+      encoding: req.encoding ?? 'utf8',
       hasHeader: req.hasHeader,
       batchSize: req.batchSize ?? 1000,
       mapping: req.mapping,
@@ -418,7 +446,11 @@ export class TransferManager {
   }
 
   /**
-   * 读取导入文件预览（前 N 行 + 推测分隔符），用于向导第 1/2 步。
+   * 读取导入文件预览（前 N 行 + 推测分隔符 + 探测编码），用于向导第 1/2 步。
+   *
+   * P1-10：`opts` 允许用户在向导里改编码/分隔符后**重新预览**（改一次就直接
+   * 看到结果，而不是"改完只能硬着头皮导进去看有没有乱码"）。
+   *
    * JSON（E3）：返回首行 = 键序伪表头，其后 = 前 N 个对象的值序列 ——
    * 渲染层把首行拆出来当「对象键 → 表列」映射的左列，数据行从 0 重编号，
    * 因此伪表头不会污染行号口径（worker 对 json 强制按无表头处理）。
@@ -426,7 +458,14 @@ export class TransferManager {
   async peekImportFile(
     filePath: string,
     maxRows = 50,
-  ): Promise<{ rows: string[][]; delimiter: '\t' | ',' | ';'; format: string }> {
+    opts: { encoding?: 'utf8' | 'gbk' | null; delimiter?: string | null } = {},
+  ): Promise<{
+    rows: string[][];
+    delimiter: string;
+    format: string;
+    encoding: 'utf8' | 'gbk';
+    bom: boolean;
+  }> {
     if (!existsSync(filePath)) {
       throw Object.assign(new Error('文件不存在'), { code: 'NOT_FOUND' });
     }
@@ -437,7 +476,8 @@ export class TransferManager {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.readFile(filePath);
       const ws = wb.worksheets[0];
-      if (!ws) return { rows: [], delimiter: ',', format: 'xlsx' };
+      // xlsx 里的字符串自带编码，不存在"猜编码"这回事
+      if (!ws) return { rows: [], delimiter: ',', format: 'xlsx', encoding: 'utf8', bom: false };
       const rows: string[][] = [];
       let n = 0;
       ws.eachRow((row) => {
@@ -448,7 +488,7 @@ export class TransferManager {
         });
         rows.push(vals);
       });
-      return { rows, delimiter: ',', format: 'xlsx' };
+      return { rows, delimiter: ',', format: 'xlsx', encoding: 'utf8', bom: false };
     }
 
     if (ext === 'json') {
@@ -459,20 +499,41 @@ export class TransferManager {
           code: 'TOO_LARGE',
         });
       }
-      const { stripBom, normalizeJsonRows, jsonCellText } = await import('@dbstudio/core-import');
-      // 带 BOM 的文件 JSON.parse 会直接抛 "Unexpected token"，先剥掉
-      const parsed = JSON.parse(stripBom(readFileSync(filePath, 'utf8')));
+      const { stripBom, normalizeJsonRows, jsonCellText, sniffEncoding, decodeBytes, utf8BomLength } =
+        await import('@dbstudio/core-import');
+      const bytes = readFileSync(filePath); // Buffer 即 Uint8Array，不再复制一份
+      const encoding = opts.encoding ?? sniffEncoding(bytes);
+      // 带 BOM 的文件 JSON.parse 会直接抛 "Unexpected token"，decodeBytes 已剥
+      const parsed = JSON.parse(stripBom(decodeBytes(bytes, encoding))) as unknown;
       const { rows: objs, keys } = normalizeJsonRows(parsed);
       const valueRows = objs.slice(0, maxRows).map((o) => keys.map((k) => jsonCellText(o[k])));
-      return { rows: [keys, ...valueRows], delimiter: ',', format: 'json' };
+      return {
+        rows: [keys, ...valueRows],
+        delimiter: ',',
+        format: 'json',
+        encoding,
+        bom: utf8BomLength(bytes) > 0,
+      };
     }
 
     const { readFileSync } = await import('node:fs');
-    const text = readFileSync(filePath, 'utf8');
-    const { sniffDelimiter, parseDelimited } = await import('@dbstudio/core-import');
-    const delimiter = sniffDelimiter(text);
+    const { sniffDelimiter, parseDelimited, sniffEncoding, decodeBytes, utf8BomLength } = await import(
+      '@dbstudio/core-import'
+    );
+    const bytes = readFileSync(filePath); // Buffer 即 Uint8Array，不再复制一份
+    // 编码：用户显式选的优先，否则按 BOM / UTF-8 严格解码探测
+    const encoding = opts.encoding ?? sniffEncoding(bytes);
+    const text = decodeBytes(bytes, encoding);
+    // 分隔符：用户显式改过的优先（探测错了要能纠正，这正是 P1-10 的一半）
+    const delimiter = opts.delimiter && opts.delimiter.length > 0 ? opts.delimiter : sniffDelimiter(text);
     const all = parseDelimited(text, delimiter);
-    return { rows: all.slice(0, maxRows), delimiter, format: ext === 'tsv' ? 'tsv' : 'csv' };
+    return {
+      rows: all.slice(0, maxRows),
+      delimiter,
+      format: ext === 'tsv' ? 'tsv' : 'csv',
+      encoding,
+      bom: utf8BomLength(bytes) > 0,
+    };
   }
 
   /** 清理（应用退出时）：杀掉所有活着的 worker */

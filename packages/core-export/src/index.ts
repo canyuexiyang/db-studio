@@ -70,10 +70,17 @@ export interface ExportJob {
   };
   /** 查询 SQL（若为 null 则 SELECT * FROM table） */
   sql?: string;
+  /**
+   * P0-1 快照行：非空即直接写出这些行，worker **不建连接、不查库**。
+   *
+   * 语义上它与 `sql` 互斥（有 rows 就不会用 sql）。行数组必须与 `columns`
+   * 严格对齐 —— 列裁剪已在渲染层（exportScope）做完。
+   */
+  rows?: readonly (readonly unknown[])[] | null;
   /** 细化配置（E2），csv/markdown 生效 */
   options?: ExportTextOptions | null;
-  /** 'table'（默认）= 单表；'database' = 整库全部表（E4 轻量备份，仅 sql/markdown） */
-  scope?: 'table' | 'database' | null;
+  /** 'table'（默认）= 单表；'database' = 整库全部表（E4 轻量备份，仅 sql/markdown）；'snapshot' = 写 rows */
+  scope?: 'table' | 'database' | 'snapshot' | null;
   /** 单批行数，用于进度上报 */
   batchSize?: number;
 }

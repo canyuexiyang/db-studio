@@ -16,6 +16,10 @@ import type { ColumnMeta } from '@dbstudio/core-schema-cache';
 interface ImportRuntime {
   parseDelimited(text: string, delimiter: string): string[][];
   stripBom(s: string): string;
+  utf8BomLength(bytes: Uint8Array): number;
+  sniffEncoding(bytes: Uint8Array): ImportEncoding;
+  decodeBytes(bytes: Uint8Array, encoding: ImportEncoding | string): string;
+  normalizeEncoding(encoding: string | null | undefined): ImportEncoding;
   sniffDelimiter(sample: string): '\t' | ',' | ';';
   guessMapping(fileHeaders: string[], tableColumns: ColumnMeta[]): MappingSuggestion;
   cellTextToValue(raw: string): string | null;
@@ -49,6 +53,10 @@ const runtime = require('./runtime.cjs') as ImportRuntime;
 
 export const parseDelimited: ImportRuntime['parseDelimited'] = runtime.parseDelimited;
 export const stripBom: ImportRuntime['stripBom'] = runtime.stripBom;
+export const utf8BomLength: ImportRuntime['utf8BomLength'] = runtime.utf8BomLength;
+export const sniffEncoding: ImportRuntime['sniffEncoding'] = runtime.sniffEncoding;
+export const decodeBytes: ImportRuntime['decodeBytes'] = runtime.decodeBytes;
+export const normalizeEncoding: ImportRuntime['normalizeEncoding'] = runtime.normalizeEncoding;
 export const sniffDelimiter: ImportRuntime['sniffDelimiter'] = runtime.sniffDelimiter;
 export const guessMapping: ImportRuntime['guessMapping'] = runtime.guessMapping;
 export const cellTextToValue: ImportRuntime['cellTextToValue'] = runtime.cellTextToValue;
@@ -63,6 +71,14 @@ export const createStatementSplitter: ImportRuntime['createStatementSplitter'] =
 export const classifyScriptStatement: ImportRuntime['classifyScriptStatement'] = runtime.classifyScriptStatement;
 
 // ---------- 类型（worker 与渲染层共用形状） ----------
+
+/**
+ * 文本编码口径（P1-10）。
+ *
+ * 🔴 用 `'utf8'` 而**不是** `'utf-8'` —— SQL 脚本入口早就是这个字面量，
+ *    两个「导入」入口各写一套只会让 IPC 侧多一层映射、多一处漏判。
+ */
+export type ImportEncoding = 'utf8' | 'gbk';
 
 export interface MappingSuggestion {
   /** 文件列索引 → 表列名（null = 该文件列不导入） */

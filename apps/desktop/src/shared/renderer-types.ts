@@ -29,6 +29,7 @@ export type {
   ExportStartRequest,
   ImportStartRequest,
   ImportPeekResult,
+  ImportPeekOptions,
   ImportDoneResult,
   ExportFormat,
   ExportOptions,

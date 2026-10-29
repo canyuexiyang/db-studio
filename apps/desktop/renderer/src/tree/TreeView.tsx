@@ -24,6 +24,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   flattenTree,
+  // P0-2：搜索态要基于**全树**（未展开库里的表也必须搜得到）
+  flattenAll,
   searchTree,
   filterFlatByQuery,
   toggleExpanded,
@@ -201,9 +203,15 @@ export function TreeView({
   // 列命中（Q2）：树里没有对应节点，不参与 filterFlatByQuery，单独渲染成结果行
   const colHits = useMemo(() => hits.filter((h) => h.matchedBy === 'column'), [hits]);
 
+  /**
+   * P0-2：搜索态的候选集 = **全树**（不是已展开的部分）。
+   *
+   * 旧写法 `filterFlatByQuery(flat, hits)` 把"全树扫出的命中"过滤回"已展开的行"，
+   * 而默认只展开到库层 —— 未展开库里的表按表名搜**零结果**，用户会判定搜索坏了。
+   */
   const visible = useMemo(
-    () => (query.trim() ? filterFlatByQuery(flat, hits) : flat),
-    [flat, query, hits],
+    () => (query.trim() ? filterFlatByQuery(flattenAll(roots), hits) : flat),
+    [flat, query, hits, roots],
   );
 
   const onToggle = useCallback(
@@ -406,12 +414,15 @@ export function TreeView({
         if (!isLiveState(stateOf(n.connection))) onToggleConnection?.(n.connection, false);
       return;
       }
-      // 容器节点（分组/库/对象类别）：单击即展开/收起
-      if (f.hasChildren && (n.kind === 'group' || n.kind === 'database' || n.kind === 'kind')) {
+      // 容器节点（分组/库/对象类别/搜索态下的连接）：单击即展开/收起
+      const containerKinds = query.trim()
+        ? n.kind === 'group' || n.kind === 'database' || n.kind === 'kind' || n.kind === 'connection'
+        : n.kind === 'group' || n.kind === 'database' || n.kind === 'kind';
+      if (f.hasChildren && containerKinds) {
         onToggle(n.key);
       }
     },
-    [onSelectNode, onToggle, onToggleConnection, stateOf, visible, selection, onSelectionChange],
+    [onSelectNode, onToggle, onToggleConnection, stateOf, visible, selection, onSelectionChange, query],
   );
 
   const onDoubleClick = useCallback(
@@ -437,14 +448,110 @@ export function TreeView({
 
   // ---------- C6 键盘：F2 重命名 / Delete·Backspace 删除（均限表节点，prop 未传则无操作） ----------
 
+  /** P1-13：行 DOM 引用表（键盘移动时精确滚动到那一行，不用 querySelector 拼选择器） */
+  const rowEls = useRef(new Map<string, HTMLDivElement>());
+  /** P1-13：type-ahead 的输入缓冲（500ms 后重置） */
+  const typeahead = useRef({ buf: '', at: 0 });
+
+  /** P1-13：把选中项移到 visible 的第 idx 行，并滚进视野 */
+  const moveActiveTo = useCallback(
+    (idx: number) => {
+      const f = visible[idx];
+      if (!f) return;
+      onSelectNode?.(f.node);
+      const el = rowEls.current.get(f.node.key);
+      el?.scrollIntoView({ block: 'nearest' });
+    },
+    [visible, onSelectNode],
+  );
+
   const onTreeKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       // T13：组合期的 Backspace 是输入法在删候选，不是「删除对象」
       if (isImeComposing(e)) return;
-      if (e.key !== 'F2' && e.key !== 'Delete' && e.key !== 'Backspace') return;
       // 搜索框/输入类元素里的按键不属于树导航
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      const inInput =
+        !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+      /**
+       * P1-13：↑↓ / ←→ / Home / End / type-ahead。
+       *
+       * 之前树容器可 Tab 聚焦但**什么也做不了**（焦点环还被 CSS 关了），
+       * 属于「能进去但没法用」—— 既是效率问题也是无障碍问题。
+       * 口径与 Finder/VSCode 一致：←→ 是「收起 / 移回父级」「展开 / 进第一个子级」。
+       */
+      if (!inInput) {
+        const idx = visible.findIndex((f) => f.node.key === activeKey);
+        const cur = idx >= 0 ? visible[idx] : null;
+        if (e.key === 'ArrowDown') {
+          moveActiveTo(idx < 0 ? 0 : Math.min(idx + 1, visible.length - 1));
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          moveActiveTo(idx < 0 ? visible.length - 1 : Math.max(idx - 1, 0));
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'Home') {
+          moveActiveTo(0);
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'End') {
+          moveActiveTo(visible.length - 1);
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'ArrowRight' && cur) {
+          if (cur.hasChildren && !cur.expanded) onToggle(cur.node.key);
+          else if (cur.hasChildren && cur.expanded && visible[idx + 1] && visible[idx + 1].depth > cur.depth) {
+            moveActiveTo(idx + 1);
+          }
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'ArrowLeft' && cur) {
+          if (cur.hasChildren && cur.expanded) onToggle(cur.node.key);
+          else if (cur.parentKey) {
+            const p = visible.findIndex((f) => f.node.key === cur.parentKey);
+            if (p >= 0) moveActiveTo(p);
+          }
+          e.preventDefault();
+          return;
+        }
+        // type-ahead：连续输入按"当前缓冲"匹配前缀（500ms 无输入则重开）
+        if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          const now = Date.now();
+          const buf = now - typeahead.current.at < 500 ? typeahead.current.buf + e.key : e.key;
+          typeahead.current = { buf, at: now };
+          const q = buf.toLowerCase();
+          const start = Math.max(idx, 0);
+          for (let k = 0; k < visible.length; k++) {
+            const f = visible[(start + k) % visible.length];
+            if (f.node.label.toLowerCase().startsWith(q)) {
+              moveActiveTo((start + k) % visible.length);
+              break;
+            }
+          }
+          e.preventDefault();
+          return;
+        }
+      }
+
+      if (e.key !== 'F2' && e.key !== 'Delete' && e.key !== 'Backspace') return;
+      /**
+       * 🔴 输入类元素里的按键一律不进树动作（**包括 Delete/Backspace**）。
+       *
+       * 搜索框就渲染在 `.tree` 容器内，键盘事件会冒泡上来：
+       *  - 搜索框里的 Backspace = 删掉一个字符；
+       *  - 树里的 Backspace = 删除表（带危险确认）。
+       * 少了这句隔离，用户在搜索框里按一下退格就会弹出「删除表」——
+       * 该表恰好是当前选中项时，甚至可能是危险确认第二层被顺手确认掉。
+       * 2026-10 真机 e2e 抓到（P1-13 加树导航时漏了这一层）。
+       */
+      if (inInput) return;
       if (!activeKey) return;
       const node = findByKey(roots, activeKey);
       if (node?.kind !== 'object' || !node.table || !node.database) return;
@@ -461,7 +568,7 @@ export function TreeView({
         onDeleteRequest({ connId, database: node.database, table: node.table });
       }
     },
-    [roots, activeKey, onRenameRequest, onDeleteRequest],
+    [roots, activeKey, onRenameRequest, onDeleteRequest, visible, onToggle, moveActiveTo],
   );
 
   return (
@@ -479,7 +586,7 @@ export function TreeView({
     >
       <input
         className="tree-search"
-        placeholder="搜索表 / 视图（支持拼音首字母）"
+        placeholder="搜索表 / 视图 / 库 / 连接（支持拼音首字母）"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
@@ -487,6 +594,19 @@ export function TreeView({
           if (e.key === 'Escape') setQuery('');
         }}
       />
+      {/* P0-2：结果计数 + 一键清空 —— 搜不到时用户要能立刻确认「是真的没有」 */}
+      {query.trim() ? (
+        <div className="tree-search-meta" data-testid="tree-search-meta">
+          <span className="tree-search-count">
+            命中 {hits.filter((h) => h.matchedBy === 'name').length} 条
+            {colHits.length > 0 ? ` · 字段 ${colHits.length} 条` : ''}
+          </span>
+          <span className="spacer" />
+          <button type="button" className="tree-search-clear" data-testid="tree-search-clear" title="清空搜索" onClick={() => setQuery('')}>
+            <IconX size={11} />
+          </button>
+        </div>
+      ) : null}
 
       {visible.map((f) => {
         const n = f.node;
@@ -540,6 +660,10 @@ export function TreeView({
         return (
           <div
             key={n.key}
+            ref={(el) => {
+              if (el) rowEls.current.set(n.key, el);
+              else rowEls.current.delete(n.key);
+            }}
             className={`tree-row${activeKey === n.key ? ' active' : ''}${selection.has(n.key) ? ' selected' : ''}`}
             style={{ paddingLeft: 6 + f.depth * 14 }}
             data-testid={n.kind === 'connection' ? `tree-conn-${n.connection?.name ?? ''}` : undefined}

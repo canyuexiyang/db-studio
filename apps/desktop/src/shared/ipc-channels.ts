@@ -112,6 +112,14 @@ export const IPC = {
    * path 为 null → 弹保存框（另存为）；带 baseline → 先比对是否被外部改过。
    */
   SQL_FILE_SAVE: 'sqlfile:save',
+
+  // P2-18j：连接配置导入 / 导出（换机与备份）。
+  // ⚠️ 不复用 sqlfile:* —— 那里选的是 .sql 脚本、框标题写着「打开 SQL 文件」，
+  //    让用户在一个 SQL 文件框里找 .json 是明确的误导；文件过滤也不同。
+  /** 弹打开框选 .json 连接配置，返回绝对路径（取消返回 null） */
+  CONN_BUNDLE_PICK: 'connbundle:pick',
+  /** 弹保存框把连接配置写成 UTF-8 JSON，返回实际路径（取消返回 null） */
+  CONN_BUNDLE_SAVE: 'connbundle:save',
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];
@@ -382,6 +390,14 @@ export interface SaveConnectionRequest {
   password?: string | null;
   passphrase?: string | null;
   promptEveryTime?: boolean;
+  /**
+   * P1-8 创建副本：源连接 id。
+   *
+   * 🔴 密文按字节从源连接复制（在主进程内完成，渲染层全程不接触）。
+   *    渲染层拿到的 `passwordEnc` 只是 '' 占位符（"已存过"），把它当成密文存下来
+   *    会得到一条永远连不上的连接 —— 所以「沿用密码」只能走这条路。
+   */
+  copySecretsFrom?: string | null;
 }
 
 // ---------- 对象定义与表信息（R1 竞品对齐：C2 / C9 / A14） ----------
@@ -555,8 +571,16 @@ export interface ExportStartRequest {
   /** 非空时按 SQL 导出（B7 查询结果导出），忽略 table 的行数据语义 */
   sql?: string | null;
   columns?: { name: string; dataType: string }[] | null;
-  /** 'table'（默认）= 单表；'database' = 整库全部表（仅 sql/markdown） */
-  scope?: 'table' | 'database' | null;
+  /**
+   * P0-1 快照通道：非空 = 直接写出这些行，worker **不建连接、不查库**。
+   *
+   * 行数组必须与 `columns` 严格对齐（渲染层由 exportScope.resolveExport 裁好列）。
+   * 这是「选区 / 当前已加载」两个范围的唯一实现方式 —— 它们语义上就是快照，
+   * 若改成重新执行 SQL，NOW()/RAND() 与期间的数据变化都会进文件（X03/X04）。
+   */
+  rows?: readonly (readonly unknown[])[] | null;
+  /** 'table'（默认）= 单表；'database' = 整库全部表（仅 sql/markdown）；'snapshot' = 写 rows */
+  scope?: 'table' | 'database' | 'snapshot' | null;
   options?: ExportOptions | null;
 }
 
@@ -564,7 +588,19 @@ export interface ImportPeekResult {
   /** 文件前 N 行（含表头） */
   rows: string[][];
   delimiter: string;
-  format: 'csv' | 'tsv' | 'xlsx';
+  /** json 也存在（首行是键序伪表头），别只看 csv/tsv/xlsx */
+  format: 'csv' | 'tsv' | 'xlsx' | 'json';
+  /** P1-10：实际用来解码的编码（探测结果或用户改过的值），向导下拉框据此预选 */
+  encoding?: 'utf8' | 'gbk';
+  /** 文件是否带 UTF-8 BOM（提示用：BOM 会让表头多一个看不见的字符） */
+  bom?: boolean;
+}
+
+export interface ImportPeekOptions {
+  /** 用户显式改过的编码；缺省 = 自动探测 */
+  encoding?: 'utf8' | 'gbk' | null;
+  /** 用户显式改过的分隔符；缺省 = 自动探测 */
+  delimiter?: string | null;
 }
 
 export interface ImportStartRequest {
@@ -572,6 +608,11 @@ export interface ImportStartRequest {
   filePath: string;
   format: 'csv' | 'tsv' | 'xlsx' | 'json';
   delimiter?: string | null;
+  /**
+   * P1-10：文本编码（csv/tsv/json 生效）。缺省 utf8 = 0.7.1 行为。
+   * 🔴 与 SQL 脚本入口同一字面量口径（'utf8' | 'gbk'），不要写成 'utf-8'。
+   */
+  encoding?: 'utf8' | 'gbk' | null;
   hasHeader: boolean;
   database: string;
   table: string;
@@ -702,8 +743,15 @@ export interface DbStudioApi {
   importCancel(jobId: string): Promise<IpcResult<boolean>>;
   /** 弹打开框选导入文件（取消返回 null） */
   importPickPath(): Promise<IpcResult<string | null>>;
-  /** 读文件预览（前 N 行 + 分隔符探测） */
-  importPeek(filePath: string, maxRows?: number): Promise<IpcResult<ImportPeekResult>>;
+  /**
+   * 读文件预览（前 N 行 + 分隔符/编码探测）。
+   * `opts` 用于用户改过编码/分隔符后的**重新预览**（P1-10）。
+   */
+  importPeek(
+    filePath: string,
+    maxRows?: number,
+    opts?: ImportPeekOptions,
+  ): Promise<IpcResult<ImportPeekResult>>;
 
   // ---- 运行 SQL 脚本 ----
   /** 选好文件后发起：worker 先扫描统计，scan 消息回来后等 confirm/cancel */
@@ -755,6 +803,12 @@ export interface DbStudioApi {
   sqlFileRead(path: string): Promise<IpcResult<SqlFileReadResult>>;
   /** 保存 / 另存为；被外部改过且未 force 时返回 conflict=true 且不写盘 */
   sqlFileSave(req: SqlFileSaveRequest): Promise<IpcResult<SqlFileSaveResult>>;
+
+  // ---- P2-18j：连接配置导入 / 导出 ----
+  /** 弹打开框选 .json 连接配置文件（取消返回 null） */
+  connBundlePick(): Promise<IpcResult<string | null>>;
+  /** 弹保存框写 UTF-8 JSON（取消返回 null） */
+  connBundleSave(req: { suggestedName: string; text: string }): Promise<IpcResult<string | null>>;
 
   /**
    * W 板块：答复主进程的关闭询问。

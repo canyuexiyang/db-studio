@@ -13,6 +13,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { DataGrid, type GridColumn, type GridForeignKey } from '../grid/DataGrid';
+import type { GridSnapshotSource } from '../grid/exportSnapshot';
 import type { GridDataSource } from '../grid/useGridData';
 import { FilterBar } from '../grid/FilterBar';
 import { HeaderFilterContext, type HeaderFilterBridge, type ColumnFilterMode } from '../grid/headerFilterBridge';
@@ -128,6 +129,22 @@ export interface TablePaneHandlers {
   ) => void;
   /** V13：批量编辑 Discard —— 清掉这批格子的脏标记 */
   onBatchDiscard?: (tabId: string, source: GridDataSource, cells: { row: number; col: number }[]) => void;
+  /**
+   * P1-9 / P2-18a/b：网格的一句话反馈（只读表拒绝编辑、跳转行超界、复制失败…）。
+   *
+   * 网格自己不该持有 toast 状态（它被多个 pane 实例共享），统一上抛给宿主。
+   * 未接线时网格退化为「静默」—— 但所有调用点都在**可观测**的路径上
+   * （用户刚按了键/点了按钮），不会变成无提示的隐蔽失败。
+   */
+  onNotice?: (tabId: string, msg: string) => void;
+  /**
+   * P0-1：导出快照注册口（按 tab）。
+   *
+   * 网格挂载后把「读当前快照」的函数交给宿主，宿主在用户点「导出」时调用它
+   * 拿选区/已加载行/可见列。`null` = 注销（网格卸载 / 数据源变化）。
+   * 未接线 → 导出弹窗的「选区 / 当前已加载」禁用并说明原因（不降级成重查）。
+   */
+  onExportSnapshot?: (tabId: string, get: (() => GridSnapshotSource) | null) => void;
 }
 
 export interface TablePaneProps {
@@ -319,6 +336,15 @@ export function TablePane({
     (column: string, additive: boolean, direction?: SortDirection | null) =>
       handlers.onSortChange(tab.id, tab.sorts, column, additive, direction),
     [handlers, tab.id, tab.sorts],
+  );
+
+  /**
+   * P0-1：把网格的快照取数口绑到本 tab 的 id 上。
+   * 身份必须稳定 —— DataGrid 用它在依赖里注册/注销，每次渲染给新函数会反复重注册。
+   */
+  const handleExportSnapshot = useCallback(
+    (get: (() => GridSnapshotSource) | null) => handlers.onExportSnapshot?.(tab.id, get),
+    [handlers, tab.id],
   );
 
   const handleEdit = useCallback(
@@ -553,6 +579,8 @@ export function TablePane({
           // A15：列宽/显隐/换行的表级记忆键（connId:database:table）
           memoryKey={`${tab.connId}:${tab.database}:${tab.tableName}`}
           onVisibleColumnsChange={onVisibleColumnsChange}
+          // P0-1：导出快照取数口（选区/已加载行/可见列）
+          onExportSnapshot={handlers.onExportSnapshot ? handleExportSnapshot : undefined}
           onSelectionSummary={active ? handleSelectionSummary : undefined}
           // V22：截断提示条。三个数据任一缺失都不影响渲染（网格侧逐项降级），
           // 但 rowLimit 必须与 App 实际请求的 limit 同源，否则「是否还有更多」会算错
@@ -563,6 +591,8 @@ export function TablePane({
           // V19：分组条纹（默认关闭；未接 onToggleGroupStripe 时列头菜单项禁用）
           groupStripeColumn={groupStripeColumn ?? null}
           onToggleGroupStripe={onToggleGroupStripe ? handleToggleGroupStripe : undefined}
+          // P1-9 / P2-18a/b：网格侧的一句话反馈上抛（无 toast 状态，不重复造）
+          onNotice={handlers.onNotice ? (msg) => handlers.onNotice!(tab.id, msg) : undefined}
         />
       ) : null}
     </div>

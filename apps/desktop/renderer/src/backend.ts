@@ -41,6 +41,7 @@ import type {
   ExportStartRequest,
   ImportStartRequest,
   ImportPeekResult,
+  ImportPeekOptions,
   ObjectDdlRequest,
   ObjectDdlResult,
   TableInfoRequest,
@@ -159,7 +160,11 @@ export interface Backend {
   importStart(req: ImportStartRequest): Promise<{ jobId: string }>;
   importCancel(jobId: string): Promise<boolean>;
   importPickPath(): Promise<string | null>;
-  importPeek(filePath: string, maxRows?: number): Promise<ImportPeekResult>;
+  /**
+   * 读文件预览。`opts` 非空 = 用户在向导里改了编码/分隔符，重新解析一遍
+   * （P1-10：探测只是预选，改完要能立刻看到结果）。
+   */
+  importPeek(filePath: string, maxRows?: number, opts?: ImportPeekOptions): Promise<ImportPeekResult>;
   // ---- 运行 SQL 脚本（库/表级别） ----
   scriptStart(req: ScriptStartRequest): Promise<{ jobId: string }>;
   scriptConfirm(jobId: string): Promise<boolean>;
@@ -201,6 +206,11 @@ export interface Backend {
   sqlFileRead(path: string): Promise<SqlFileReadResult>;
   /** 保存 / 另存为；被外部改过且未 force → 返回 conflict=true 且未写盘 */
   sqlFileSave(req: SqlFileSaveRequest): Promise<SqlFileSaveResult>;
+  // ---- P2-18j：连接配置导入 / 导出 ----
+  /** 弹打开框选 .json 连接配置（取消返回 null） */
+  connBundlePick(): Promise<string | null>;
+  /** 弹保存框写 UTF-8 JSON（取消返回 null） */
+  connBundleSave(suggestedName: string, text: string): Promise<string | null>;
   /** 订阅连接状态变化（D1 断线横幅）。返回退订函数 */
   onConnState(cb: (p: { id: string; state: string; lastError?: string | null }) => void): () => void;
   /**
@@ -268,7 +278,7 @@ export const ipcBackend: Backend = {
   importStart: (req) => unwrap(api().importStart(req)),
   importCancel: (jobId) => unwrap(api().importCancel(jobId)),
   importPickPath: () => unwrap(api().importPickPath()),
-  importPeek: (filePath, maxRows) => unwrap(api().importPeek(filePath, maxRows)),
+  importPeek: (filePath, maxRows, opts) => unwrap(api().importPeek(filePath, maxRows, opts)),
   scriptStart: (req) => unwrap(api().scriptStart(req)),
   scriptConfirm: (jobId) => unwrap(api().scriptConfirm(jobId)),
   scriptCancel: (jobId) => unwrap(api().scriptCancel(jobId)),
@@ -292,6 +302,9 @@ export const ipcBackend: Backend = {
   sqlFilePick: () => unwrap(api().sqlFilePick()),
   sqlFileRead: (path) => unwrap(api().sqlFileRead(path)),
   sqlFileSave: (req) => unwrap(api().sqlFileSave(req)),
+  // P2-18j：连接配置的导入/导出（只搬字节，格式校验在渲染层 connectionBundle.ts）
+  connBundlePick: () => unwrap(api().connBundlePick()),
+  connBundleSave: (suggestedName, text) => unwrap(api().connBundleSave({ suggestedName, text })),
   // 推送通道：连接状态（D1 断线横幅的信号源）。
   // ⚠️ 字符串与 ipc-channels.ts 的 EVENT_CONN_STATE_CHANNEL 同值——
   //    渲染层不能 value-import shared 的实现（会把 electron 拖进 bundle），所以这里用字面量
@@ -362,9 +375,17 @@ const demoHistory = (() => {
 
 /**
  * v0.6.0：demo 片段存储（内存）。
- * key = `连接 库 名称`，与主进程 HistoryStore 的「库内唯一」语义对齐。
+ * key = `连接\x00库\x00名称`，与主进程 HistoryStore 的「库内唯一」语义对齐。
  */
 const demoSnippets = new Map<string, Snippet>();
+
+/**
+ * P2-18h：demo 后端的"一次性故障"开关（见 queryRun 里的哨兵说明）。
+ *
+ * 用模块级可变标记而不是请求参数：真实数据库的"这条语句这次失败、下次成功"
+ * 也是服务端状态（比如锁等待/列刚被别人删掉），front 端无从预知。
+ */
+let demoFailUsed = false;
 
 const demoBackend: Backend = {
   kind: 'demo',
@@ -398,6 +419,14 @@ const demoBackend: Backend = {
     const cfg: ConnectionConfig = input.config?.id
       ? { ...input.config }
       : { ...input.config, id: `demo-${Date.now().toString(36)}` };
+    /**
+     * 与主进程的 `stripSecrets()` 对齐：存过密码只回 `''` 占位符。
+     *
+     * 🔴 少了这一步，「已保存」占位在 demo 下永远不出现 —— 而 e2e:ui 恰好跑在
+     *    demo 后端上，P1-8（创建副本沿用密码）的断言会退化成恒假，
+     *    或者反过来把坏实现放过去。demo 可以简化行为，但不能改变契约。
+     */
+    cfg.passwordEnc = input.password ? '' : (input.config.passwordEnc ?? null);
     const idx = DEMO_CONNECTIONS.findIndex((c) => c.id === cfg.id);
     if (idx >= 0) DEMO_CONNECTIONS[idx] = cfg;
     else DEMO_CONNECTIONS.push(cfg);
@@ -489,6 +518,29 @@ const demoBackend: Backend = {
 
   queryRun: async (req) => {
     /**
+     * P2-18h e2e 接缝：**demo 后端没有真库，造不出"第 2 条语句失败"**。
+     *
+     * 「多语句中途失败 → 从失败处继续 / 全部停止」这条链路的危险部分恰好只在
+     * 失败时才走到（续跑的下标、已成功语句是否会被重跑）。不做注入的话，这段
+     * 代码在门禁里永远是"跑不到的行"，只能靠人工点 —— 而人工点不出来
+     * 「第一条失败、第二条成功」这种顺序。
+     *
+     * 所以给 demo 加一个哨兵：SQL 里带 `__dbstudio_demo_fail__` 就抛一次
+     * （`once` 变体只抛第一次，用来验证"继续之后确实能跑完"）。
+     * 只影响纯浏览器 demo；真链路走主进程 mysql，主进程侧没有任何标记逻辑。
+     */
+    const DEMO_FAIL_MARK = '__dbstudio_demo_fail__';
+    const DEMO_FAIL_ONCE_MARK = '__dbstudio_demo_fail_once__';
+    if (req.sql.includes(DEMO_FAIL_MARK) || req.sql.includes(DEMO_FAIL_ONCE_MARK)) {
+      const once = req.sql.includes(DEMO_FAIL_ONCE_MARK) && !demoFailUsed;
+      if (!req.sql.includes(DEMO_FAIL_ONCE_MARK) || once) {
+        demoFailUsed = true;
+        throw new Error(
+          `ER_BAD_FIELD_ERROR: Unknown column '${req.sql.includes(DEMO_FAIL_ONCE_MARK) ? DEMO_FAIL_ONCE_MARK : DEMO_FAIL_MARK}' in 'field list'`,
+        );
+      }
+    }
+    /**
      * 0.7.1：demo 也要按语句类型分流 —— 早先恒返回 2000 行结果集，
      * 于是「执行 UPDATE 应显示已修改 N 行」在 demo 上永远是假绿（永远 2000 行）。
      *
@@ -579,7 +631,14 @@ const demoBackend: Backend = {
   importStart: async () => ({ jobId: `demo-import-${Date.now()}` }),
   importCancel: async () => true,
   importPickPath: async () => null,
-  importPeek: async () => ({ rows: [], delimiter: ',', format: 'csv' as const }),
+  // demo 没有文件系统：按用户选的编码/分隔符回一个空预览（UI 流程照常可走）
+  importPeek: async (_filePath, _maxRows, opts) => ({
+    rows: [],
+    delimiter: opts?.delimiter || ',',
+    format: 'csv' as const,
+    encoding: opts?.encoding ?? ('utf8' as const),
+    bom: false,
+  }),
   // 脚本执行：demo 下没有真库也没有 worker，pickPath 返回 null 走不到 start，
   // 但接口必须齐全 —— 与导入 pickPath 的降级口径一致
   scriptStart: async () => ({ jobId: `demo-script-${Date.now()}` }),
@@ -647,6 +706,18 @@ const demoBackend: Backend = {
   },
   sqlFileSave: async () => {
     throw new Error('浏览器演示模式没有本地文件系统，打开/保存 SQL 文件需要桌面应用环境');
+  },
+  /**
+   * P2-18j：demo 侧同样**明确说做不到**。
+   *
+   * 这里刻意让 pick 抛错而不是返回 null —— null 的语义是"用户取消了"，
+   * 用户点了「导入」却什么都没有发生，是最难自查的那类静默。
+   */
+  connBundlePick: async () => {
+    throw new Error('浏览器演示模式没有本地文件系统，导入连接需要桌面应用环境');
+  },
+  connBundleSave: async () => {
+    throw new Error('浏览器演示模式没有本地文件系统，导出连接需要桌面应用环境');
   },
   onConnState: () => () => {},
   onSchema: () => () => {},

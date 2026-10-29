@@ -9,7 +9,7 @@
  * 逐条可看、不折叠、不做可选绕过（红线本身没有变）。
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ChangeSummary } from '@dbstudio/core-mutation';
 import { fillParams, countPlaceholders } from './fillParams';
 
@@ -23,6 +23,14 @@ export interface SavePreviewModalProps {
     summary?: ChangeSummary;
   }[];
   rejected: { row: number; column: string; reason: string }[];
+  /**
+   * P0-5（审计）：第三层保护 —— 有值时必须**手输这个名字**才能点确认。
+   *
+   * 与删表/DDL 的 `DangerConfirmModal` 对齐：生产环境上的删行、无 WHERE 的批量
+   * 更新，和删表一样不可逆，不该只过普通预览。判定在 `grid/previewGuard.ts`
+   * （纯函数，单测钉住），本弹窗只负责「不匹配就不让点」。
+   */
+  requireText?: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -33,8 +41,21 @@ export { fillParams };
 const thStyle = { textAlign: 'left', fontWeight: 500, color: 'var(--text-dim)', padding: '2px 8px 2px 0' } as const;
 const tdStyle = { padding: '2px 8px 2px 0', verticalAlign: 'top', wordBreak: 'break-all' } as const;
 
-export function SavePreviewModal({ statements, rejected, onCancel, onConfirm }: SavePreviewModalProps) {
+export function SavePreviewModal({
+  statements,
+  rejected,
+  requireText = null,
+  onCancel,
+  onConfirm,
+}: SavePreviewModalProps) {
   const [expandAll, setExpandAll] = useState(false);
+  /** P0-5：第三层输入框的值 + 是否匹配（空串不算匹配，否则等于没有门槛） */
+  const [gateInput, setGateInput] = useState('');
+  const needsGate = requireText != null && requireText !== '';
+  const gateMatched = useMemo(
+    () => !needsGate || gateInput.trim() === requireText,
+    [needsGate, gateInput, requireText],
+  );
   const shown = expandAll ? statements : statements.slice(0, 3);
   /**
    * V10：含 SQL 表达式的语句条数。
@@ -60,6 +81,13 @@ export function SavePreviewModal({ statements, rejected, onCancel, onConfirm }: 
           {rejected.length > 0 ? `（${rejected.length} 处被拒绝）` : ''}
         </header>
         <div className="body">
+          {needsGate ? (
+            <div className="banner warn" data-testid="preview-gate-warning">
+              这是<strong>生产环境</strong>连接，且本批语句包含
+              <strong>删除行 / 无 WHERE 的更新</strong>（执行后无法自动恢复）。
+              请输入表名 <b>{requireText}</b> 才能提交。
+            </div>
+          ) : null}
           {exprCount > 0 ? (
             <div className="banner warn" data-testid="expr-warning">
               其中 {exprCount} 条含 <strong>SQL 表达式</strong>：下面标有 fx 的值会
@@ -186,9 +214,28 @@ export function SavePreviewModal({ statements, rejected, onCancel, onConfirm }: 
           )}
         </div>
         <footer>
+          {needsGate ? (
+            <input
+              className="preview-gate-input"
+              data-testid="preview-gate-input"
+              value={gateInput}
+              placeholder={requireText ?? ''}
+              autoFocus
+              onChange={(e) => setGateInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && gateMatched && statements.length > 0) onConfirm();
+                if (e.key === 'Escape') onCancel();
+              }}
+            />
+          ) : null}
           <button onClick={onCancel}>取消</button>
-          <button className="primary" onClick={onConfirm} disabled={statements.length === 0}>
-            确认执行
+          <button
+            className="primary"
+            onClick={onConfirm}
+            disabled={statements.length === 0 || !gateMatched}
+            data-testid="preview-confirm"
+          >
+            {needsGate ? '确认执行（不可恢复）' : '确认执行'}
           </button>
         </footer>
       </div>

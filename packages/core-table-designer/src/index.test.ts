@@ -11,6 +11,10 @@ import {
   parseDataType,
   typeSupportsLength,
   typeSupportsScale,
+  runAlterStatements,
+  describeAlterFailure,
+  remainingAlterCount,
+  type AlterRunFailure,
   type TableDesign,
   type DesignColumn,
 } from './index.js';
@@ -291,5 +295,85 @@ describe('typeDefaultLength', () => {
     expect(typeDefaultLength('timestamp')).toBe('');
     expect(typeDefaultLength('decimal')).toBe('10');
     expect(typeDefaultLength('bigint')).toBe('');
+  });
+});
+
+/**
+ * P1-12：ALTER 批量执行的失败语义。
+ *
+ * MySQL 的 DDL 隐式提交，一批 ALTER 中途失败时前几条**已经落库**且无法回滚。
+ * 旧实现只 toast 一句错误就完事，用户再点一次保存会把已成功的语句重跑一遍
+ * （ADD COLUMN 重复 → 1060）。下面钉住的就是修复所需的两个事实：
+ *  ① 失败后**不许继续执行**后续语句（否则错误定位会指向后面那条）；
+ *  ② `executed` 必须精确，它是「重拉结构 → 重建 diff」的唯一依据。
+ */
+describe('runAlterStatements（P1-12）', () => {
+  const stmts = [
+    'ALTER TABLE `db`.`t` ADD COLUMN `a` INT',
+    'ALTER TABLE `db`.`t` ADD COLUMN `b` INT',
+    'ALTER TABLE `db`.`t` ADD COLUMN `c` INT',
+  ];
+
+  it('全部成功：executed = 总条数', async () => {
+    const seen: string[] = [];
+    const r = await runAlterStatements(stmts, async (sql) => {
+      seen.push(sql);
+    });
+    expect(r).toEqual({ ok: true, executed: 3, total: 3 });
+    expect(seen).toEqual(stmts);
+  });
+
+  it('🔴 第 2 条失败后立刻停止，第 3 条不许被执行', async () => {
+    const seen: string[] = [];
+    const r = await runAlterStatements(stmts, async (sql, i) => {
+      if (i === 1) throw new Error("Duplicate column name 'b'");
+      seen.push(sql);
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return; // 类型收窄
+    expect(seen).toEqual([stmts[0]]); // 只有第 1 条真的跑了
+    expect(r.failure.executed).toBe(1);
+    expect(r.failure.failedAt).toBe(2); // 1 基序号，给人看的
+    expect(r.failure.total).toBe(3);
+    expect(r.failure.sql).toBe(stmts[1]); // 原文要能回显给用户
+    expect(r.failure.message).toContain('Duplicate column name');
+  });
+
+  it('第一条就失败：executed = 0（结构一行没动）', async () => {
+    const r = await runAlterStatements(stmts, async () => {
+      throw new Error('boom');
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.failure.executed).toBe(0);
+    expect(r.failure.failedAt).toBe(1);
+    expect(remainingAlterCount(r.failure)).toBe(3);
+  });
+
+  it('非 Error 抛出也要有 message（不能变成 undefined 文案）', async () => {
+    const r = await runAlterStatements(['x'], async () => {
+      throw 'table is locked'; // eslint-disable-line no-throw-literal
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.failure.message).toBe('table is locked');
+  });
+
+  it('失败报告同时说清「已执行」与「失败于」', () => {
+    const f: AlterRunFailure = { executed: 2, failedAt: 3, total: 5, sql: 'ALTER ...', message: 'err' };
+    const line = describeAlterFailure(f);
+    expect(line).toContain('已执行 2 条');
+    expect(line).toContain('第 3 条失败');
+    expect(line).toContain('共 5 条');
+    expect(line).toContain('err');
+    // 剩余条数 = 总数 - 已执行（重建 diff 后应正好等于它）
+    expect(remainingAlterCount(f)).toBe(3);
+  });
+
+  it('空语句集：成功且 0 条（不抛也不误报失败）', async () => {
+    const r = await runAlterStatements([], async () => {
+      throw new Error('不该被调用');
+    });
+    expect(r).toEqual({ ok: true, executed: 0, total: 0 });
   });
 });

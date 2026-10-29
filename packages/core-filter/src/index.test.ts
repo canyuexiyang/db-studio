@@ -12,6 +12,7 @@ import {
   nextId,
   parseListInput,
   isConditionComplete,
+  isConditionActive,
   textToParam,
   buildWhere,
   filterByCellValue,
@@ -201,6 +202,9 @@ describe('生效条件数（与 buildWhere 同口径）', () => {
           { id: 'g2', logic: 'OR' as const, join: 'OR' as const, conditions: [cond({ id: 'c9' })] },
         ],
       },
+      // P1-15：全停用的模型同样必须两边一致（否则界面说「筛选 (1)」而数据没变）
+      model([cond({ id: 'c1', enabled: false })]),
+      model([cond({ id: 'c1', enabled: false }), cond({ id: 'c2', enabled: false, column: 'amount' })]),
     ];
     for (const m of cases) {
       const eff = effectiveConditionCount(m);
@@ -208,6 +212,84 @@ describe('生效条件数（与 buildWhere 同口径）', () => {
       // 双向蕴含：任一侧变化而另一侧没跟上，就说明两处判据漂移了
       expect(eff === 0 ? sql === '' : sql !== '').toBe(true);
     }
+  });
+});
+
+describe('临时停用条件（P1-15）', () => {
+  /**
+   * 语义分界（最容易被写错的一条）：
+   *  - **完整性** = 值填够了没有（`isConditionComplete`）
+   *  - **启用性** = 用户是否临时关掉它（`enabled !== false`）
+   *
+   * 停用一条**填得完整**的条件，它在界面上仍然是"填完了"的（不该出现"未填完已跳过"），
+   * 只是不参与 WHERE。若某处用 `isConditionComplete` 当唯一判据，停用就会伪装成漏填。
+   */
+  it('停用不改完整性，只改"是否生效"', () => {
+    const off = cond({ id: 'c1', enabled: false });
+    expect(isConditionComplete(off)).toBe(true); // 值都在
+    expect(isConditionActive(off)).toBe(false); // 但不生效
+    expect(isConditionActive(cond({ id: 'c2' }))).toBe(true); // 缺省 = 启用
+    expect(isConditionActive(cond({ id: 'c3', enabled: true }))).toBe(true);
+    // 停用 + 没填完：仍然不生效（两个条件任一不满足即不生效）
+    expect(isConditionActive(cond({ id: 'c4', enabled: false, column: '' }))).toBe(false);
+  });
+
+  it('停用条件不计入生效数，但计入总行数', () => {
+    const m = model([cond({ id: 'c1' }), cond({ id: 'c2', enabled: false, column: 'amount', operator: 'gt', value: '9' })]);
+    expect(conditionCount(m)).toBe(2);
+    expect(effectiveConditionCount(m)).toBe(1);
+    // 全停用 → 0（工具栏徽标不该亮）
+    expect(effectiveConditionCount(model([cond({ id: 'c1', enabled: false })]))).toBe(0);
+  });
+
+  it('停用条件不进 SQL，其值也不进参数表', () => {
+    const b = buildWhere(
+      model([
+        cond({ id: 'c1' }),
+        cond({ id: 'c2', enabled: false, column: 'amount', operator: 'gt', value: '9' }),
+      ]),
+    );
+    expect(b.sql).toBe('`status` = ?');
+    expect(b.params).toEqual(['paid']); // 若把停用条件也编译进来，这里会多一个 '9'
+    expect(b.preview).not.toContain('amount');
+    expect(b.preview).not.toContain('9');
+  });
+
+  it('组首条件被停用时不留前导连接符（SQL 合法性）', () => {
+    // 老实现按数组下标取 logic，第一条生效后面跟着 'AND `amount` > ?' 就会生成 "AND ..."
+    const b = buildWhere(
+      model([
+        cond({ id: 'c1', enabled: false }),
+        cond({ id: 'c2', column: 'amount', operator: 'gt', value: '9' }),
+      ]),
+    );
+    expect(b.sql).toBe('`amount` > ?');
+    expect(b.sql.startsWith('AND')).toBe(false);
+    expect(b.sql.startsWith('OR')).toBe(false);
+  });
+
+  it('括号只按生效条数决定（一条停用后不该再套括号）', () => {
+    const two = buildWhere(model([cond({ id: 'c1' }), cond({ id: 'c2', column: 'amount', operator: 'gt', value: '9' })]));
+    expect(two.sql).toBe('(`status` = ? AND `amount` > ?)');
+
+    const oneOff = buildWhere(
+      model([
+        cond({ id: 'c1' }),
+        cond({ id: 'c2', column: 'amount', operator: 'gt', value: '9', enabled: false }),
+      ]),
+    );
+    expect(oneOff.sql).toBe('`status` = ?');
+  });
+
+  it('停用跨分组：整组全停用则该组整段消失', () => {
+    const b = buildWhere({
+      groups: [
+        { id: 'g1', logic: 'AND' as const, conditions: [cond({ id: 'c1', enabled: false })] },
+        { id: 'g2', logic: 'AND' as const, join: 'OR' as const, conditions: [cond({ id: 'c2', column: 'amount', operator: 'gt', value: '9' })] },
+      ],
+    });
+    expect(b.sql).toBe('`amount` > ?'); // 不留悬空的 OR
+    expect(b.preview.startsWith('WHERE `amount`')).toBe(true);
   });
 });
 

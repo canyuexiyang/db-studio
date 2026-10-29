@@ -181,6 +181,14 @@ export interface FilterCondition {
   values?: string[];
   /** 分组内连接符（与前一个条件之间）。首个条件的此字段被忽略 */
   logic?: LogicOp;
+  /**
+   * 临时停用（P1-15）。`false` = 不参与 WHERE，但条件行**留在原地**（灰显）。
+   *
+   * 为什么需要它：想对比"加这个条件 / 不加这个条件"的结果时，删掉再加回来
+   * 要重填一遍值和操作符。停用比删除便宜得多。
+   * 缺省（undefined）= 启用 —— 老数据与所有既有构造点不用改。
+   */
+  enabled?: boolean;
 }
 
 /** 一层括号分组（PRD §6.3.3：支持一层括号分组，P1） */
@@ -256,7 +264,7 @@ export function conditionCount(model: FilterModel): number {
  */
 export function effectiveConditionCount(model: FilterModel): number {
   return (model?.groups ?? []).reduce(
-    (n, g) => n + (g.conditions ?? []).filter((c) => isConditionComplete(c)).length,
+    (n, g) => n + (g.conditions ?? []).filter((c) => isConditionActive(c)).length,
     0,
   );
 }
@@ -285,6 +293,17 @@ export function parseListInput(text: string): string[] {
  * 空串对"等于"是合法输入（查空串），但对"为空"之外的大多数操作符没意义 ——
  * 这里不做过度拦截，交给 UI 提示；SQL 侧只保证"结构完整"。
  */
+/**
+ * 条件是否**会进 WHERE**：启用 + 填完整。
+ *
+ * 🔴 `buildWhere` 与 `effectiveConditionCount` 必须共用这一个判据 ——
+ *    两处各写一遍的话，"停用的条件"迟早会在某一边被算进去，
+ *    表现是工具栏说「筛选 (2) 条」而 SQL 预览里只有 1 条。
+ */
+export function isConditionActive(c: FilterCondition): boolean {
+  return c.enabled !== false && isConditionComplete(c);
+}
+
 export function isConditionComplete(c: FilterCondition): boolean {
   if (!c.column) return false;
   if (!needsValue(c.operator)) return true;
@@ -443,7 +462,7 @@ export function buildWhere(model: FilterModel): BuiltWhere {
 
     for (let ci = 0; ci < (g.conditions ?? []).length; ci++) {
       const c = g.conditions[ci];
-      if (!c.column || !isConditionComplete(c)) continue;
+      if (!c.column || !isConditionActive(c)) continue;
 
       const ident = quoteIdentifier(c.column);
       const sql = conditionSql(c, ident, params);
@@ -466,7 +485,7 @@ export function buildWhere(model: FilterModel): BuiltWhere {
     // 多个条件才需要括号；单条件不加括号，避免出现 (a = 1) 这种噪音。
     // 计数必须按"真正生成了 SQL 的条件"算，否则被跳过的半截条件会导致多余括号。
     const effectiveCount = (g.conditions ?? []).filter(
-      (c) => c.column && isConditionComplete(c),
+      (c) => c.column && isConditionActive(c),
     ).length;
     const needsParens = effectiveCount > 1;
 

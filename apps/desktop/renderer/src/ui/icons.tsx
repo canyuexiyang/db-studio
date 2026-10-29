@@ -491,3 +491,23 @@ export function IconBatchEdit({ size = 12 }: IconProps) {
     </svg>
   );
 }
+
+/** 固定标签（P1-7）：一枚图钉，针尖朝下 */
+export function IconPin({ size = 12 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 3h6l-1 5.2 3.4 3.4H6.6L10 8.2 9 3Z" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
+      <path d="M12 11.6V21" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** 行高（P2-18d）：三条疏密不同的横线 */
+export function IconRowHeight({ size = 12 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M20.5 3.6v4M20.5 16.4v4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity="0.6" />
+    </svg>
+  );
+}

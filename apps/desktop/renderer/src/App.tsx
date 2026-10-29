@@ -25,10 +25,20 @@ import { DetailPanel } from './detail/DetailPanel';
 import { CellValueModal, type CellSelection } from './detail/CellValueModal';
 import { FilterBuilder } from './filter/FilterBuilder';
 import { pickBackend, hasIpc, type Backend } from './backend';
+// P1-8：创建副本的命名（重名递增）—— 纯函数，单测钉住
+import { duplicateConnectionName } from './connection/duplicate';
+import {
+  buildConnectionBundle,
+  serializeConnectionBundle,
+  parseConnectionBundle,
+  planConnectionImport,
+} from './connection/connectionBundle';
 import { useWorkspaceTabs, type TableTabState, type WorkspaceTab } from './workspace/useWorkspaceTabs';
 import { WorkspaceTabsBar } from './workspace/WorkspaceTabsBar';
 import { TablePane, type TablePaneHandlers } from './workspace/TablePane';
 import type { GridForeignKey } from './grid/DataGrid';
+// P0-1：导出快照的类型（快照本体由网格产出，App 只做搬运）
+import type { GridSnapshotSource } from './grid/exportSnapshot';
 // V20：列快速定位浮层。开关（⌘F12）由 App 挂 window，组件自身不碰 window
 import { ColumnQuickFinder } from './grid/ColumnQuickFinder';
 // V7 目标库选择：组件很小，静态引入（避免弹窗加载间隙布局塌陷，不进 lazy）
@@ -79,6 +89,12 @@ import { resolveEditability } from './workspace/editability';
 // T46：身份条与工具栏密度 / T47：行数口径（两者都是纯函数，单测钉住）
 import { isCollapsed, resolveIdentity, saveButton, toolbarDensity } from './workspace/identity';
 import { rowCountBasis } from './grid/gridStates';
+// P0-5：生产库删行/无 WHERE UPDATE 的第三层（输表名）判定 —— 纯函数，单测钉住
+import { previewRequiresText } from './grid/previewGuard';
+// P1-11：Toast 分级（ok/warn/error）+ 成功自动消失
+import { inferToastTone, toastAutoDismissMs, toastClass, type ToastTone } from './ui/toastTone';
+// P1-14：⌘K「最近使用」排序的数据来源（与表视图记忆同 key 体系）
+import { loadRecentTables, recordTableUsed, saveRecentTables, tableMemoryKey } from './workspace/recentTables';
 // T38：未保存改动的撤销栈（纯逻辑，单测在 grid/editHistory.test.ts）
 import { EditHistory, applyMetaTo, clearsFor, statesFor, type CellChange, type EditEntry } from './grid/editHistory';
 // T43：表视图记忆（排序 + 筛选，按 连接:库:表）
@@ -571,7 +587,30 @@ export function App() {
    */
   const dirtyGuardRollbackRef = useRef<{ tabId: string; run: () => void } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  /**
+   * P1-11：Toast 三态。
+   *
+   * 原来只有一个 string，成功/失败共用同一块常驻橙色底 —— 用户看不出
+   * 「刚才那下成了还是炸了」。现在带 tone：ok 自动消失、error 常驻但可关，
+   * tone 由文案推断（`inferToastTone`），调用点保持 `setToast(text)` 写法不变；
+   * 需要精确语义时传第二个参数覆盖。
+   */
+  const [toast, setToastState] = useState<{ text: string; tone: ToastTone } | null>(null);
+  const setToast = useCallback((text: string, tone?: ToastTone) => {
+    setToastState({ text, tone: tone ?? inferToastTone(text) });
+  }, []);
+  const dismissToast = useCallback(() => setToastState(null), []);
+  /** ok 类到点自动消失；warn/error 常驻（错误信息是排查现场的唯一线索） */
+  useEffect(() => {
+    if (!toast) return;
+    const ms = toastAutoDismissMs(toast.tone);
+    if (ms === null) return;
+    const timer = window.setTimeout(() => {
+      // 只清自己这条：期间可能有新 toast 顶上来，不能误清
+      setToastState((cur) => (cur === toast ? null : cur));
+    }, ms);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
   /** F5：激活 tab 网格的选中统计（状态栏显示「选中 N 行 / M 格」） */
   const [selectionSummary, setSelectionSummary] = useState<{ rows: number; cells: number } | null>(null);
 
@@ -663,8 +702,19 @@ export function App() {
   const rerender = useCallback(() => touch((v) => v + 1), []);
 
   // ---- 连接编辑器（§6.1）----
-  /** null = 关闭；`'new'` = 新建；ConnectionConfig = 编辑这条 */
-  const [editorState, setEditorState] = useState<'closed' | 'new' | ConnectionConfig>('closed');
+  /**
+   * 编辑器打开态：`'closed'` 关闭 / `'new'` 新建 / 对象 = 预填已有连接。
+   *
+   * 🔴 用判别联合而不是「config + duplicateOf 两个 state」：副本标记必须与预填的
+   *    配置**同生同灭**。分成两个 state 时，任何一条早退路径忘了清标记，下一次
+   *    「编辑连接」就会静默变成「保存副本」—— 用户看到的是"原连接丢了"。
+   *    `duplicateOf` 非空 = P1-8 创建副本（保存走新建 + 密文由主进程从源连接复制）。
+   */
+  type EditorState =
+    | 'closed'
+    | 'new'
+    | { config: ConnectionConfig; duplicateOf: string | null };
+  const [editorState, setEditorState] = useState<EditorState>('closed');
 
   // ---- promptEveryTime 连接的密码弹窗（§6.1.1：每次手动输入密码） ----
   const [pwdPrompt, setPwdPrompt] = useState<ConnectionConfig | null>(null);
@@ -693,7 +743,49 @@ export function App() {
     table: TableMeta | null;
     sql?: string | null;
     columns?: { name: string; dataType: string }[] | null;
+    /**
+     * P0-1：导出时点已经落定的网格快照（目前只有「查询结果导出」从编辑器面板
+     * 直接带过来）。表导出不在这里存 —— 那些入口拿不到网格，快照在渲染弹窗时
+     * 从注册表按标签现取（见 exportSnapshotFor），避免在 5 个入口各写一遍。
+     */
+    snapshot?: GridSnapshotSource | null;
   } | null>(null);
+  /**
+   * P0-1：网格快照注册表（tabId → 读快照）。
+   *
+   * 网格只在**用户点导出那一刻**才被要求物化快照 —— 逐次上报会在拖选时
+   * 每帧解码整张表。注册表用 ref：它不参与渲染，只被导出入口读一次。
+   */
+  const exportSnapshotGetters = useRef(new Map<string, () => GridSnapshotSource>());
+  const registerExportSnapshot = useCallback((tabId: string, get: (() => GridSnapshotSource) | null) => {
+    if (get) exportSnapshotGetters.current.set(tabId, get);
+    else exportSnapshotGetters.current.delete(tabId);
+  }, []);
+  /**
+   * P0-1：这次导出对应的网格快照。
+   *
+   * 三种来源，优先级从高到低：
+   *  ① exportTarget.snapshot —— 查询结果导出，面板在点击那一刻就取了；
+   *  ② 与导出目标同身份的**表标签**（连接 + 库 + 表名三者都对）→ 现取；
+   *  ③ 都没有 → null（树右键导出一张没打开的表），弹窗据此禁用快照选项。
+   * 🔴 这里绝不用「当前激活标签」兜底：导出的可能是树里右键的另一张表，
+   *    拿激活标签的行会导错数据 —— 那是最坏的失败形态（看起来成功）。
+   */
+  const exportSnapshot = useMemo<GridSnapshotSource | null>(() => {
+    if (!exportTarget) return null;
+    if (exportTarget.snapshot) return exportTarget.snapshot;
+    const tab = ws.tabs.find(
+      (t): t is TableTabState =>
+        t.kind === 'table' &&
+        t.connId === exportTarget.connId &&
+        t.database === exportTarget.database &&
+        !!exportTarget.table &&
+        t.tableName === exportTarget.table.name,
+    );
+    if (!tab) return null;
+    const get = exportSnapshotGetters.current.get(tab.id);
+    return get ? get() : null;
+  }, [exportTarget, ws.tabs]);
   const [importTarget, setImportTarget] = useState<{ connId: string; database: string; table: TableMeta } | null>(null);
   /** 运行 SQL 脚本（库/表级别）：connId + 目标库上下文 */
   const [scriptTarget, setScriptTarget] = useState<{ connId: string; database: string } | null>(null);
@@ -773,6 +865,14 @@ export function App() {
     [connections],
   );
 
+  /**
+   * P1-14：最近打开过的表（`connId:db:table` → epoch ms）。
+   *
+   * 命令面板的排序早就支持 lastUsedAt 半衰期加权，但条目从不带这个字段 ——
+   * 能力建了却空转。这里持有镜像；真正的写入在 openTableTabInner 成功路径。
+   */
+  const [recentTables, setRecentTables] = useState<Record<string, number>>(() => loadRecentTables());
+
   /** 打开面板时拉一次片段（demo 后端返回空数组，UI 照常工作） */
   useEffect(() => {
     if (!paletteOpen) return;
@@ -793,14 +893,22 @@ export function App() {
 
   /**
    * 全局危险确认入口。
-   * 两条升第三层（手动输入表名）的路径：
+   *
+   * 🔴 P0-4（审计）：**目标连接必须显式传入**，不再从 `activeTab` 猜。
+   *
+   * 原来的判定是 `activeTab?.connId ?? connections[0]?.id` —— 用的是「当前激活标签」，
+   * 与「这次要操作哪个连接」毫无关系。现状没爆只因为 6 个调用点都显式传了
+   * `requireText`；任何一个新调用点漏传，就会「对生产库不要求输表名」。
+   * 改成必填形参后，漏传是**编译错误**而不是运行时事故。
+   *
+   * 两条升第三层（手动输入表名/库名）的路径：
    *  1. req.requireText 已有值（DROP DATABASE / 设计器删列 / 无 WHERE 的 DELETE）
-   *  2. 当前连接是生产环境（红色标签，colorTag === 'red'）
+   *  2. **本次目标连接**是生产环境（红色标签，colorTag === 'red'）
    */
   const confirmDanger = useCallback(
-    (req: DangerConfirmRequest): Promise<boolean> => {
-      const connId = activeTab?.connId ?? connections[0]?.id;
-      const isProduction = connections.find((c) => c.id === connId)?.colorTag === 'red';
+    (targetConnId: string | null, req: DangerConfirmRequest): Promise<boolean> => {
+      const isProduction =
+        !!targetConnId && connections.find((c) => c.id === targetConnId)?.colorTag === 'red';
       const finalReq: DangerConfirmRequest = isProduction
         ? { ...req, requireText: req.requireText ?? req.title.match(/表\s+(\S+)/)?.[1] ?? null }
         : req;
@@ -809,7 +917,7 @@ export function App() {
         setDangerRequest(finalReq);
       });
     },
-    [activeTab, connections],
+    [connections],
   );
 
   const onDangerResolve = useCallback((confirmed: boolean) => {
@@ -1349,12 +1457,35 @@ export function App() {
        * —— 报告 §10 I18 明确要求「无可靠行定位键时不猜行身份」。
        */
       locate?: { column: string; value: string | null }[],
+      /**
+       * P2-18e：会话恢复专用钩子 —— 建好标签后回报 id，且**不抢焦点**。
+       * 恢复时一次建 N 张表，谁最后加载完谁抢焦点，会把用户关窗时看的那张挤掉。
+       */
+      restore?: { onCreated?: (id: string) => void },
     ) => {
       try {
         const bundle = await backend.schemaGetTable(connId, database, tableName);
         // 🔴 needsLoad 由 openTable 自己算（setTabs 是异步调度，此刻读
         //    tabsRef 拿不到刚建的 tab —— 首开必空白的根因）
-        const { id, needsLoad } = ws.openTable(connId, database, bundle.table);
+        const { id, needsLoad } = ws.openTable(connId, database, bundle.table, {
+          activate: !restore,
+        });
+        restore?.onCreated?.(id);
+
+        /**
+         * P1-14：记录「这张表刚被打开」。
+         *
+         * 🔴 先读盘再写回（不用 setState 的 updater 里写 localStorage）：
+         *    React 严格模式下 updater 会被调用两次，副作用写两遍虽然幂等，
+         *    但把副作用留在 updater 里是坏习惯，且以后改非幂等操作会立刻出事。
+         *    这是冷路径（一次用户点击），多读一次盘无成本。
+         */
+        {
+          const rk = tableMemoryKey(connId, database, tableName);
+          const nextRecent = recordTableUsed(loadRecentTables(), rk, Date.now());
+          saveRecentTables(nextRecent);
+          setRecentTables(nextRecent);
+        }
 
         let filter: FilterModel | null = null;
         let locateNote = '';
@@ -1451,6 +1582,8 @@ export function App() {
   // query 标签带 SQL 原文直接重建；table 标签只存三元组，走 openTableTabInner 重拉
   //（内部自带握手与静默失败 —— 快照里的表可能已被删）。
   const restoredRef = useRef(false);
+  /** P2-18e：恢复中的「目标标签下标 + 各标签新 id」，全部就绪后激活一次 */
+  const restoreActivateRef = useRef<{ idx: number; ids: (string | null)[] } | null>(null);
   useEffect(() => {
     if (restoredRef.current || booting) return;
     restoredRef.current = true;
@@ -1483,15 +1616,55 @@ export function App() {
     const alive = (connId: string) => connections.some((c) => c.id === connId);
     const snapshot = loadSessionSnapshot(alive);
     if (!snapshot) return;
-    for (const t of snapshot.tabs) {
-      if (t.kind === 'query') {
-        ws.newQuery(t.connId ?? connections[0]?.id ?? null, t.database, t.initialSql);
-      } else {
-        void openTableTabInner(t.connId, t.database, t.tableName);
+    /**
+     * P2-18e：恢复后要落回**关闭前正在看**的那个标签。
+     *
+     * 存的是下标（tab id 每次启动都重新生成）。这里把"恢复顺序 → 新 tab id"
+     * 收集起来，table 标签是异步建的（要拉 schema），所以由下面的 effect
+     * 等到全部就绪后统一激活一次 —— 期间 table 标签不抢焦点（activate:false）。
+     *
+     * 🔴 必须**串行**重建（`for` + `await`），不能 forEach 里 `void` 并发：
+     *    table 标签要等 schemaGetTable 回来才真正 `ws.openTable`，而 query 标签
+     *    是同步建的 —— 并发时 query 会先落位，恢复出来的标签顺序就与快照**相反**
+     *    （实测：快照 [表, 查询] → 恢复成 [查询, 表]）。
+     *    那不只是一次视觉漂移：下标语义整个错位，`activeIndex` 会指向另一个标签，
+     *    「落回关闭前的标签」这件事就悄悄失效了。串行的代价是启动时多几次
+     *    本地 schema 往返（≤20 个标签），换来顺序与快照严格一致。
+     */
+    const restoredIds: (string | null)[] = new Array(snapshot.tabs.length).fill(null);
+    restoreActivateRef.current = { idx: snapshot.activeIndex, ids: restoredIds };
+    void (async () => {
+      for (let i = 0; i < snapshot.tabs.length; i++) {
+        const t = snapshot.tabs[i];
+        if (t.kind === 'query') {
+          restoredIds[i] = ws.newQuery(t.connId ?? connections[0]?.id ?? null, t.database, t.initialSql);
+        } else {
+          await openTableTabInner(t.connId, t.database, t.tableName, undefined, {
+            onCreated: (id) => {
+              restoredIds[i] = id;
+            },
+          });
+        }
       }
-    }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booting]);
+
+  /**
+   * P2-18e：恢复的标签全部建好后，把焦点还给「关闭前那个」。
+   *
+   * 只做一次（做完清 ref）—— 否则用户点别的标签会被它反复拽回去。
+   * 目标标签若建失败（表被删 / 拉 schema 报错）就停在当前页，不再强扭。
+   */
+  useEffect(() => {
+    const pending = restoreActivateRef.current;
+    if (!pending) return;
+    if (pending.ids.some((id) => id === null)) return; // 还有 table 标签在建
+    restoreActivateRef.current = null;
+    const target = pending.ids[pending.idx] ?? pending.ids.find((x): x is string => x !== null) ?? null;
+    if (target) ws.activate(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws.tabs]);
 
   // tabs 变化 debounce 落盘；全部关干净时清快照（避免下次恢复出陈旧标签）
   //
@@ -1510,6 +1683,15 @@ export function App() {
     return () => clearTimeout(timer);
   }, [ws.tabs, ws.activeId]);
 
+  /**
+   * P1-16：浏览对象视图开关。
+   *
+   * 关 → 中间面板显示激活标签的内容（默认）；开 → 中间面板显示对象清单，
+   * 标签页整体让位（DOM 不卸载，编辑器实例/滚动位置都留着）。
+   * 默认关：绝大多数操作都在标签里，清单是"找人/找表"时才需要的另一种视角。
+   */
+  const [browseMode, setBrowseMode] = useState(false);
+
   const onOpenObject = useCallback(
     (node: TreeNode) => {
       setActiveKey(node.key);
@@ -1517,6 +1699,8 @@ export function App() {
       // 从 key 反查连接 id：obj:<connId>:<db>:<table>
       const connId = node.key.split(':')[1];
       if (!connId) return;
+      // P1-16：从浏览视图打开表 → 自动切回标签视图，否则"双击没反应"（开着看不见）
+      setBrowseMode(false);
       openTableTab(connId, node.database, node.table.name);
     },
     [openTableTab],
@@ -2588,9 +2772,13 @@ export function App() {
       // V9：外键跳转与候选值
       onFollowForeignKey,
       onLookupForeignKeyValues,
+      // P1-9 / P2-18a/b：网格的一句话反馈（只读拒绝、跳转超界、复制失败…）
+      onNotice: (_tabId, msg) => setToast(msg),
+      // P0-1：导出快照注册（网格挂载时交来「读当前快照」的函数）
+      onExportSnapshot: registerExportSnapshot,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onSortChange, onRequestSave, openTab, sources, ws, onDuplicateRow, onAddBlankRow, onQuickFilter, onPasteRows, onDeleteRows, onBatchEdit, onBatchDiscard, onFollowForeignKey, onLookupForeignKeyValues, readOnlyConns],
+    [onSortChange, onRequestSave, openTab, sources, ws, onDuplicateRow, onAddBlankRow, onQuickFilter, onPasteRows, onDeleteRows, onBatchEdit, onBatchDiscard, onFollowForeignKey, onLookupForeignKeyValues, readOnlyConns, registerExportSnapshot],
   );
 
   /**
@@ -2615,7 +2803,13 @@ export function App() {
   const closeEditor = useCallback(() => setEditorState('closed'), []);
 
   const editorTarget = useMemo(
-    () => (editorState === 'closed' || editorState === 'new' ? null : editorState),
+    () => (typeof editorState === 'object' ? editorState.config : null),
+    [editorState],
+  );
+
+  /** P1-8：非空 = 创建副本模式（保存为一条新连接，密文沿用源连接） */
+  const editorDuplicateOf = useMemo(
+    () => (typeof editorState === 'object' ? editorState.duplicateOf : null),
     [editorState],
   );
 
@@ -2765,7 +2959,7 @@ export function App() {
       const qualified = quoteQualified([database, table.name]);
       const sql = action === 'truncate' ? `TRUNCATE TABLE ${qualified}` : `DROP TABLE ${qualified}`;
       const isProduction = connections.find((c) => c.id === connId)?.colorTag === 'red';
-      const confirmed = await confirmDanger({
+      const confirmed = await confirmDanger(connId, {
         title: isProduction ? '生产环境危险操作' : action === 'drop' ? '删除表' : '清空表',
         statements: [sql],
         reason:
@@ -2843,7 +3037,15 @@ export function App() {
       const anyProduction = targets.some(
      (t) => connections.find((c) => c.id === t.connId)?.colorTag === 'red',
       );
-    const confirmed = await confirmDanger({
+      /**
+       * P0-4：批量删除跨连接，但判定必须落在**一个真实的目标连接**上 ——
+       * 有生产连接就传它（这样 isProduction 才会为真、第三层不会被绕过），
+       * 否则传第一个目标。不能传 activeTab（可能是完全无关的连接）。
+       */
+      const dangerConnId =
+        targets.find((t) => connections.find((c) => c.id === t.connId)?.colorTag === 'red')?.connId ??
+        targets[0].connId;
+    const confirmed = await confirmDanger(dangerConnId, {
     title: anyProduction ? '生产环境危险操作' : '批量删除表',
         statements,
         reason: `将删除 ${targets.length} 张表（表结构与全部数据），无法自动恢复`,
@@ -3033,6 +3235,96 @@ export function App() {
   );
 
   /**
+   * P2-18j：导出全部连接配置。
+   *
+   * 🔴 文案里必须写明「不含密码」。用户拿到这个文件是要放进网盘/发给同事的，
+   *    如果界面上只写「已导出 3 条连接」，他会合理地以为密码也在里面，
+   *    于是下次换机导入后一脸茫然地连不上 —— 或者在群里说"密码在文件里"。
+   */
+  const onExportConnections = useCallback(async () => {
+    if (connections.length === 0) {
+      setToast('没有可导出的连接');
+      return;
+    }
+    const text = serializeConnectionBundle(buildConnectionBundle(connections, Date.now()));
+    const stamp = new Date().toISOString().slice(0, 10);
+    try {
+      const path = await backend.connBundleSave(`dbstudio-connections-${stamp}.json`, text);
+      if (!path) return; // 用户取消：静默（用户自己知道点了取消）
+      setToast(`已导出 ${connections.length} 条连接（不含密码，导入后需重输）：${path}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setToast(`导出连接配置失败：${msg}`);
+    }
+  }, [connections, setToast]);
+
+  /**
+   * P2-18j：导入连接配置。
+   *
+   * 三处必须如实回报的地方：
+   *  ① 文件不合法 → 报**解析器给的中文原因**（哪一条缺什么），不是"导入失败"；
+   *  ② 重名被改名 → 报出「原名 → 新名」，否则用户按名字找不到刚导入的连接；
+   *  ③ 导入的连接一律没有密码 → 说清"首次连接需重输"。
+   * 中途某条保存失败 → **不静默续跑**，直接报出已完成条数（与 ALTER 失败同口径）。
+   */
+  const onImportConnections = useCallback(async () => {
+    let path: string | null = null;
+    try {
+      path = await backend.connBundlePick();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setToast(`导入连接需要桌面应用环境：${msg}`);
+      return;
+    }
+    if (!path) return; // 取消
+    try {
+      // 复用 SQL 文件的读取实现：它在主进程做了编码探测（GBK/UTF-8/BOM），
+      // 手工改过的配置常常是 GBK —— 自己用 fs.readFile('utf8') 会读成乱码再报 JSON 解析失败
+      const file = await backend.sqlFileRead(path);
+      const parsed = parseConnectionBundle(file.text);
+      if (!parsed.ok) {
+        setToast(`导入失败：${parsed.reason}`);
+        return;
+      }
+      if (parsed.bundle.connections.length === 0) {
+        setToast('该文件里没有任何连接配置');
+        return;
+      }
+      const plan = planConnectionImport(parsed.bundle, connections);
+      let done = 0;
+      for (const config of plan.toCreate) {
+        try {
+          /**
+           * 🔴 `promptEveryTime` 必须放在**顶层入参**，不能只写在 config 里。
+           * 主进程的 ConnectionStore.save() 只看 `input.promptEveryTime`：
+           * config 里那个字段会先被 normalize 掉，然后密文来源落到
+           * `prevFields`（新建 = 没有密文 + promptEveryTime:false）→ 校验器直接拒绝
+           * 「未保存密码且未勾选每次手动输入」。只传 config 的话，导入**必然全条失败**。
+           */
+          await backend.connSave({ config, promptEveryTime: true });
+          done += 1;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          await reloadConnections();
+          setToast(`导入中断：已保存 ${done} / ${plan.toCreate.length} 条，第 ${done + 1} 条（${config.name}）失败：${msg}`);
+          return;
+        }
+      }
+      await reloadConnections();
+      const renamed = plan.renamed.length
+        ? `；${plan.renamed.length} 条重名已改名：${plan.renamed
+            .slice(0, 3)
+            .map((r) => `${r.from} → ${r.to}`)
+            .join('、')}${plan.renamed.length > 3 ? ' 等' : ''}`
+        : '';
+      setToast(`已导入 ${done} 条连接${renamed}。密码未随文件带过来，首次连接时需重新输入`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setToast(`导入连接配置失败：${msg}`);
+    }
+  }, [connections, reloadConnections, setToast]);
+
+  /**
    * 树节点右键菜单（Navicat 式，按级别出操作）。
    * 右键同时选中该节点 —— 与 Navicat 行为一致，且保证后续动作的上下文可预期。
    */
@@ -3071,7 +3363,24 @@ export function App() {
           onToggleConnectionNode(cfg, live),
         );
         push('newquery', '新建查询', <IconTerminal size={12} />, () => ws.newQuery(cfg.id, null));
-        push('edit', '编辑连接…', <IconGear size={12} />, () => setEditorState(cfg));
+        push('edit', '编辑连接…', <IconGear size={12} />, () =>
+          setEditorState({ config: cfg, duplicateOf: null }),
+        );
+        /**
+         * P1-8：创建副本。
+         *
+         * 预填**除密码外的全部字段**（密码是 safeStorage 密文，渲染层根本读不出来）；
+         * 名字自动加「副本」并做重名递增。保存时走「新建」并把源连接 id 告诉主进程，
+         * 由它把密文按字节复制过来 —— 副本因此不需要用户重输密码。
+         * 🔴 默认库/分组/颜色/只读/SSH/SSL/空闲超时全部照抄，否则"副本"就只是
+         *    一个地址对得上的空壳。
+         */
+        push('duplicate', '创建副本…', <IconCopy size={12} />, () =>
+          setEditorState({
+            config: { ...cfg, name: duplicateConnectionName(cfg.name, connections.map((c) => c.name)) },
+            duplicateOf: cfg.id,
+          }),
+        );
         // V7：连接级「运行 SQL 脚本…」入口 —— 先弹目标库选择（连接可能挂多个库）
         push('runscript', '运行 SQL 脚本…', <IconFileCode size={12} />, () =>
           void openConnScriptPick(cfg.id, cfg.name),
@@ -3087,6 +3396,12 @@ export function App() {
           ),
         );
         push('refresh', '刷新表结构', <IconRefresh size={12} />, () => void onRefreshConnSchema(cfg.id));
+        // P2-18j：连接配置的搬迁入口。放在连接级（而不是全局设置里）——
+        // 用户想到"备份连接"时，手就在某个连接上。
+        push('exportconns', '导出全部连接…', <IconExport size={12} />, () => void onExportConnections(), {
+          separatorBefore: true,
+        });
+        push('importconns', '导入连接…', <IconImport size={12} />, () => void onImportConnections());
         push('delete', '删除连接…', <IconXSmall size={12} />, () => void onDeleteConnection(cfg), {
           danger: true,
           separatorBefore: true,
@@ -3202,7 +3517,7 @@ if (table.kind === 'table') {
 
       if (items.length > 0) setCtxMenu({ x, y, title: node.label, items });
     },
-    [connStates, connections, onToggleConnectionNode, onDeleteConnection, onRefreshConnSchema, onOpenObject, ws, copyText, onTableDestructive, openScriptModal, openConnScriptPick, treeSelection, resolveSelectedTables, dropSelectedTables],
+    [connStates, connections, onToggleConnectionNode, onDeleteConnection, onRefreshConnSchema, onOpenObject, ws, copyText, onTableDestructive, openScriptModal, openConnScriptPick, treeSelection, resolveSelectedTables, dropSelectedTables, onExportConnections, onImportConnections],
   );
 
   /** 树空白区右键：新建连接 */
@@ -3244,7 +3559,7 @@ if (table.kind === 'table') {
       if (danger.level !== 'none') {
         const connId = req.connId || sqlConnId;
         const isProduction = connections.find((c) => c.id === connId)?.colorTag === 'red';
-        const confirmed = await confirmDanger({
+        const confirmed = await confirmDanger(connId, {
           title: isProduction ? '生产环境危险操作' : '危险操作确认',
           statements: danger.statements.length > 0 ? danger.statements : [req.sql],
           reason: danger.reason,
@@ -3367,6 +3682,22 @@ if (table.kind === 'table') {
       } else if (k === 'w' && !e.shiftKey) {
         if (ws.activeId) requestCloseTab(ws.activeId); // ⌘W 关闭当前标签
         e.preventDefault();
+      } else if (k === 'f' && e.shiftKey) {
+        /**
+         * P1-15：⌘⇧F 打开筛选。
+         *
+         * 键位在 `action-catalog` 里早就给了 `filter`（⇧⌘F，原生菜单也认），
+         * 但**页面这一层从来没接** —— 纯浏览器 demo（无菜单）按下去毫无反应；
+         * 真机上菜单拦走了事件，所以只有 demo 路径是哑的。审计把它列成
+         * 「筛选器无直接快捷键」，指的就是这条断链。
+         *
+         * 只在表标签下生效：没有表就没有可筛的对象，此时直接吞掉键、
+         * 不弹一个空面板（openFilter 需要 openTab 才能种子化草稿）。
+         */
+        if (openTab) {
+          openFilter();
+          e.preventDefault();
+        }
       } else if (k === '[' && e.shiftKey) {
         ws.cycle(-1);
         e.preventDefault();
@@ -3387,7 +3718,7 @@ if (table.kind === 'table') {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newQueryTab, requestCloseTab, ws, requestSaveActive, openColumnFinder]);
+  }, [newQueryTab, requestCloseTab, ws, requestSaveActive, openColumnFinder, openFilter, openTab]);
 
   // ---- 命令面板候选项 ----
   const paletteItems: PaletteItem[] = useMemo(() => {
@@ -3400,6 +3731,8 @@ if (table.kind === 'table') {
             title: t.name,
             subtitle: `${db.name}`,
             badge: t.kind === 'view' ? '视图' : '表',
+            // P1-14：带上「最近使用」时间，排序才会把常看的表排前面
+            lastUsedAt: recentTables[`${connId}:${db.name}:${t.name}`],
           });
         }
       }
@@ -3445,7 +3778,7 @@ if (table.kind === 'table') {
     );
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schemas, paletteOpen, openTab, groupStripeByTab]);
+  }, [schemas, paletteOpen, openTab, groupStripeByTab, recentTables]);
 
   /**
    * V19：命令面板里的「按列分组着色」开关 —— 作用于【当前列】。
@@ -3606,6 +3939,15 @@ if (table.kind === 'table') {
       else if (action === 'fontZoomIn') zoomStep('in');
       else if (action === 'fontZoomOut') zoomStep('out');
       else if (action === 'fontZoomReset') zoomStep('reset');
+      /**
+       * P1-15：命令面板的「筛选当前表」。
+       * 与 ⌘⇧F / 原生菜单 / 工具栏按钮同一个 `openFilter` —— 不另写一套种子逻辑；
+       * 没表标签时明确说一句，而不是静默无反应（V4「假命令治理」的口径）。
+       */
+      else if (action === 'filter') {
+        if (openTab) openFilter();
+        else setToast('筛选需要先打开一张表标签');
+      }
       else if (action.startsWith('snippet:')) {
         // T04/R06：按 (connectionId, database, name) 精确回查同名片段
         const s = findSnippetByAction(snippets, action);
@@ -3617,7 +3959,7 @@ if (table.kind === 'table') {
         setToast(s.database ? `已插入片段：${s.name}（${s.database}）` : `已插入片段：${s.name}`);
       } else setToast(`执行命令：${action}`);
     },
-    [openSql, cycleTheme, snippets, fillSqlToEditor, zoomStep, refreshCurrent, toggleReadOnlyCurrent, checkUpdate, openCurrentInNewWindow],
+    [openSql, cycleTheme, snippets, fillSqlToEditor, zoomStep, refreshCurrent, toggleReadOnlyCurrent, checkUpdate, openCurrentInNewWindow, openFilter, openTab],
   );
 
   // ---- F1 原生菜单命令订阅 ----
@@ -3847,6 +4189,35 @@ if (table.kind === 'table') {
     return s === 'disconnected' || s === 'closed' || s === 'failed';
   };
   const tableTabs = ws.tabs.filter((t): t is TableTabState => t.kind === 'table');
+  /** P2-18f：connId → 连接名（标签条用它给同名表加区分标识） */
+  const connNameById = useMemo(
+    () => Object.fromEntries(connections.map((c) => [c.id, c.name])),
+    [connections],
+  );
+  /**
+   * P0-4：设计器的目标连接（危险确认必须用它，不能用 activeTab）。
+   * 三重兜底：显式带 connId → 激活表标签的连接 → 含该库的第一个连接。
+   */
+  const designerConnId =
+    designer?.connId ??
+    openTab?.connId ??
+    (designer
+      ? connections.find((c) => (schemas[c.id] ?? []).some((d) => d.name === designer.database))?.id
+      : undefined) ??
+    '';
+
+  /**
+   * P0-5：这次保存预演是否需要「输表名」第三层。
+   * 生产连接 + 删行/无 WHERE 更新 → 表名；否则 null（普通预览）。
+   */
+  const previewGateText = useMemo(() => {
+    if (!preview) return null;
+    const t = ws.getTable(preview.tabId);
+    if (!t) return null;
+    const isProduction = connections.find((c) => c.id === t.connId)?.colorTag === 'red';
+    return previewRequiresText(preview.statements, { isProduction, tableName: t.tableName });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview, ws, connections]);
 
   return (
     <div
@@ -3885,6 +4256,15 @@ if (table.kind === 'table') {
             <button className="sidebar-btn wide" onClick={() => setEditorState('new')}>
               新建连接
             </button>
+            {/* P2-18j：换新机时第一个动作往往不是"新建"而是"把旧机器的搬过来" ——
+                所以导入入口必须出现在空态里，不能只藏在右键菜单（没有连接可右键） */}
+            <button
+              className="sidebar-btn wide"
+              data-testid="btn-import-connections"
+              onClick={() => void onImportConnections()}
+            >
+              导入连接…
+            </button>
           </div>
         ) : (
           <TreeView
@@ -3903,7 +4283,7 @@ if (table.kind === 'table') {
             onOpenTableRef={onOpenTableRef}
             connStates={connStates}
             onToggleConnection={onToggleConnectionNode}
-            onEditConnection={(cfg) => setEditorState(cfg)}
+            onEditConnection={(cfg) => setEditorState({ config: cfg, duplicateOf: null })}
             onDeleteConnection={(cfg) => void onDeleteConnection(cfg)}
             onNodeContextMenu={openNodeMenu}
             onBackgroundContextMenu={openTreeBackgroundMenu}
@@ -3953,6 +4333,19 @@ if (table.kind === 'table') {
             setExpanded((prev) => expandAncestors(prev, treeRoots, key));
           }}
           onToast={setToast}
+          // P1-7：拖拽排序 / 固定（顺序与固定标记都归 ws，App 不持有第二份）
+          onMoveTab={ws.moveTab}
+          onTogglePin={ws.togglePin}
+          // P2-18f：同名表标签用连接名区分
+          connLabels={connNameById}
+          // P1-16：浏览对象视图开关（中间面板与标签页二选一显示）
+          browseToggle={{
+            active: browseMode,
+            onToggle: () => setBrowseMode((v) => !v),
+            // 没有连接时清单必然是空的，开关没有意义 —— 直接禁用并说明原因
+            disabled: connections.length === 0,
+            disabledReason: '还没有连接：连上数据库后才能浏览对象',
+          }}
         />
 
         <div className="toolbar" ref={toolbarRef} data-density={density} data-more={moreOpen ? '1' : '0'}>
@@ -4019,7 +4412,12 @@ if (table.kind === 'table') {
                 <IconRefresh size={11} />
                 刷新数据
               </button>
-              <button onClick={openFilter} data-testid="btn-filter">
+              <button
+                onClick={openFilter}
+                data-testid="btn-filter"
+                // P1-15：把键位写在 tooltip 上 —— 键位存在但没人知道等于不存在
+                title="筛选：按列加条件，可临时停用某条（⌘⇧F）"
+              >
                 <IconFilter size={11} />
                 筛选{filterCount > 0 ? ` (${filterCount})` : ''}
               </button>
@@ -4174,11 +4572,12 @@ if (table.kind === 'table') {
         </div>
 
         {/* 🔴 所有 pane 常挂 DOM，靠 .hidden 隐藏 —— 保留编辑器实例 / 脏标记 / 滚动位置 */}
+        {/* P1-16：浏览对象视图接管中间面板时，pane 整体让位（DOM 仍在，只是不显示） */}
         {tableTabs.map((t) => (
           <TablePane
             key={t.id}
             tab={t}
-            active={ws.activeId === t.id}
+            active={!browseMode && ws.activeId === t.id}
             source={sources.get(t.id) ?? null}
             rowHeightMode={rowHeightMode}
             handlers={tablePaneHandlers}
@@ -4211,7 +4610,7 @@ if (table.kind === 'table') {
           t.kind === 'query' ? (
             <div
               key={t.id}
-              className={`ws-tab-pane${ws.activeId === t.id ? '' : ' hidden'}`}
+              className={`ws-tab-pane${!browseMode && ws.activeId === t.id ? '' : ' hidden'}`}
               data-testid={`pane-${t.id}`}
               data-tab-id={t.id}
             >
@@ -4243,6 +4642,8 @@ if (table.kind === 'table') {
                       table: null,
                       sql: req.sql,
                       columns: req.columns,
+                      // P0-1：结果网格的选区/已加载行（快照范围用），点击那一刻取的
+                      snapshot: req.snapshot,
                     });
                   }}
                   // A12/T39：单表 SELECT 结果 → 打开**源表**（文案不再暗示继承查询条件）；
@@ -4256,7 +4657,7 @@ if (table.kind === 'table') {
           ) : null,
         )}
 
-        {ws.tabs.length === 0 ? (
+        {browseMode || ws.tabs.length === 0 ? (
           connections.length > 0 ? (
             /**
              * v0.6.0：中间面板跟随左侧树（用户拍板：空态时显示对象清单）。
@@ -4286,15 +4687,35 @@ if (table.kind === 'table') {
         ) : null}
 
         {toast ? (
+          /**
+           * P1-11：分级 toast。
+           *  - ok：绿色、3.5s 自动消失（成功不需要用户确认）
+           *  - warn / error：常驻 + ✕ 手动关闭（错误是排查现场的唯一线索）
+           * 点正文仍复制全文（V 系列保留的亮点）。
+           */
           <div
-            className="banner shell-banner"
+            className={toastClass(toast.tone)}
+            data-testid="toast"
+            data-tone={toast.tone}
             title="点击复制错误信息"
             onClick={() => {
-              void navigator.clipboard?.writeText(toast).catch(() => undefined);
-              setToast('已复制错误信息到剪贴板');
+              void navigator.clipboard?.writeText(toast.text).catch(() => undefined);
+              setToast('已复制错误信息到剪贴板', 'ok');
             }}
           >
-            {toast}
+            <span className="toast-text">{toast.text}</span>
+            <button
+              type="button"
+              className="toast-close"
+              data-testid="toast-close"
+              title="关闭提示"
+              onClick={(e) => {
+                e.stopPropagation();
+                dismissToast();
+              }}
+            >
+              <IconXSmall size={10} />
+            </button>
           </div>
         ) : null}
 
@@ -4453,6 +4874,7 @@ if (table.kind === 'table') {
         <SavePreviewModal
           statements={preview.statements}
           rejected={preview.rejected}
+          requireText={previewGateText}
           onCancel={() => {
             // T01：预演被取消 = 保存没发生，把守卫登记的回滚补上（列头/筛选退回原样）
             dirtyGuardRollbackRef.current?.run();
@@ -4543,6 +4965,8 @@ if (table.kind === 'table') {
         <Suspense fallback={<div className="sql-loading">连接编辑器载入中…</div>}>
           <ConnectionEditor
             editing={editorTarget}
+            /* P1-8：非空 = 创建副本（保存为新建 + 密文沿用源连接） */
+            duplicateOf={editorDuplicateOf}
             onCancel={closeEditor}
             onSave={onSaveConnection}
             onTest={onTestConnection}
@@ -4564,6 +4988,8 @@ if (table.kind === 'table') {
             table={exportTarget.table}
             sql={exportTarget.sql ?? null}
             columns={exportTarget.columns ?? null}
+            /* P0-1：选区 / 当前已加载 / 仅可见列 都靠这只快照源；null = 没有网格上下文 */
+            snapshot={exportSnapshot}
             /* 树右键导出的表可能未在网格打开（无筛选状态）；当前表 tab 正好是它时带筛选 */
             filter={
               openTab &&
@@ -4634,7 +5060,7 @@ if (table.kind === 'table') {
             onClose={() => setScriptTarget(null)}
             onToast={setToast}
             onFinished={() => onScriptFinished(scriptTarget.connId)}
-            confirmDanger={confirmDanger}
+            confirmDanger={(req) => confirmDanger(scriptTarget.connId, req)}
           />
         </Suspense>
       ) : null}
@@ -4643,14 +5069,14 @@ if (table.kind === 'table') {
         <Suspense fallback={<div className="sql-loading">设计器载入中…</div>}>
           <TableDesigner
             backend={backend}
-            connId={designer.connId ?? openTab?.connId ?? connections.find((c) => (schemas[c.id] ?? []).some((d) => d.name === designer.database))?.id ?? ''}
+            connId={designerConnId}
             database={designer.database}
             existingTable={designer.table}
             databases={Object.values(schemas).flat()}
             onClose={() => setDesigner(null)}
             onToast={setToast}
             confirmDanger={(opts) =>
-              confirmDanger({
+              confirmDanger(designerConnId || null, {
                 title: opts.title,
                 statements: opts.statements,
                 reason: '表结构变更将立即生效，删除的列/主键数据无法自动恢复',
@@ -4660,13 +5086,10 @@ if (table.kind === 'table') {
               })
             }
             onSaved={() => {
-              const connId =
-                openTab?.connId ??
-                connections.find((c) => (schemas[c.id] ?? []).some((d) => d.name === designer.database))?.id;
-              if (connId) {
+              if (designerConnId) {
                 void backend
-                  .schemaRefresh(connId)
-                  .then((dbs) => setSchemas((prev) => ({ ...prev, [connId]: dbs })))
+                  .schemaRefresh(designerConnId)
+                  .then((dbs) => setSchemas((prev) => ({ ...prev, [designerConnId]: dbs })))
                   .catch(() => undefined);
               }
             }}

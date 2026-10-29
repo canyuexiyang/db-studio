@@ -241,3 +241,76 @@ describe('loadSessionSnapshot / saveSessionSnapshot / clearSessionSnapshot', () 
     expect(loadSessionSnapshot()).toBeNull();
   });
 });
+
+/**
+ * P2-18e：恢复后要落回关闭前正在看的那个标签。
+ *
+ * 存的是**下标**不是 id（tab id 每次启动重新生成，旧 id 必然失效）。
+ * 这里的断言分两半：
+ *  1. 序列化时能算出正确的 activeIndex（含"激活项在第 20 个之后"的退化）；
+ *  2. 恢复时，被筛掉的标签（连接已删）会让下标错位 —— 必须换算，不能直接照搬。
+ */
+describe('P2-18e：activeIndex 会话恢复', () => {
+  it('记录激活标签的下标', () => {
+    const tabs = [tableTab({ id: 't1' }), queryTab({ id: 'q2' }), tableTab({ id: 't3', tableName: 'orders' })];
+    expect(serializeSession(tabs, 'q2').activeIndex).toBe(1);
+    expect(serializeSession(tabs, 't3').activeIndex).toBe(2);
+  });
+
+  it('activeId 已失效 / 为 null → 落到 0（不产生越界下标）', () => {
+    const tabs = [tableTab({ id: 't1' }), queryTab({ id: 'q2' })];
+    expect(serializeSession(tabs, null).activeIndex).toBe(0);
+    expect(serializeSession(tabs, 'gone').activeIndex).toBe(0);
+  });
+
+  it('激活项在第 20 个之后 → 退化到 0（那个标签根本不会被恢复）', () => {
+    const tabs = Array.from({ length: SESSION_MAX_TABS + 3 }, (_, i) => queryTab({ id: `q${i}` }));
+    const snap = serializeSession(tabs, `q${SESSION_MAX_TABS + 2}`);
+    expect(snap.tabs).toHaveLength(SESSION_MAX_TABS);
+    expect(snap.activeIndex).toBe(0);
+  });
+
+  it('读回时 activeIndex 原样保留', () => {
+    const snap = serializeSession([tableTab({ id: 't1' }), queryTab({ id: 'q2' })], 'q2');
+    saveSessionSnapshot(snap);
+    expect(loadSessionSnapshot()?.activeIndex).toBe(1);
+  });
+
+  it('🔴 前面的标签因连接已删被筛掉 → 下标要跟着换算（否则会激活错的标签）', () => {
+    // 三个标签，第一个指向已删除的 conn-x；激活的是最后一个（原下标 2）
+    const snap = serializeSession(
+      [
+        tableTab({ id: 't1', connId: 'conn-x' }),
+        queryTab({ id: 'q2' }),
+        tableTab({ id: 't3', tableName: 'orders' }),
+      ],
+      't3',
+    );
+    expect(snap.activeIndex).toBe(2);
+    saveSessionSnapshot(snap);
+
+    const loaded = loadSessionSnapshot((id) => id !== 'conn-x');
+    expect(loaded?.tabs).toHaveLength(2);
+    // 原下标 2 在过滤后的列表里是 1 —— 照搬 2 会越界，退到 0 则会激活错误的标签
+    expect(loaded?.activeIndex).toBe(1);
+  });
+
+  it('激活的那个标签本身被筛掉 → 退到 0（总有标签可见）', () => {
+    const snap = serializeSession(
+      [queryTab({ id: 'q1' }), tableTab({ id: 't2', connId: 'conn-x' })],
+      't2',
+    );
+    saveSessionSnapshot(snap);
+    const loaded = loadSessionSnapshot((id) => id !== 'conn-x');
+    expect(loaded?.tabs).toHaveLength(1);
+    expect(loaded?.activeIndex).toBe(0);
+  });
+
+  it('旧快照没有 activeIndex 字段 → 0（向后兼容，不炸）', () => {
+    store!.set(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({ version: 1, savedAt: 1, tabs: [{ kind: 'query', connId: 'conn-1', database: 'shop', initialSql: 'SELECT 1' }] }),
+    );
+    expect(loadSessionSnapshot()?.activeIndex).toBe(0);
+  });
+});

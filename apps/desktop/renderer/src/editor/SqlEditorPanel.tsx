@@ -36,6 +36,7 @@ import {
   type SqlStatementSpan,
 } from '@dbstudio/core-sql-editor';
 import { DataGrid, type GridColumn } from '../grid/DataGrid';
+import type { GridSnapshotSource } from '../grid/exportSnapshot';
 import { useGridDataSource } from '../grid/useGridData';
 import { IconX, IconSave, IconExport, IconBraces, IconStarFilled, IconFolder, IconRun, IconStop, IconInfo } from '../ui/icons';
 // T33：值查看器**只调用不改**（detail/ 归别的并行任务）
@@ -181,6 +182,12 @@ export interface SqlEditorPanelProps {
     sql: string;
     database: string | null;
     columns: { name: string; dataType: string }[];
+    /**
+     * P0-1：结果网格快照（选区/已加载行/可见列）。
+     * null = 网格还没挂上（无结果集 / 面板未接线）→ 导出弹窗据此禁用
+     * 「选区」「当前已加载」，而不是偷偷改成重查。
+     */
+    snapshot: GridSnapshotSource | null;
   }) => void;
   /**
    * A12 / T39：结果集来自单表 SELECT 时提供「打开源表」入口。
@@ -338,13 +345,15 @@ function writeExplainMode(injectorKey: string | undefined, mode: ExplainViewMode
 // ---------- B6 语句偏移定位 ----------
 
 /**
- * 计算执行目标里每条语句在【编辑器文档】中的偏移区间。
+ * 计算「执行当前语句 / 执行选中」在【编辑器文档】中的偏移区间。
+ *
+ * ⚠️ 「执行全部」（⌘R）**不**走这里 —— 它按整篇 `splitStatements(docText)` 跑，
+ *    见 `execute` 里的说明。这个函数只服务"单条"语义。
  *
  * splitStatements 返回的偏移是相对入参文本的，两种情况要换算：
  *  - 选中执行：入参是选区切片（resolveExecution 还 trim 过），把基准挪到切片起点；
  *    一段选区可以含多条语句 → 返回多条 span
- *  - 非选中执行：目标是单条语句，直接复用 statementAt 的定位口径
- *    （⌘R 无选中 → 偏移基准 0；「执行选中」但选区塌陷 → 光标处），
+ *  - 光标执行：目标是单条语句，直接复用 statementAt 的定位口径，
  *    找不到精确匹配时按语句原文兜底找第一条相同文本
  */
 function statementOffsets(
@@ -417,6 +426,26 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
     single: RunResultText | null;
   } | null>(null);
   /**
+   * P2-18h：多语句执行**中途失败后待续跑的那一批**。
+   *
+   * 旧行为：第 k 条失败 → 循环 break → 只把失败语句丢进结果区，剩下的静默丢弃。
+   * 而前 k-1 条**已经写进库里了**（DML 无隐式事务），用户要么自己删掉重写整段
+   * 再跑一遍（前 k-1 条会被重复执行），要么手工删掉前 k-1 条语句再跑剩下的。
+   * 两条路都很容易造成重复写入 —— 所以必须给「从失败处继续 / 全部停止」。
+   *
+   * 存的是**这一批的完整上下文**（spans + 起点 + 连接/库 + 时间戳），
+   * 因为继续执行时编辑器里的文本可能已经被用户改过 —— 只能按原来的语句列表跑。
+   */
+  const [interrupted, setInterrupted] = useState<{
+    spans: SqlStatementSpan[];
+    /** 失败语句的下标 = 续跑起点（失败那条要重跑，它没生效） */
+    from: number;
+    connId: string;
+    database: string | null;
+    /** T42 来源时间：同一批语句共用一个 */
+    producedAt: number;
+  } | null>(null);
+  /**
    * S1：编辑器内右键菜单状态；null = 不显示。
    *
    * T28：菜单项是否可用必须与**打开菜单那一刻**的编辑器状态一致 ——
@@ -472,6 +501,14 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
   /** T41：fileState 的 ref 镜像 —— 防抖回调（deps 为空）里要读最新值 */
   const fileStateRef = useRef(fileState);
   fileStateRef.current = fileState;
+  /**
+   * P0-1：当前激活结果网格的「读快照」函数。
+   *
+   * 结果网格只渲染激活页签，所以一个 ref 就够（切换页签时旧网格卸载会把
+   * 它置回 null，新网格挂载再填上）。`exportResult` 是 deps 为空的稳定回调，
+   * 通过 ref 读它才拿得到最新值。
+   */
+  const resultSnapshotRef = useRef<(() => GridSnapshotSource) | null>(null);
 
   // T29：目标连接清单（连接名 / 环境分组 / 生产标记的唯一来源）
   useEffect(() => {
@@ -630,6 +667,98 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
 
   // ---------- 执行 ----------
 
+  /**
+   * P2-18h：逐条执行 `[startIndex, spans.length)`，**遇到第一条失败就停下**。
+   *
+   * 抽出来是为了让「首次执行」和「从失败处继续」共用同一段循环 —— 否则续跑
+   * 会变成第二份实现，两份对"失败语句要不要留在结果区""偏移怎么带"的判断
+   * 迟早分叉。返回值里的 `failedIndex` 就是续跑起点：失败语句本身**没有生效**
+   * （MySQL 单条 DDL/DML 原子），所以下次仍要从它开始跑。
+   */
+  const runSpans = useCallback(
+    async (arg: {
+      spans: SqlStatementSpan[];
+      startIndex: number;
+      connId: string;
+      database: string | null;
+      producedAt: number;
+      queryId: string;
+    }): Promise<{ produced: ResultTab[]; failedIndex: number | null }> => {
+      const produced: ResultTab[] = [];
+      for (let i = arg.startIndex; i < arg.spans.length; i++) {
+        const st = arg.spans[i].text;
+        try {
+          const r = await onRun({ connId: arg.connId, sql: st, database: arg.database, queryId: arg.queryId });
+          // 0.7.1：语句分类与影响行数（旧宿主不传时按 SELECT 退回旧文案）
+          const kind: StatementKind = r.statementKind ?? 'select';
+          const text = describeRunResult({
+            statementKind: kind,
+            rowCount: r.rowCount,
+            affectedRows: r.affectedRows ?? r.rowCount,
+            insertId: r.insertId ?? null,
+            info: r.info ?? null,
+            warnings: r.warnings ?? 0,
+            cancelled: r.cancelled,
+            elapsedMs: r.elapsedMs,
+          });
+          produced.push({
+            id: nextTabId(),
+            sql: st,
+            // T42：来源 SQL / 连接 / 库 / 时间 —— 结果越多越需要知道它是哪次跑出来的
+            connId: arg.connId,
+            database: arg.database,
+            createdAt: arg.producedAt,
+            pinned: false,
+            name: null,
+            offset: arg.spans[i].from,
+            payload: r.payload,
+            elapsedMs: r.elapsedMs,
+            rowCount: r.rowCount,
+            statementKind: kind,
+            text,
+            info: r.info ?? null,
+            warnings: r.warnings ?? 0,
+            truncated: r.truncated,
+            error: null,
+            cancelled: r.cancelled,
+            explain: false,
+            // 0.7.1：三处展示共用 text —— 这里是消息行，标签标题与内联耗时读的是同一份
+            message: text.headline,
+            source: r.source ?? null,
+          });
+        } catch (e) {
+          // Q5/C3：失败语句也要留在结果区 —— 用户得看清是哪条炸的
+          produced.push({
+            id: nextTabId(),
+            sql: st,
+            connId: arg.connId,
+            database: arg.database,
+            createdAt: arg.producedAt,
+            pinned: false,
+            name: null,
+            offset: arg.spans[i].from,
+            payload: null,
+            elapsedMs: 0,
+            rowCount: 0,
+            // 失败语句没有行数口径：分类给 other，文案只说失败（不出现「0 行」）
+            statementKind: 'other',
+            text: { title: '执行失败', detail: null, headline: '执行失败', inline: '执行失败' },
+            info: null,
+            warnings: 0,
+            truncated: false,
+            error: e instanceof Error ? e.message : String(e),
+            cancelled: false,
+            explain: false,
+            message: '执行失败',
+          });
+          return { produced, failedIndex: i };
+        }
+      }
+      return { produced, failedIndex: null };
+    },
+    [onRun],
+  );
+
   const execute = useCallback(
     async (mode: 'all' | 'selection'): Promise<void> => {
       if (!connId) {
@@ -652,7 +781,24 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
       }
 
       // 拆分时保留下每条语句在文档中的偏移（B6「定位到语句」要用）
-      const spans = statementOffsets(docText, mode === 'selection' ? { from: sel.from, to: sel.to } : null, target);
+      /**
+       * 🔴 「执行全部」（⌘R）要跑**编辑器里的每一条语句**，不是"光标所在那一条"。
+       *
+       * 这里原来是 `statementOffsets(..., target)` 一把梭：而那个函数的
+       * 非选中分支只返回 `[statementAt(cursor)]` —— 于是 ⌘R 在多语句文档上
+       * **只执行了第一条**，按钮 title 写的"运行编辑器中的所有语句"是假的。
+       * 这个缺陷一直被"多语句执行"的其它入口（运行 SQL 脚本）盖着，
+       * 直到 P2-18h 的"中途失败续跑"在门禁里造出 3 条语句才暴露：
+       * 横幅不出现，因为根本没有第 2 条。
+       *
+       * 语义分工定死：
+       *  - `all`      → 整篇按语句拆开，每条都跑；
+       *  - `selection`→ resolveExecution 的三条规则（选中/光标语句），用原偏移口径。
+       */
+      const spans =
+        mode === 'all'
+          ? splitStatements(docText)
+          : statementOffsets(docText, { from: sel.from, to: sel.to }, target);
       if (spans.length === 0) return;
 
       // 🔴 R6：发起瞬间生成 queryId 并握在手里 —— 取消不依赖返回、不轮询
@@ -668,75 +814,14 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
 
       // T42：来源追溯用的时间快照（同一批语句共用一个「这次执行」的时刻）
       const producedAt = Date.now();
-      const produced: ResultTab[] = [];
+      let produced: ResultTab[] = [];
+      let failedIndex: number | null = null;
       try {
-        for (let i = 0; i < spans.length; i++) {
-          const st = spans[i].text;
-          const r = await onRun({ connId, sql: st, database, queryId });
-          // 0.7.1：语句分类与影响行数（旧宿主不传时按 SELECT 退回旧文案）
-          const kind: StatementKind = r.statementKind ?? 'select';
-          const text = describeRunResult({
-            statementKind: kind,
-            rowCount: r.rowCount,
-            affectedRows: r.affectedRows ?? r.rowCount,
-            insertId: r.insertId ?? null,
-            info: r.info ?? null,
-            warnings: r.warnings ?? 0,
-            cancelled: r.cancelled,
-            elapsedMs: r.elapsedMs,
-          });
-          produced.push({
-            id: nextTabId(),
-            sql: st,
-            // T42：来源 SQL / 连接 / 库 / 时间 —— 结果越多越需要知道它是哪次跑出来的
-            connId,
-            database,
-            createdAt: producedAt,
-            pinned: false,
-            name: null,
-            offset: spans[i].from,
-            payload: r.payload,
-            elapsedMs: r.elapsedMs,
-            rowCount: r.rowCount,
-            statementKind: kind,
-            text,
-            info: r.info ?? null,
-            warnings: r.warnings ?? 0,
-            truncated: r.truncated,
-            error: null,
-            cancelled: r.cancelled,
-            explain: false,
-            // 0.7.1：三处展示共用 text —— 这里是消息行，标签标题与内联耗时读的是同一份
-            message: text.headline,
-            source: r.source ?? null,
-          });
-        }
-      } catch (e) {
-        // Q5/C3：失败语句也要留在结果区 —— 用户得看清是哪条炸的
-        const failed = spans[produced.length];
-        produced.push({
-          id: nextTabId(),
-          sql: failed?.text ?? target.sql,
-          connId,
-          database,
-          createdAt: producedAt,
-          pinned: false,
-          name: null,
-          offset: failed?.from ?? null,
-          payload: null,
-          elapsedMs: 0,
-          rowCount: 0,
-          // 失败语句没有行数口径：分类给 other，文案只说失败（不出现「0 行」）
-          statementKind: 'other',
-          text: { title: '执行失败', detail: null, headline: '执行失败', inline: '执行失败' },
-          info: null,
-          warnings: 0,
-          truncated: false,
-          error: e instanceof Error ? e.message : String(e),
-          cancelled: false,
-          explain: false,
-          message: '执行失败',
-        });
+        // 新的一次执行 = 上一批的续跑入口作废（否则 banner 会指向已经过期的一批）
+        setInterrupted(null);
+        const res = await runSpans({ spans, startIndex: 0, connId, database, producedAt, queryId });
+        produced = res.produced;
+        failedIndex = res.failedIndex;
       } finally {
         clearTimeout(timer);
         setRunning(false);
@@ -760,9 +845,71 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
         setTabs((prev) => mergeResults(prev, produced));
         setActiveTab(produced[0].id);
       }
+
+      /**
+       * P2-18h：停在失败处并**记住剩下的语句**。只留在结果区是不够的 ——
+       * 用户看不到"后面还有几条没跑"，也不知道能不能接着跑。
+       */
+      if (failedIndex !== null) {
+        setInterrupted({ spans, from: failedIndex, connId, database, producedAt });
+      }
     },
-    [connId, database, onRun, onToast, running],
+    [connId, database, onToast, running, runSpans],
   );
+
+  /**
+   * P2-18h：「从失败处继续」—— 用**原来那一批的语句**从失败下标重跑。
+   *
+   * 为什么读 `interrupted.spans` 而不是重新拆分编辑器文本：用户看到失败横幅后
+   * 很可能顺手改了编辑器（删掉/注释掉失败的语句再来一次）。若续跑按当前文本
+   * 重新拆分，就会把"已经执行成功的前 k-1 条"再跑一遍 —— 正是这个缺陷要防的事。
+   */
+  const resumeBatch = useCallback(async () => {
+    const p = interrupted;
+    if (!p || running) return;
+    const queryId = `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    queryIdRef.current = queryId;
+    setRunning(true);
+    setRunStartedAt(Date.now());
+    setTimeoutPrompt(false);
+    const timer = setTimeout(() => setTimeoutPrompt(true), 30_000);
+    let produced: ResultTab[] = [];
+    let failedIndex: number | null = null;
+    try {
+      const res = await runSpans({
+        spans: p.spans,
+        startIndex: p.from,
+        connId: p.connId,
+        database: p.database,
+        producedAt: p.producedAt,
+        queryId,
+      });
+      produced = res.produced;
+      failedIndex = res.failedIndex;
+    } finally {
+      clearTimeout(timer);
+      setRunning(false);
+      setRunStartedAt(null);
+      queryIdRef.current = null;
+    }
+    if (produced.length > 0) {
+      setTabs((prev) => mergeResults(prev, produced));
+      setActiveTab(produced[0].id);
+    }
+    // 又失败了 → 起点前移（或原地），横幅继续挂着；跑完 → 收起横幅
+    if (failedIndex !== null) setInterrupted({ ...p, from: failedIndex });
+    else setInterrupted(null);
+  }, [interrupted, running, runSpans]);
+
+  /** P2-18h：「全部停止」—— 明确放弃剩余语句，并说清还剩几条 */
+  const stopRemaining = useCallback(() => {
+    const p = interrupted;
+    if (!p) return;
+    // 失败那条也算"没执行"：它本身没生效，用户需要知道它仍待处理
+    const left = p.spans.length - p.from;
+    setInterrupted(null);
+    onToast?.(`已停止：剩余 ${left} 条语句未执行（含失败的那条）`);
+  }, [interrupted, onToast]);
 
   const cancel = useCallback(async () => {
     const id = queryIdRef.current;
@@ -1143,6 +1290,8 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
       sql: tab.sql,
       database: propsRef.current.database ?? null,
       columns: tab.payload.columns.map((c) => ({ name: c.name, dataType: TYPE_NAMES[c.typeCode] ?? '' })),
+      // P0-1：快照在**点击这一刻**读（结果网格里的选区/已加载行只在此刻准）
+      snapshot: resultSnapshotRef.current?.() ?? null,
     });
   }, []);
 
@@ -1350,6 +1499,36 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
       ) : null}
 
       <div className="sql-results">
+        {/*
+          P2-18h：多语句中途失败的续跑横幅。
+          必须摆在结果区**顶部**（不是某个结果标签里面）：断点属于"这一批执行"，
+          不是"这一条结果"，切到别的结果标签也不该让它消失。
+        */}
+        {interrupted ? (
+          <div className="banner warn sql-resume-banner" data-testid="sql-resume-banner">
+            <span className="sql-resume-text">
+              第 {interrupted.from + 1} 条语句执行失败，后面还有 {interrupted.spans.length - interrupted.from - 1} 条没有执行
+              {interrupted.from > 0 ? `（前面 ${interrupted.from} 条已生效，不会自动回滚）` : ''}
+            </span>
+            <button
+              className="sql-mini-btn"
+              title="从失败的那条语句开始，按原顺序继续执行剩余语句（不会重跑已成功的）"
+              data-testid="sql-resume-continue"
+              disabled={running}
+              onClick={() => void resumeBatch()}
+            >
+              从失败处继续
+            </button>
+            <button
+              className="sql-mini-btn"
+              title="放弃剩余语句（已生效的改动保留在库里）"
+              data-testid="sql-resume-stop"
+              onClick={stopRemaining}
+            >
+              全部停止
+            </button>
+          </div>
+        ) : null}
         {tabs.length > 0 ? (
           <div className="sql-tabs" data-testid="sql-result-tabs">
             {/*
@@ -1523,6 +1702,10 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
                   // 取值在 ResultGrid 内部完成 —— 它手里才有 GridDataSource（raw 读原值）。
                   onRowActivated={(values) => {
                     lastRowRef.current[active.id] = values;
+                  }}
+                  // P0-1：快照取数口（导出弹窗的「选区 / 当前已加载」靠它）
+                  onSnapshotReady={(get) => {
+                    resultSnapshotRef.current = get;
                   }}
                 />
               )
@@ -1715,6 +1898,7 @@ function ResultGrid({
   onToast,
   onInspectCell,
   onRowActivated,
+  onSnapshotReady,
 }: {
   payload: ColumnarPayload;
   database?: string;
@@ -1726,6 +1910,8 @@ function ResultGrid({
   onInspectCell?: (cell: ResultCellRef) => void;
   /** T39：用户点了一行 → 回传该行原始值（面板存起来做「打开源表」的行定位） */
   onRowActivated?: (values: ResultRowValue[]) => void;
+  /** P0-1：导出快照取数口（查询结果的「选区 / 当前已加载」范围靠它） */
+  onSnapshotReady?: (get: (() => GridSnapshotSource) | null) => void;
 }) {
   const source = useGridDataSource(payload);
   const columns = useMemo<GridColumn[]>(
@@ -1779,6 +1965,8 @@ function ResultGrid({
             }
           : undefined
       }
+      // P0-1：把快照取数口交给面板（面板在用户点「导出结果」时调用）
+      onExportSnapshot={onSnapshotReady}
     />
   );
 }

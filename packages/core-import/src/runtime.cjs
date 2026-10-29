@@ -19,6 +19,58 @@ function stripBom(s) {
   return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 }
 
+// ---------- 编码：UTF-8 / GBK + BOM 探测（P1-10） ----------
+/**
+ * 为什么需要这一层：CSV 没有"编码声明"，而中文环境的旧系统导出 GBK 是常态。
+ * 按 UTF-8 硬读 GBK 文件不会报错 —— 只会得到满屏 `�`、列映射全错、导入进去
+ * 一堆乱码。所以要么按 BOM 认，要么按"UTF-8 严格解码能不能过"来猜，
+ * 最后再交给用户一句话就能改的下拉框兜底。
+ *
+ * 约定（与 SQL 脚本入口一致，别再造第三套口径）：`'utf8' | 'gbk'`。
+ */
+
+/** UTF-8 BOM 长度（0 = 没有）。只认 UTF-8 的 —— UTF-16 是另一种编码，不是乱码。 */
+function utf8BomLength(bytes) {
+  return bytes && bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+}
+
+function normalizeEncoding(encoding) {
+  return String(encoding || '').trim().toLowerCase() === 'gbk' ? 'gbk' : 'utf8';
+}
+
+/**
+ * 猜测编码：有 UTF-8 BOM → utf8；否则按 UTF-8 **严格**解码试一次，失败即判 gbk。
+ *
+ * 严格的（`fatal: true`）是关键：非严格解码遇到非法字节会静默换成 `�`，
+ * 那就永远"成功"，探测等于没做。反过来，真 UTF-8 文本几乎不可能恰好
+ * 构成合法 GBK —— 单向误判概率远低于双向猜。
+ */
+function sniffEncoding(bytes) {
+  if (utf8BomLength(bytes) > 0) return 'utf8';
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return 'utf8';
+  } catch {
+    return 'gbk';
+  }
+}
+
+/**
+ * 按编码解码。utf8 顺带剥 BOM —— 不剥的话首列表头会带一个 `\ufeff`，
+ * 自动映射认不出「ID」而认得出「\ufeffID」，用户看到的是"明明有这一列却全没映上"。
+ */
+function decodeBytes(bytes, encoding) {
+  const enc = normalizeEncoding(encoding);
+  try {
+    if (enc === 'gbk') return new TextDecoder('gbk').decode(bytes);
+    const skip = utf8BomLength(bytes);
+    return new TextDecoder('utf-8').decode(skip ? bytes.subarray(skip) : bytes);
+  } catch (e) {
+    // Electron/Node 缺 ICU 时 TextDecoder 建不出来。宁可报清楚，不要静默乱码。
+    throw new Error('当前运行环境不支持所选编码：' + enc + '（' + String((e && e.message) || e) + '）');
+  }
+}
+
 function parseDelimited(text, delimiter) {
   const rows = [];
   let row = [];
@@ -1025,6 +1077,10 @@ const MERGED_INSERT_MAX_ROWS = 500;
 module.exports = {
   parseDelimited,
   stripBom,
+  utf8BomLength,
+  sniffEncoding,
+  decodeBytes,
+  normalizeEncoding,
   sniffDelimiter,
   guessMapping,
   cellTextToValue,

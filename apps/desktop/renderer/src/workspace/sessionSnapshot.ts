@@ -43,18 +43,28 @@ export interface SessionSnapshot {
   version: 1;
   savedAt: number;
   tabs: RestoredTab[];
+  /**
+   * P2-18e：关闭前激活的是第几个标签（下标，不是 id）。
+   *
+   * 🔴 为什么存下标不存 id：恢复时 tab id 是**重新生成**的，旧 id 必然失效。
+   *    在「恢复顺序 = 保存顺序」的前提下，下标才是稳定的那个量。
+   *    以前这个字段干脆不存，于是重启后总是落在最后恢复的那个标签上
+   *    （而不是用户关窗时正在看的那张表）。
+   */
+  activeIndex: number;
 }
 
 /**
  * 序列化当前标签页。
  *
- * @param activeId 刻意【不存】：activeId 不跨会话恢复（恢复的 tab id 是重新
- *                 生成的，旧 id 必然失效；激活首个恢复的标签即可）。
- *                 参数保留是为了调用点语义完整、未来要恢复时不必改签名。
+ * @param activeId 用于算出 `activeIndex`（恢复时按它激活）。
+ *                 存的是【下标】：tab id 每次启动都重新生成，存 id 没有意义。
  */
-export function serializeSession(tabs: WorkspaceTab[], _activeId: string | null): SessionSnapshot {
+export function serializeSession(tabs: WorkspaceTab[], activeId: string | null): SessionSnapshot {
+  const kept = tabs.slice(0, SESSION_MAX_TABS);
+  const at = activeId ? kept.findIndex((t) => t.id === activeId) : -1;
   const out: RestoredTab[] = [];
-  for (const t of tabs.slice(0, SESSION_MAX_TABS)) {
+  for (const t of kept) {
     if (t.kind === 'query') {
       out.push({
         kind: 'query',
@@ -70,7 +80,8 @@ export function serializeSession(tabs: WorkspaceTab[], _activeId: string | null)
       out.push({ kind: 'table', connId: t.connId, database: t.database, tableName: t.tableName });
     }
   }
-  return { version: 1, savedAt: Date.now(), tabs: out };
+  // 激活项没进前 20（或 activeId 已失效）→ 落到第 0 个，恢复出的标签至少是可见的
+  return { version: 1, savedAt: Date.now(), tabs: out, activeIndex: at > 0 ? at : 0 };
 }
 
 /** 逐项校验：结构对就返回规范化条目，否则 null（由 restorePlan 整体丢弃） */
@@ -119,18 +130,39 @@ export function restorePlan(
   snapshot: unknown,
   isKnown: (connId: string) => boolean = () => true,
 ): RestoredTab[] {
-  if (typeof snapshot !== 'object' || snapshot === null) return [];
+  return planWithSource(snapshot, isKnown)?.tabs ?? [];
+}
+
+/**
+ * 恢复计划 + 每一项在**原始** tabs 数组里的下标。
+ *
+ * 下标是给 P2-18e 的 activeIndex 用的：被筛掉（连接已删）的标签会让下标错位，
+ * 必须按"原下标 → 新下标"换算，不能直接把存的 activeIndex 当新下标用。
+ */
+interface PlanResult {
+  tabs: RestoredTab[];
+  sourceIndexes: number[];
+}
+
+function planWithSource(
+  snapshot: unknown,
+  isKnown: (connId: string) => boolean = () => true,
+): PlanResult | null {
+  if (typeof snapshot !== 'object' || snapshot === null) return null;
   const s = snapshot as Record<string, unknown>;
-  if (s.version !== 1) return [];
-  if (!Array.isArray(s.tabs)) return [];
-  const out: RestoredTab[] = [];
-  for (const raw of s.tabs) {
-    const tab = parseTab(raw);
-    if (!tab) return []; // 一条损坏即整体放弃：半份恢复计划比不恢复更让人困惑
+  if (s.version !== 1) return null;
+  if (!Array.isArray(s.tabs)) return null;
+  const tabs: RestoredTab[] = [];
+  const sourceIndexes: number[] = [];
+  for (let i = 0; i < s.tabs.length; i++) {
+    const tab = parseTab(s.tabs[i]);
+    if (!tab) return null; // 一条损坏即整体放弃：半份恢复计划比不恢复更让人困惑
     if (tab.connId !== null && !isKnown(tab.connId)) continue;
-    out.push(tab);
+    tabs.push(tab);
+    sourceIndexes.push(i);
+    if (tabs.length >= SESSION_MAX_TABS) break;
   }
-  return out.slice(0, SESSION_MAX_TABS);
+  return { tabs, sourceIndexes };
 }
 
 /** 读取持久化的会话快照；没有/损坏返回 null */
@@ -139,13 +171,17 @@ export function loadSessionSnapshot(isKnown?: (connId: string) => boolean): Sess
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    const plan = restorePlan(parsed, isKnown);
-    if (plan.length === 0) return null;
-    const savedAt =
-      typeof parsed === 'object' && parsed !== null && typeof (parsed as Record<string, unknown>).savedAt === 'number'
-        ? (parsed as Record<string, unknown>).savedAt as number
-        : 0;
-    return { version: 1, savedAt, tabs: plan };
+    const plan = planWithSource(parsed, isKnown);
+    if (!plan || plan.tabs.length === 0) return null;
+    const rec = parsed as Record<string, unknown>;
+    const savedAt = typeof rec.savedAt === 'number' ? (rec.savedAt as number) : 0;
+    /**
+     * P2-18e：activeIndex 也要跟着"筛掉已删连接"换算。
+     * 旧快照没有这个字段（那时压根没存）→ 落到 0，与改造前行为一致。
+     */
+    const rawIdx = typeof rec.activeIndex === 'number' && Number.isInteger(rec.activeIndex) ? rec.activeIndex : -1;
+    const at = plan.sourceIndexes.indexOf(rawIdx);
+    return { version: 1, savedAt, tabs: plan.tabs, activeIndex: at >= 0 ? at : 0 };
   } catch {
     return null;
   }

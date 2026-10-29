@@ -12,13 +12,14 @@
 
 import { useRef } from 'react';
 import { useMenuBehavior } from '../ui/useMenuBehavior';
-import { IconX, IconCopy, IconSearch, IconColumns, IconJumpDown } from '../ui/icons';
+import { IconX, IconCopy, IconSearch, IconColumns, IconJumpDown, IconPin } from '../ui/icons';
 import type { TabMenuAction, TabMenuItem } from './tabContextMenuModel';
 
 const ICONS: Record<TabMenuAction, (p: { size?: number }) => React.ReactNode> = {
   close: IconX,
   closeOthers: IconColumns,
   closeRight: IconJumpDown,
+  togglePin: IconPin,
   revealInTree: IconSearch,
   copyIdentity: IconCopy,
 };

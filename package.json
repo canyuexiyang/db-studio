@@ -1,6 +1,6 @@
 {
   "name": "db-studio",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "DB Studio - 反应最快的 macOS 数据库查看器",
   "type": "module",
@@ -52,7 +52,8 @@
     "e2e:conflict": "tsx scripts/e2e-conflict.mjs",
     "gen:actions": "tsx scripts/gen-action-doc.mjs",
     "e2e:keys": "tsx scripts/e2e-keys.mjs",
-    "e2e:keys:build": "npm run build && tsx scripts/e2e-keys.mjs"
+    "e2e:keys:build": "npm run build && tsx scripts/e2e-keys.mjs",
+    "shots": "tsx scripts/reshoot-shots.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

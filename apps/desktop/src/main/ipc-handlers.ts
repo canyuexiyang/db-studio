@@ -221,9 +221,26 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
     wrap(async () => {
       // 测试连接：临时建连，跑完立刻关，不进注册表、不落盘任何凭据
       const cfg = input.config as ConnectionConfig;
+      /**
+       * P1-8：没传明文密码时（= 用户没在表单里改密码）退回**已存密码**。
+       *
+       * 编辑既有连接 / 创建副本时，密文在渲染层是不可读的（只有 '' 占位符），
+       * 用户「什么都没改，点测试连接」如果拿 null 去连，结果是 Access denied ——
+       * 而随后保存并连接明明能成功。测试与真实行为必须一致，否则这个按钮
+       * 只会给人"配置坏了"的错觉。
+       *
+       * `password === undefined` 才是「未修改」；显式传 null 表示「清空」。
+       * 副本场景沿用源连接 id，因此这里取到的正是将被继承的那份密码。
+       */
+      const password =
+        input.password !== undefined
+          ? input.password
+          : cfg.id
+            ? await connections.passwordFor(cfg.id)
+            : null;
       // ⚠️ makeTestDriver 是 async —— SSH 隧道要在建连前先开好。
       //    测试连接必须走隧道，否则"测试通过但真连失败"最难排查。
-      const driver = await sessions.makeTestDriver({ ...cfg, id: cfg.id || randomUUID() }, input.password ?? null);
+      const driver = await sessions.makeTestDriver({ ...cfg, id: cfg.id || randomUUID() }, password);
       try {
         const info = await driver.connect();
         return { ok: true, serverVersion: info.serverVersion, elapsedMs: info.elapsedMs, message: null };
@@ -607,6 +624,22 @@ ipcMain.handle(IPC.SNIPPET_LIST, () => wrap(async () => history.listSnippets()))
       const win = getWindow();
       if (!win || win.isDestroyed()) return null;
       try {
+        /**
+         * e2e 接缝：`DB_STUDIO_E2E_SAVE_DIR` 指定落盘目录，跳过原生保存框。
+         *
+         * 与 `DB_STUDIO_E2E_TRANSFER_DIR` 同族。没有它，「导出失败明细 CSV」
+         * 这类按钮在自动化里只能验到"点了没崩"，落盘内容（尤其那个 UTF-8 BOM）
+         * 完全验不到 —— 而这恰恰是最容易写错的地方。
+         */
+        const e2eDir = process.env.DB_STUDIO_E2E_SAVE_DIR;
+        if (e2eDir) {
+          const { writeFile, mkdir } = await import('node:fs/promises');
+          await mkdir(e2eDir, { recursive: true });
+          const safeName = (req.suggestedName || 'blob.bin').replace(/[/\\]/g, '_');
+          const target = join(e2eDir, safeName);
+          await writeFile(target, Buffer.from(req.data));
+          return target;
+        }
         const res = await dialog.showSaveDialog(win, {
           title: '保存二进制数据',
           defaultPath: req.suggestedName || 'blob.bin',
@@ -706,6 +739,85 @@ ipcMain.handle(IPC.SNIPPET_LIST, () => wrap(async () => history.listSnippets()))
     }),
   );
 
+  // ---------- P2-18j：连接配置导入 / 导出 ----------
+  /**
+   * 这两个 handler 只负责**搬字节**：内容的合法性（format/version/字段完整性）
+   * 由渲染层的 `parseConnectionBundle` 判，密文剥除由 `buildConnectionBundle` 做。
+   * 主进程不该知道 bundle 长什么样 —— 它一旦也懂格式，就有两份实现要同步。
+   *
+   * 🔴 关键安全属性：**导出侧绝不接受渲染层传来的任意路径**（一律弹保存框），
+   *    也不回读文件内容（写完只回路径）。这样即使渲染层被注入，也无法借这两个
+   *    通道读任意文件或覆盖任意路径。
+   */
+  ipcMain.handle(IPC.CONN_BUNDLE_PICK, () =>
+    wrap<string | null>(async () => {
+      // e2e 接缝：UI 自动化弹不出原生打开框。
+      // 与 DB_STUDIO_E2E_IMPORT_FILE 同族，但**分开一个变量**：一次 e2e 里
+      // 导入表格和导入连接可能同时用到，共用一个变量会互相顶掉。
+      const e2eFile = process.env.DB_STUDIO_E2E_BUNDLE_FILE;
+      if (e2eFile) return e2eFile;
+      const win = getWindow();
+      if (!win || win.isDestroyed()) return null;
+      try {
+        const res = await dialog.showOpenDialog(win, {
+          title: '导入连接配置',
+          properties: ['openFile', 'showHiddenFiles'],
+          filters: [
+            { name: 'DB Studio 连接配置', extensions: ['json'] },
+            { name: '全部文件', extensions: ['*'] },
+          ],
+        });
+        if (res.canceled || res.filePaths.length === 0) return null;
+        return res.filePaths[0];
+      } catch {
+        // 无 GUI 会话弹不出对话框 → 等同用户取消（与 sqlFilePick 同口径）
+        return null;
+      }
+    }),
+  );
+
+  ipcMain.handle(
+    IPC.CONN_BUNDLE_SAVE,
+    (_e, req: { suggestedName?: string; text?: string }) =>
+      wrap<string | null>(async () => {
+        const text = typeof req?.text === 'string' ? req.text : '';
+        if (text === '') throw codedError(ERROR_CODES.VALIDATION, '没有可导出的连接配置');
+        // 大小护栏：连接配置是 KB 级的东西，超过 8MB 说明调用方在拿这个通道干别的
+        if (text.length > 8 * 1024 * 1024) {
+          throw codedError(ERROR_CODES.VALIDATION, '连接配置超过 8MB，已拒绝写入（疑似调用有误）');
+        }
+        const suggested = typeof req?.suggestedName === 'string' && req.suggestedName !== ''
+          ? req.suggestedName
+          : 'dbstudio-connections.json';
+
+        const e2eDir = process.env.DB_STUDIO_E2E_SAVE_DIR;
+        if (e2eDir) {
+          const { writeFile, mkdir } = await import('node:fs/promises');
+          await mkdir(e2eDir, { recursive: true });
+          const safeName = suggested.replace(/[/\\]/g, '_');
+          const target = join(e2eDir, safeName);
+          await writeFile(target, text, 'utf8');
+          return target;
+        }
+
+        const win = getWindow();
+        if (!win || win.isDestroyed()) return null;
+        try {
+          const res = await dialog.showSaveDialog(win, {
+            title: '导出连接配置',
+            defaultPath: suggested,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+          });
+          if (res.canceled || !res.filePath) return null;
+          const { writeFile } = await import('node:fs/promises');
+          await writeFile(res.filePath, text, 'utf8');
+          return res.filePath;
+        } catch {
+          return null;
+        }
+      }),
+  );
+
   // ---------- 导出/导入（utilityProcess，见 transfer-manager.ts） ----------
 
   ipcMain.handle(IPC.EXPORT_START, (_e, req: ExportStartRequest) =>
@@ -748,8 +860,13 @@ ipcMain.handle(IPC.SNIPPET_LIST, () => wrap(async () => history.listSnippets()))
   );
   ipcMain.handle(
     IPC.IMPORT_PEEK,
-    (_e, req: { filePath: string; maxRows?: number }) =>
-      wrap(async () => transfers.peekImportFile(req.filePath, req.maxRows ?? 50)),
+    (_e, req: { filePath: string; maxRows?: number; encoding?: 'utf8' | 'gbk' | null; delimiter?: string | null }) =>
+      wrap(async () =>
+        transfers.peekImportFile(req.filePath, req.maxRows ?? 50, {
+          encoding: req.encoding ?? null,
+          delimiter: req.delimiter ?? null,
+        }),
+      ),
   );
 
   // ---------- 运行 SQL 脚本（utilityProcess，见 transfer-manager.ts） ----------

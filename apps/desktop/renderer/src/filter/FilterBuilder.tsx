@@ -68,6 +68,8 @@ import {
   type SavedFilter,
 } from './savedFilters';
 import { IconPlus, IconX, IconTrash } from '../ui/icons';
+// P1-15：命名对话框的组合期守卫（中文输入法 Enter 是「确认候选词」不是「提交」）
+import { isImeComposing } from '../ui/imeGuard';
 
 export interface FilterBuilderProps {
   model: FilterModel;
@@ -142,6 +144,15 @@ export function FilterBuilder({ model, onChange, columns, connId, database, tabl
    */
   const effective = effectiveConditionCount(model);
   const total = conditionCount(model);
+  /**
+   * P1-15：「停用」与「未填完」是两种不同原因，提示语必须分开说 ——
+   * 把停用说成"未填完已跳过"会让用户以为自己漏填了东西。
+   */
+  const disabledCount = model.groups.reduce(
+    (n, g) => n + g.conditions.filter((c) => c.enabled === false).length,
+    0,
+  );
+  const skippedCount = Math.max(0, total - effective - disabledCount);
 
   /**
    * 新增条件后把焦点送到它的字段下拉（缺陷 4「点击过多」的直接对策）。
@@ -296,6 +307,8 @@ export function FilterBuilder({ model, onChange, columns, connId, database, tabl
               {/* 列头：让用户知道每一格填什么（aria-hidden：屏幕阅读器读 select 的
                   label/option 就够，重复朗读表头反而是噪音） */}
               <div className="fb-head" aria-hidden="true">
+                {/* P1-15：启用/停用开关列 */}
+                <span className="fb-head-cell fb-head-enable" />
                 <span className="fb-head-cell fb-head-logic" />
                 <span className="fb-head-cell">字段</span>
                 <span className="fb-head-cell">条件</span>
@@ -360,7 +373,8 @@ export function FilterBuilder({ model, onChange, columns, connId, database, tabl
           <span>WHERE 预览</span>
           <span className="fb-preview-count" data-testid="fb-preview-count">
             {effective > 0 ? `${effective} 条有效条件` : '无有效条件'}
-            {total > effective ? ` · ${total - effective} 条未填完已跳过` : ''}
+            {disabledCount > 0 ? ` · ${disabledCount} 条已停用` : ''}
+            {skippedCount > 0 ? ` · ${skippedCount} 条未填完已跳过` : ''}
           </span>
         </div>
         <pre className="filter-preview" data-testid="fb-preview">
@@ -383,13 +397,120 @@ export function FilterBuilder({ model, onChange, columns, connId, database, tabl
 }
 
 /**
+ * P1-15：筛选方案命名对话框（与 `SnippetSaveDialog` 同族观感，但只问一个名字）。
+ *
+ * ## 为什么必须换掉 `window.prompt`
+ *
+ * 两重原因，第二重是**功能缺陷**而不只是观感：
+ *
+ *  1. 审计 P1-15：`window.prompt` 是 Chromium 原生窄框，与本项目「Apple 原生精修」
+ *     的对话框语言（12px / 5px 圆角 / accent 主按钮 / focus ring）完全不同族。
+ *  2. 🔴 **Electron 根本没有实现 `window.prompt`** —— 调用返回 `undefined`（并在
+ *     控制台打印 "prompt() is and will not be supported"）。于是「保存当前条件」
+ *     在打包版里一直是个**哑巴按钮**：点了没反应、不落盘、连错误都没有。
+ *     纯浏览器 demo 里它是好的，所以只有真机才暴露 —— 这正是审计点它的价值。
+ *
+ * Enter 提交 / Esc 取消；组合期（中文输入法选词）的 Enter 必须放行给输入法，
+ * 否则「打拼音 → Enter 选词」会直接提交半截名字（`isImeComposing` 守卫）。
+ */
+function NameDialog(props: {
+  title: string;
+  initial: string;
+  hint: string;
+  placeholder?: string;
+  confirmText: string;
+  /** 返回一次错误文案（重名等）就地显示，不关窗 —— 关掉就丢了错误不友好 */
+  onSubmit: (name: string) => string | null;
+  onClose: () => void;
+}) {
+  const { title, initial, hint, placeholder, confirmText, onSubmit, onClose } = props;
+  const [value, setValue] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = useCallback(() => {
+    const v = value.trim();
+    if (!v) return; // 空名不给提交（按钮同时禁用）
+    const err = onSubmit(v);
+    // 成功（null）= 关窗；失败把原因留在原地显示，用户改个名字即可重试
+    if (err === null) onClose();
+    else setError(err);
+  }, [value, onSubmit, onClose]);
+
+  // 焦点不在输入框上（点了别处）时快捷键依然要能用 → 挂 window 捕获相
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // 组合期整段放行：Enter 是给输入法确认候选的
+      if (isImeComposing(e)) return;
+      if (e.key === 'Escape') {
+        // 必须吃掉：外层筛选面板也监听 Esc，否则一次 Esc 连面板一起关掉
+        e.stopPropagation();
+        e.preventDefault();
+        onClose();
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        submit();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose, submit]);
+
+  return (
+    <div
+      className="sql-dialog-mask dlg-over-modal"
+      // 点遮罩 = 取消（与 SnippetSaveDialog 一致）；点对话框内部不关
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="sql-dialog" role="dialog" aria-label={title} data-testid="filter-name-dialog">
+        <div className="sql-dialog-title">{title}</div>
+        <label className="sql-dialog-field">
+          <span>{hint}</span>
+          <input
+            autoFocus
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setError(null);
+            }}
+            placeholder={placeholder}
+            data-testid="filter-name-input"
+          />
+        </label>
+        {error ? (
+          <div className="sql-dialog-error" data-testid="filter-name-error">
+            {error}
+          </div>
+        ) : null}
+        <div className="sql-dialog-actions">
+          <button type="button" onClick={onClose} data-testid="filter-name-cancel">
+            取消
+          </button>
+          <button
+            type="button"
+            className="primary"
+            onClick={submit}
+            disabled={!value.trim()}
+            data-testid="filter-name-ok"
+          >
+            {confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * V18：已保存的筛选方案（列 / 应用 / 重命名 / 删除 / 搜索 / 保存当前条件）。
  *
  * 单独成组件的原因：**store 与列表状态要跟着组件挂载周期走**，不能放在
  * FilterBuilder 里 —— 否则每敲一个筛选值都会重建一次 store（重读 localStorage）。
  *
- * 名字用 window.prompt 取：这是低频动作（一天存不了几个方案），为一个输入框
- * 引入一套弹窗基建不划算；取不到名字（取消）就什么都不做，不落盘也不提示。
+ * 命名走 `NameDialog`（P1-15 换掉了 `window.prompt`，后者在 Electron 里根本不工作）；
+ * 取消 = 什么都不做，不落盘也不提示。
  */
 function SavedFilterBlock(props: {
   connId: string;
@@ -409,6 +530,19 @@ function SavedFilterBlock(props: {
 
   const [list, setList] = useState<SavedFilter[]>(() => listSavedFilters(store, tableKey));
   const [query, setQuery] = useState('');
+  /**
+   * 命名对话框（保存 / 重命名共用）。`null` = 关着。
+   *
+   * `onSubmit` 返回错误文案则由对话框就地显示（重名、超上限），返回 null 则关窗 ——
+   * 这样「重名」不必关掉对话框再点一次保存，改两个字就能重试。
+   */
+  const [nameDialog, setNameDialog] = useState<{
+    title: string;
+    initial: string;
+    hint: string;
+    confirmText: string;
+    onSubmit: (name: string) => string | null;
+  } | null>(null);
 
   // 换表重读：useState 的初值只在挂载时算一次，弹窗没关就切标签会留在旧表的列表上
   useEffect(() => {
@@ -423,27 +557,36 @@ function SavedFilterBlock(props: {
   const refresh = useCallback(() => setList(listSavedFilters(store, tableKey)), [store, tableKey]);
 
   function onSaveCurrent(): void {
-    const name = window.prompt('为当前筛选条件命名（同一张表内不能重名）');
-    if (name === null) return; // 取消：不落盘，也不打扰
-    const r = saveFilter(store, tableKey, name, model);
-    // 🔴 重名 / 超上限 / 空条件都必须说出来 —— 静默失败等于用户以为存上了
-    if (!r.ok) {
-      onToast?.(r.reason);
-      return;
-    }
-    refresh();
-    onToast?.(`已保存方案「${r.filter.name}」`);
+    setNameDialog({
+      title: '保存筛选方案',
+      initial: '',
+      hint: '方案名（同一张表内不能重名；保存的就是当前这组条件）',
+      confirmText: '保存',
+      onSubmit: (name) => {
+        const r = saveFilter(store, tableKey, name, model);
+        // 🔴 重名 / 超上限 / 空条件都必须说出来 —— 静默失败等于用户以为存上了。
+        //    返回原因 → 对话框留在原地显示，用户改个名字就能重试。
+        if (!r.ok) return r.reason;
+        refresh();
+        onToast?.(`已保存方案「${r.filter.name}」`);
+        return null;
+      },
+    });
   }
 
   function onRename(f: SavedFilter): void {
-    const name = window.prompt('重命名方案', f.name);
-    if (name === null) return;
-    const r = renameFilter(store, tableKey, f.id, name);
-    if (!r.ok) {
-      onToast?.(r.reason);
-      return;
-    }
-    refresh();
+    setNameDialog({
+      title: '重命名方案',
+      initial: f.name,
+      hint: '新名称（同一张表内不能与其它方案重名）',
+      confirmText: '重命名',
+      onSubmit: (name) => {
+        const r = renameFilter(store, tableKey, f.id, name);
+        if (!r.ok) return r.reason;
+        refresh();
+        return null;
+      },
+    });
   }
 
   function onDelete(f: SavedFilter): void {
@@ -458,7 +601,13 @@ function SavedFilterBlock(props: {
       <div className="sf-title">
         <span>已保存的方案</span>
         <span className="spacer" />
-        <button type="button" className="fb-btn sm" onClick={onSaveCurrent} title="把当前筛选条件存成一个命名方案">
+        <button
+          type="button"
+          className="fb-btn sm"
+          onClick={onSaveCurrent}
+          title="把当前筛选条件存成一个命名方案"
+          data-testid="sf-save-current"
+        >
           <IconPlus size={10} />
           保存当前条件
         </button>
@@ -481,7 +630,13 @@ function SavedFilterBlock(props: {
             <button type="button" className="sf-name" onClick={() => onApply(f.model)} title="点击应用到当前筛选条件">
               {f.name}
             </button>
-            <button type="button" className="fb-btn sm" onClick={() => onRename(f)} title={`重命名方案「${f.name}」`}>
+            <button
+              type="button"
+              className="fb-btn sm"
+              onClick={() => onRename(f)}
+              title={`重命名方案「${f.name}」`}
+              data-testid="sf-rename"
+            >
               重命名
             </button>
             <button
@@ -495,6 +650,18 @@ function SavedFilterBlock(props: {
           </div>
         ))
       )}
+      {/* 命名对话框浮在本块之上（fixed；筛选面板本身是 .modal-mask z-index:100） */}
+      {nameDialog ? (
+        <NameDialog
+          title={nameDialog.title}
+          initial={nameDialog.initial}
+          hint={nameDialog.hint}
+          confirmText={nameDialog.confirmText}
+          placeholder="如：只看本月未付款"
+          onSubmit={nameDialog.onSubmit}
+          onClose={() => setNameDialog(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -514,11 +681,28 @@ function ConditionRow(props: {
   const isRange = isRangeOperator(cond.operator);
   const isList = isListOperator(cond.operator);
   const complete = isConditionComplete(cond);
+  const enabled = cond.enabled !== false;
   const multi = col ? suggestMultiSelect(col) : false;
   const options = col ? enumOptions(col) : [];
 
   return (
-    <div className={`filter-cond${complete ? '' : ' incomplete'}`} data-cond-id={cond.id}>
+    <div
+      className={`filter-cond${complete ? '' : ' incomplete'}${enabled ? '' : ' disabled'}`}
+      data-cond-id={cond.id}
+    >
+      {/*
+        P1-15：临时停用。停用的条件**留在原地**（灰显、值不丢），只是不进 WHERE ——
+        对比"加这条 / 不加这条"的结果时不必删掉再重填一遍。
+      */}
+      <input
+        type="checkbox"
+        className="fb-enable"
+        checked={enabled}
+        title={enabled ? '停用这条条件（保留内容，不参与筛选）' : '重新启用这条条件'}
+        aria-label={enabled ? '停用条件' : '启用条件'}
+        onChange={(e) => onChange({ enabled: e.target.checked })}
+        data-testid="fb-enable"
+      />
       {/* 逻辑连接符：第一条前面没有东西可连，但要占位以保持网格对齐 */}
       {index > 0 ? (
         <LogicChips

@@ -18,8 +18,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Backend } from '../backend';
 import type { TableMeta, ColumnMeta } from '@dbstudio/core-schema-cache';
-import { guessMapping, validatePreview } from '@dbstudio/core-import';
-import { IconAlert, IconCheck, IconX } from '../ui/icons';
+import { guessMapping, issuesToCsv, validatePreview, type ImportRowIssue } from '@dbstudio/core-import';
+import { IconAlert, IconCheck, IconExport, IconX } from '../ui/icons';
 
 
 export interface ImportWizardProps {
@@ -54,6 +54,18 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
   const [filePath, setFilePath] = useState<string | null>(null);
   const [fileFormat, setFileFormat] = useState<ImportFileFormat>('csv');
   const [delimiter, setDelimiter] = useState<string>(',');
+  /**
+   * P1-10：文本编码。默认 utf8（= 0.7.1 的硬编码行为），peek 会按 BOM/严格解码
+   * 自动预选，用户可在这里改成 GBK —— 中文环境的旧系统导出 GBK 是常态，
+   * 按 UTF-8 硬读不报错、只会把乱码写进库。
+   */
+  const [encoding, setEncoding] = useState<'utf8' | 'gbk'>('utf8');
+  /** peek 探测到的编码（用于提示"自动探测：GBK"，让用户知道当前值是猜出来的） */
+  const [detectedEncoding, setDetectedEncoding] = useState<'utf8' | 'gbk' | null>(null);
+  /** 文件带 UTF-8 BOM（提示用：BOM 会让首列表头多一个看不见的字符） */
+  const [bom, setBom] = useState(false);
+  /** 改编码/分隔符后的重新解析中（按钮禁用，避免连点） */
+  const [reparsing, setReparsing] = useState(false);
   const [previewRows, setPreviewRows] = useState<string[][]>([]);
   const [hasHeader, setHasHeader] = useState(true);
   /** E3：json 的键序（映射左列）。peek 的首行伪表头拆出来放这里，不占数据行 */
@@ -113,6 +125,10 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
       setFilePath(path);
       setFileFormat(fmt);
       setDelimiter(peek.delimiter);
+      // P1-10：探测值只负责**预选**，用户随时可以改成别的
+      setEncoding(peek.encoding ?? 'utf8');
+      setDetectedEncoding(peek.encoding ?? null);
+      setBom(peek.bom ?? false);
       if (fmt === 'json') {
         // peek 首行 = 键序伪表头：拆出来当映射左列，数据行从 0 重编号
         //（与 worker 的 fileRow 口径一致：json 永远无表头）
@@ -141,6 +157,41 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
   }, [backend, table, onToast]);
 
   // ---------- Step 2：列映射 ----------
+  /**
+   * P1-10：改编码/分隔符 → 立刻重新解析并刷新预览。
+   *
+   * 🔴 刻意**不重算映射**：用户手调过的「文件列 → 表列」不能因为换了个分隔符
+   *    就整体清空（最气人的是它悄悄变回自动猜测，而用户以为还是自己调的）。
+   *    列数变了也不会错位：mapping 是按文件列下标存的，多出来的列自然为空。
+   */
+  const reparse = useCallback(
+    async (next: { encoding?: 'utf8' | 'gbk'; delimiter?: string }) => {
+      if (!filePath) return;
+      const enc = next.encoding ?? encoding;
+      const delim = next.delimiter ?? delimiter;
+      setEncoding(enc);
+      setDelimiter(delim);
+      setReparsing(true);
+      try {
+        const peek = await backend.importPeek(filePath, 50, { encoding: enc, delimiter: delim || null });
+        if (fileFormat === 'json') {
+          // json 首行仍是键序伪表头：换编码后要跟着刷新，否则映射左列还是旧的
+          setJsonKeys(peek.rows[0] ?? []);
+          setPreviewRows(peek.rows.slice(1));
+        } else {
+          setPreviewRows(peek.rows);
+        }
+        setDetectedEncoding(peek.encoding ?? null);
+        setBom(peek.bom ?? false);
+      } catch (e) {
+        onToast(`重新解析失败：${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setReparsing(false);
+      }
+    },
+    [backend, filePath, encoding, delimiter, fileFormat, onToast],
+  );
+
   const fileHeaders = useMemo(() => {
     if (fileFormat === 'json') return jsonKeys;
     if (previewRows.length === 0) return [];
@@ -193,6 +244,8 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
           filePath,
           format: fileFormat,
           delimiter: fileFormat === 'csv' ? delimiter : null,
+          // P1-10：worker 必须用**用户看到并确认过**的编码解码，不能再按 utf8 硬读
+          encoding: fileFormat === 'xlsx' ? null : encoding,
           // json 强制无表头（worker 侧同口径兜底，这里传值只为请求类型完整）
           hasHeader: fileFormat === 'json' ? false : hasHeader,
           database,
@@ -212,12 +265,38 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
         setPhase('error');
       }
     },
-    [backend, connId, database, delimiter, fileFormat, filePath, hasHeader, mapping, table],
+    [backend, connId, database, delimiter, encoding, fileFormat, filePath, hasHeader, mapping, table],
   );
 
   const cancelImport = useCallback(async () => {
     if (jobIdRef.current) await backend.importCancel(jobIdRef.current);
   }, [backend]);
+
+  /**
+   * P1-10：把失败明细存成 CSV。
+   *
+   * `issuesToCsv` 早在 core-import 里实现并测过，却一直没人调用 —— 用户看着
+   * 「37 行校验未通过」只能一行行抄到 Excel 里改。这里把它接上：
+   *  · 🔴 写文件时补 UTF-8 BOM：不带 BOM 的 UTF-8 CSV 在中文 Windows 的 Excel
+   *    里打开是乱码，而"导出明细去改"正是要在 Excel 里改；
+   *  · 行号用文件里的物理行号（含表头偏移），与本向导其它地方同一口径。
+   */
+  const exportIssuesCsv = useCallback(async () => {
+    if (!result || result.invalidDetail.length === 0) return;
+    try {
+      const csv = issuesToCsv(result.invalidDetail as ImportRowIssue[]);
+      const text = `\ufeff${csv}\n`;
+      const bytes = new TextEncoder().encode(text);
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '').replace(/-/g, '');
+      const saved = await backend.saveBinary(
+        `${table.name}-导入失败明细-${stamp}.csv`,
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      );
+      onToast(saved ? `失败明细已导出：${saved}` : '已取消导出');
+    } catch (e) {
+      onToast(`导出失败明细失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [backend, result, table.name, onToast]);
 
   // ---------- E5：失败行 → retryRows（0 基数据行号） ----------
   // 行号口径换算（与 import-worker 头注释一致）：
@@ -267,6 +346,42 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
               <div className="import-file-info">
                 <span title={filePath ?? ''}>{filePath?.split('/').pop()}</span>
                 <span className="spacer" />
+                {/*
+                  P1-10：编码/分隔符都可改。
+                  以前这两个值只有探测结果、没有控件 —— GBK 文件或分号分隔的文件
+                  导进来就是乱码/单列，用户连纠正的入口都没有。
+                  json 也吃编码（旧系统导出的 JSON 常带 BOM）；xlsx 自带编码，隐藏。
+                */}
+                {fileFormat !== 'xlsx' ? (
+                  <label className="ce-check import-enc" title="文本编码：GBK 是中文旧系统导出的常见编码">
+                    编码
+                    <select
+                      value={encoding}
+                      onChange={(e) => void reparse({ encoding: e.target.value as 'utf8' | 'gbk' })}
+                      disabled={reparsing}
+                      data-testid="import-encoding"
+                    >
+                      <option value="utf8">UTF-8</option>
+                      <option value="gbk">GBK / GB18030</option>
+                    </select>
+                  </label>
+                ) : null}
+                {fileFormat === 'csv' || fileFormat === 'tsv' ? (
+                  <label className="ce-check import-delim" title="字段分隔符（探测错了就改这里）">
+                    分隔符
+                    <select
+                      value={delimiter}
+                      onChange={(e) => void reparse({ delimiter: e.target.value })}
+                      disabled={reparsing}
+                      data-testid="import-delimiter"
+                    >
+                      <option value=",">逗号 ,</option>
+                      <option value=";">分号 ;</option>
+                      <option value={'\t'}>制表符 Tab</option>
+                      <option value="|">竖线 |</option>
+                    </select>
+                  </label>
+                ) : null}
                 {/* json 无表头概念（键序伪表头已在 pickFile 拆出），隐藏该开关 */}
                 {fileFormat !== 'json' ? (
                   <label className="ce-check">
@@ -281,6 +396,16 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
                 ) : null}
                 <button onClick={remap}>重新自动映射</button>
               </div>
+              {/* 探测结论只在"猜过"的时候说清楚：用户得知道当前值是猜的还是自己选的 */}
+              {detectedEncoding || bom ? (
+                <ul className="import-notes" data-testid="import-encoding-hint">
+                  <li>
+                    自动探测：{detectedEncoding === 'gbk' ? 'GBK' : 'UTF-8'}
+                    {bom ? '（文件带 BOM，已自动去掉）' : ''}
+                    {encoding !== detectedEncoding ? ` —— 已按你选择的 ${encoding === 'gbk' ? 'GBK' : 'UTF-8'} 重新解析` : ''}
+                  </li>
+                </ul>
+              ) : null}
               <table className="import-mapping-table" data-testid="import-mapping">
                 <thead>
                   <tr>
@@ -420,6 +545,14 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
                           重试失败行（{retryRows.length}）
                         </button>
                       ) : null}
+                      <button
+                        className="xf-retry"
+                        onClick={() => void exportIssuesCsv()}
+                        data-testid="import-issues-csv"
+                        title="把失败明细存成 CSV（带 UTF-8 BOM，Excel 直接打开不乱码）"
+                      >
+                        <IconExport /> 导出失败明细 CSV（{result.invalidDetail.length}）
+                      </button>
                     </div>
                   ) : null}
                 </div>

@@ -29,12 +29,16 @@ import {
   validateDesign,
   buildCreateTable,
   buildAlterStatements,
+  runAlterStatements,
+  describeAlterFailure,
+  remainingAlterCount,
   TYPE_GROUPS,
   FK_ACTIONS,
   type TableDesign,
   type DesignColumn,
   type IndexKind,
   type FkAction,
+  type AlterRunFailure,
 } from '@dbstudio/core-table-designer';
 
 export interface TableDesignerProps {
@@ -77,9 +81,23 @@ export function TableDesigner({
       ? designFromTableMeta(existingTable.name, existingTable)
       : newTableDesign(),
   );
+  /**
+   * P1-12：**diff 的基线**。初值是打开时那份 TableMeta；ALTER 中途失败后会被
+   * 换成"重新 introspect 到的真实结构"。
+   *
+   * 为什么必须独立于 `existingTable` prop：DDL 隐式提交，失败时前几条已经生效。
+   * 继续拿旧基线算 diff，剩下的语句里就会混进**已经执行过的那些** ——
+   * 用户再点一次保存，ADD COLUMN 直接撞 1060（重复列）。换基线后已执行的
+   * 语句在 diff 里自然消失，只剩真正还没跑的部分。
+   */
+  const [baseMeta, setBaseMeta] = useState<TableMeta | null>(existingTable);
   const [tab, setTab] = useState<'columns' | 'indexes' | 'foreignKeys'>('columns');
   const [ddlView, setDdlView] = useState<'diff' | 'full'>('diff');
   const [saving, setSaving] = useState(false);
+  /** P1-12：结构化失败报告（在弹窗内常驻，直到用户关掉或再次保存） */
+  const [failure, setFailure] = useState<AlterRunFailure | null>(null);
+  /** 失败后结构是否已重新拉取成功（false = 拉取也失败，要如实告诉用户） */
+  const [failureRefreshed, setFailureRefreshed] = useState(false);
 
   const issues = useMemo(() => validateDesign(design), [design]);
   const errors = issues.filter((i) => i.level === 'error');
@@ -88,10 +106,10 @@ export function TableDesigner({
   const create = useMemo(() => buildCreateTable(database, design), [database, design]);
   const alter = useMemo(
     () =>
-      isEdit
-        ? buildAlterStatements(database, existingTable.name, existingTable, design)
+      isEdit && baseMeta
+        ? buildAlterStatements(database, baseMeta.name, baseMeta, design)
         : { statements: [], summary: [] },
-    [isEdit, database, existingTable, design],
+    [isEdit, database, baseMeta, design],
   );
 
   // ---------- 列编辑 ----------
@@ -207,23 +225,55 @@ export function TableDesigner({
     if (!ok) return;
 
     setSaving(true);
+    setFailure(null);
     try {
-      for (const sql of statements) {
+      /**
+       * P1-12：逐条执行 → 失败立刻停 → **重拉结构重建 diff**。
+       *
+       * `runAlterStatements` 的返回值是唯一可信的"改了到第几条"：
+       * 它停下时不继续跑后续语句（否则错误会指向后面那条，定位全错）。
+       *
+       * 重拉成功 = 基线换成真实结构，已执行的语句从 diff 里自然消失，
+       * 用户再点保存只会执行剩下的 —— 这正是「防重复执行」的落点。
+       * 重拉失败也不能装作没事：旧基线继续用就是重复执行风险，所以
+       * `failureRefreshed=false` 会在报告里明说「请手动刷新后重试」。
+       */
+      const outcome = await runAlterStatements(statements, async (sql) => {
         const r = await backend.queryRun({ connId, sql, database });
-        if (r.cancelled) {
-          onToast('执行被取消');
-          return;
+        // 用户在确认框里取消 = 该条没执行，按失败处理（不能当成功继续往下跑）
+        if (r.cancelled) throw new Error('执行被取消');
+      });
+
+      if (!outcome.ok) {
+        const f = outcome.failure;
+        let refreshed = false;
+        if (isEdit) {
+          try {
+            const bundle = await backend.schemaGetTable(connId, database, baseMeta?.name ?? existingTable.name);
+            setBaseMeta(bundle.table);
+            refreshed = true;
+          } catch {
+            refreshed = false;
+          }
         }
+        setFailure(f);
+        setFailureRefreshed(refreshed);
+        onToast(describeAlterFailure(f));
+        // 结构确实变了（前 N 条已落库）→ 让上层刷新 schema / 树，别显示旧列
+        if (f.executed > 0) onSaved();
+        return;
       }
+
       onToast(isEdit ? `表 ${design.tableName} 已更新（${statements.length} 条变更）` : `表 ${design.tableName} 已创建`);
       onSaved();
       onClose();
     } catch (e) {
+      // 只可能是「重拉结构」之外的意外（queryRun 自身已被 runAlterStatements 收口）
       onToast(`执行失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
-  }, [errors.length, isEdit, create.sql, alter.statements, database, design.tableName, existingTable, dangerConfirm, backend, connId, onToast, onSaved, onClose]);
+  }, [errors.length, isEdit, create.sql, alter.statements, database, design.tableName, existingTable, baseMeta, dangerConfirm, backend, connId, onToast, onSaved, onClose]);
 
   // ---------- 渲染 ----------
   const hasChanges = isEdit ? alter.statements.length > 0 : true;
@@ -287,6 +337,42 @@ export function TableDesigner({
                 <li key={i}><IconX /> {e.message}</li>
               ))}
             </ul>
+          ) : null}
+
+          {/*
+            P1-12：ALTER 中途失败的结构化报告（常驻在弹窗里，不是一闪而过的 toast）。
+            说得清三件事：改到第几条为止、失败那条的原文、数据库说了什么；
+            并明确告诉用户 diff 已按真实结构重建（或没重建成功，需手动刷新）。
+          */}
+          {failure ? (
+            <div className="designer-failure" data-testid="designer-failure">
+              <div className="designer-failure-head">
+                <strong>
+                  已执行 {failure.executed} 条，第 {failure.failedAt} 条失败（共 {failure.total} 条）
+                </strong>
+                <button
+                  type="button"
+                  className="designer-failure-close"
+                  onClick={() => setFailure(null)}
+                  title="收起这条报告（结构改动不会回滚）"
+                  data-testid="designer-failure-close"
+                >
+                  <IconX size={11} />
+                </button>
+              </div>
+              <div className="designer-failure-sql">
+                <span>失败语句</span>
+                <pre data-testid="designer-failure-sql">{failure.sql}</pre>
+              </div>
+              <div className="designer-failure-msg">
+                <span>{failure.message}</span>
+              </div>
+              <div className="designer-failure-note" data-testid="designer-failure-note">
+                {failureRefreshed
+                  ? `表结构已重新读取：前面 ${failure.executed} 条已生效且不可回滚，剩余 ${remainingAlterCount(failure)} 条仍在待执行列表里（再次保存只执行剩下的）。`
+                  : `未能重新读取表结构：请手动刷新后再改，否则再次保存可能重复执行已成功的 ${failure.executed} 条语句。`}
+              </div>
+            </div>
           ) : null}
 
           {/* 分区 tab */}

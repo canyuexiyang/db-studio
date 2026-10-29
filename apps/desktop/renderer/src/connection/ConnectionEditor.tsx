@@ -43,10 +43,19 @@ import {
   type ColorTag,
   type ValidationIssue,
 } from '@dbstudio/core-connection';
+import { duplicateSaveConfig, hasStoredSecret } from './duplicate';
 
 export interface ConnectionEditorProps {
-  /** null = 新建；否则编辑这条已有连接 */
+  /** null = 新建；否则预填这条已有连接（创建副本时传的是源连接） */
   editing: ConnectionConfig | null;
+  /**
+   * P1-8 创建副本：源连接 id。非空 = 保存为**一条新连接**，且密文由主进程
+   * 从源连接按字节复制。
+   *
+   * 🔴 不能用 `editing.id` 有没有值来区分「编辑」与「副本」：有 id 就是编辑，
+   *    副本必须显式带这个标记，否则保存会覆盖原连接。
+   */
+  duplicateOf?: string | null;
   onCancel: () => void;
   /**
    * 保存。明文密码随这一次调用发给主进程，不入 UI 状态树的任何持久位置。
@@ -58,6 +67,8 @@ export interface ConnectionEditorProps {
     password?: string | null;
     passphrase?: string | null;
     promptEveryTime?: boolean;
+    /** 创建副本：密文来源连接 id（真密文只在主进程里，渲染层无法代为提交） */
+    copySecretsFrom?: string | null;
   }) => Promise<ConnectionConfig | null>;
   /** 测试连接。返回耗时 + 版本 + 原始错误文案 */
   onTest: (input: {
@@ -97,10 +108,7 @@ const COLOR_LABELS: Record<ColorTag, string> = {
   brown: '棕',
 };
 
-/** 是否有已保存的密文（主进程会剥成 ''，非空即表示"已存"） */
-function hasStoredSecret(v: string | null): boolean {
-  return typeof v === 'string' && v.length > 0;
-}
+/** 是否有已保存的密文 —— 判据在 ./duplicate（'' 占位符 = 已存过，单测钉住） */
 
 /**
  * 表单字段壳 —— 模块层组件，身份稳定，重渲染不会重挂输入框。
@@ -129,6 +137,7 @@ const Field: React.FC<{
 
 export function ConnectionEditor({
   editing,
+  duplicateOf,
   onCancel,
   onSave,
   onTest,
@@ -136,18 +145,28 @@ export function ConnectionEditor({
   onConnect,
 }: ConnectionEditorProps) {
   const isNew = editing === null;
+  /** 创建副本：有源就有标记，两者同生同灭（App 用同一个 state 传下来） */
+  const isDuplicate = !isNew && typeof duplicateOf === 'string' && duplicateOf.length > 0;
 
   const [form, setForm] = useState<ConnectionConfig>(() => {
     const base = editing ?? defaultConnectionConfig({ type: 'mysql' });
-    // 编辑时把凭据字段归一成 null —— 主进程剥掉密文后传来的可能是 ''，
-    // 而在表单里 '' 与"未设置"必须区分开，否则会把"没改密码"理解成"清空密码"
+    /**
+     * 编辑时把凭据字段归一成 `string | null`，但**必须保留 '' 这个区分**：
+     * 主进程剥密文时，`''` = "存过"，`null` = "没有"。
+     *
+     * 🔴 早先这里写成 `base.passwordEnc ? base.passwordEnc : null`，'' 被吞成 null ——
+     *    于是编辑既有连接时：密码框没有「已保存」占位、校验认为没密码、
+     *    保存按钮直接禁用，用户被迫重输一遍谁也记不住的密码。
+     *    判据见 ./duplicate 的 hasStoredSecret（单测钉住）。
+     */
+    const keep = (v: string | null | undefined): string | null => (typeof v === 'string' ? v : null);
     return {
       ...base,
-      passwordEnc: base.passwordEnc ? base.passwordEnc : null,
+      passwordEnc: keep(base.passwordEnc),
       ssh: {
         ...base.ssh,
-        passwordEnc: base.ssh?.passwordEnc ? base.ssh.passwordEnc : null,
-        passphraseEnc: base.ssh?.passphraseEnc ? base.ssh.passphraseEnc : null,
+        passwordEnc: keep(base.ssh?.passwordEnc),
+        passphraseEnc: keep(base.ssh?.passphraseEnc),
       },
     };
   });
@@ -252,6 +271,11 @@ export function ConnectionEditor({
     setTestResult(null);
     try {
       const r = await onTest({
+        /**
+         * 带上 form.id 是有意的：用户没重输密码时（密文读不回来），
+         * 主进程会按这个 id 退回**已存密码**去试连。副本沿用源的 id，
+         * 于是「测试连接」验证的正是它将要继承的那份密码 —— 与保存后一致。
+         */
         config: { ...form, id: form.id || 'unsaved' },
         password: secretInput.password,
         passphrase: secretInput.passphrase,
@@ -287,10 +311,12 @@ export function ConnectionEditor({
       setSubmitError(null);
       try {
         const saved = await onSave({
-          config: form,
+          // 副本：清 id（走新建）+ 清密文占位（'' 不是密文），真密文由主进程复制
+          config: isDuplicate ? duplicateSaveConfig(form) : form,
           password: password === '' ? undefined : password,
           passphrase: passphrase === '' ? undefined : passphrase,
           promptEveryTime: form.promptEveryTime,
+          copySecretsFrom: isDuplicate ? duplicateOf : null,
         });
         if (saved) {
           // 保存并连接：宿主发起握手（promptEveryTime 会弹密码框，由宿主处理）
@@ -304,7 +330,7 @@ export function ConnectionEditor({
         setBusy(false);
       }
     },
-    [blocking, onSave, form, password, passphrase, onConnect, onCancel],
+    [blocking, onSave, form, password, passphrase, onConnect, onCancel, isDuplicate, duplicateOf],
   );
 
   // ---------- 渲染辅助 ----------
@@ -319,7 +345,7 @@ export function ConnectionEditor({
   return (
     <div className="modal-mask" onClick={requestClose}>
       <div className="modal connection-editor" onClick={(e) => e.stopPropagation()}>
-        <header>{isNew ? '新建连接' : `编辑连接 — ${form.name}`}</header>
+        <header>{isNew ? '新建连接' : isDuplicate ? `创建副本 — ${form.name}` : `编辑连接 — ${form.name}`}</header>
 
         <div className="ce-tabs">
           {(['basic', 'ssh', 'ssl'] as Tab[]).map((t) => (
@@ -332,6 +358,12 @@ export function ConnectionEditor({
         </div>
 
         <div className="body">
+          {isDuplicate ? (
+            <div className="ce-note" data-testid="ce-duplicate-note">
+              正在复制「{editing?.name}」：除密码外的字段已预填。密码经系统钥匙串加密保存、
+              读不回来，副本会<strong>沿用原连接已保存的密码</strong>；要换密码请在下方直接输入新密码。
+            </div>
+          ) : null}
           {tab === 'basic' ? (
             <>
               <section className="ce-section">
@@ -382,7 +414,13 @@ export function ConnectionEditor({
                           setTestResult(null);
                           markTouched();
                         }}
-                        placeholder={hasStoredSecret(form.passwordEnc) ? '已保存，留空表示不修改' : ''}
+                        placeholder={
+                          hasStoredSecret(form.passwordEnc)
+                            ? isDuplicate
+                              ? '沿用原连接已保存的密码（留空即可）'
+                              : '已保存，留空表示不修改'
+                            : ''
+                        }
                       />
                       <button type="button" onClick={() => setShowPassword((v) => !v)} title={showPassword ? '隐藏' : '显示'}>
                         {showPassword ? '隐藏' : '显示'}

@@ -575,12 +575,87 @@ export function buildAlterStatements(
   return { statements: stmts, summary };
 }
 
+// ---------- ALTER 执行（P1-12：失败即停 + 结构化失败报告） ----------
+
+/**
+ * 一次 ALTER 批量执行里"卡在哪一条"的结构化描述。
+ *
+ * 为什么需要它：MySQL 的 DDL **隐式提交**，一批 ALTER 跑到第 k 条失败时，
+ * 前 k-1 条已经落库且**无法回滚**。此时若还拿原来那份 diff 再点一次保存，
+ * 就会把已成功的语句**重跑一遍**（ADD COLUMN 重复 → 直接报 1060）。
+ * 所以要有一个能回答「到第几条为止」的东西，让 UI 能做两件事：
+ *   ① 把失败报告说清楚（已执行 N 条 / 失败于第 M 条 / 原文 / 错误）；
+ *   ② 重新拉取表结构、**按新的基线重建 diff** —— 已执行的语句自然消失。
+ */
+export interface AlterRunFailure {
+  /** 已成功执行的条数（也等于失败语句的 0 基下标） */
+  executed: number;
+  /** 失败语句的 1 基序号（给用户看的「第 N 条」） */
+  failedAt: number;
+  /** 本批语句总数 */
+  total: number;
+  /** 失败语句原文 */
+  sql: string;
+  /** 数据库返回的错误原文 */
+  message: string;
+}
+
+export type AlterRunOutcome =
+  | { ok: true; executed: number; total: number }
+  | { ok: false; failure: AlterRunFailure };
+
+/**
+ * 逐条执行 ALTER，**遇到第一条失败立刻停下**。
+ *
+ * 「停下」是本函数的全部意义：继续往下跑只会在结构已半改的表上叠加更多错误，
+ * 而且用户看到的错误会是后一条的（误导定位）。返回的 `executed` 是重建 diff 的
+ * 唯一依据 —— 调用方据此重拉结构，让剩下的 `total - executed` 条继续待执行。
+ *
+ * 把 `run` 抽成参数是为了可测：真实调用是 backend.queryRun，单测里给个假 runner
+ * 就能声明"第 2 条抛错时第 3 条不许被调用"。
+ */
+export async function runAlterStatements(
+  statements: string[],
+  run: (sql: string, index: number) => Promise<void>,
+): Promise<AlterRunOutcome> {
+  for (let i = 0; i < statements.length; i++) {
+    try {
+      await run(statements[i], i);
+    } catch (e) {
+      return {
+        ok: false,
+        failure: {
+          executed: i,
+          failedAt: i + 1,
+          total: statements.length,
+          sql: statements[i],
+          message: e instanceof Error ? e.message : String(e),
+        },
+      };
+    }
+  }
+  return { ok: true, executed: statements.length, total: statements.length };
+}
+
+/**
+ * 失败报告的一行文案（toast 用；原文与错误详情由界面上的报告块承载）。
+ *
+ * 措辞刻意区分「已执行」与「失败于」：前者告诉用户库里**已经改了**什么，
+ * 后者告诉他卡在哪 —— 只报错误消息的做法（旧实现）会让人以为整批都没生效。
+ */
+export function describeAlterFailure(f: AlterRunFailure): string {
+  return `已执行 ${f.executed} 条，第 ${f.failedAt} 条失败（共 ${f.total} 条）：${f.message}`;
+}
+
+/** 失败后还剩多少条待执行（重建 diff 后应等于这个数） */
+export function remainingAlterCount(f: AlterRunFailure): number {
+  return Math.max(0, f.total - f.executed);
+}
+
 /** 类型归一化比较：varchar(255) vs varchar —— 长度不同的完整形态才算变化 */
 function normalizeType(dataType: string): string {
   return (dataType || '').toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-/** 从 TableMeta（introspect 形态）构造设计态（编辑已有表的入口） */
+}/** 从 TableMeta（introspect 形态）构造设计态（编辑已有表的入口） */
 export function designFromTableMeta(tableName: string, meta: {
   comment: string | null;
   engine: string | null;

@@ -80,7 +80,7 @@ import {
   IN_LIST_LIMIT,
   type CopyFormat,
 } from '@dbstudio/core-clipboard';
-import { IconSearch, IconColumns, IconWrap, IconJumpDown, IconX, IconCopy, IconFreeze, IconTranspose, IconFn, IconLink, IconBatchEdit, IconPlus, IconClock, IconUndo, IconRedo } from '../ui/icons';
+import { IconSearch, IconColumns, IconWrap, IconJumpDown, IconX, IconCopy, IconFreeze, IconTranspose, IconFn, IconLink, IconBatchEdit, IconPlus, IconClock, IconUndo, IconRedo, IconRowHeight } from '../ui/icons';
 // T11/T50：键位展示串的唯一来源（本文件的 ⇧⌘E / ⌘0 副本已按裁定改掉）
 import { displayOf } from '../../../src/shared/action-catalog.js';
 import { CellContextMenu, type CellContextMenuState } from './CellContextMenu';
@@ -88,6 +88,8 @@ import { HeaderContextMenu, type HeaderContextMenuState } from './HeaderContextM
 import { TransposedView } from './TransposedView';
 import { ForeignKeyPicker } from './ForeignKeyPicker';
 import { buildGroupStripes, stripeClassAt, type GroupStripeClass } from './groupStripe';
+// P0-1：导出快照（选区/已加载/可见列）的口径是纯函数，见 exportSnapshot.ts
+import { buildGridSnapshotSource, type GridSnapshotSource } from './exportSnapshot';
 import { isImeComposing } from '../ui/imeGuard';
 import {
   columnValues,
@@ -279,6 +281,17 @@ export interface DataGridProps {
   memoryKey?: string;
   /** A5：可见列变化回调（可选，宿主未接时静默降级） */
   onVisibleColumnsChange?: (names: string[]) => void;
+  /**
+   * P0-1：导出快照取数口。
+   *
+   * 网格挂载后立刻回调一个「取当前快照源」的函数（卸载时回调 `null` 注销）。
+   * 为什么是「注册取数函数」而不是「每次选区变化都上报一份快照」：
+   *  - 快照要物化全部已加载行，只在用户点「导出」那一刻才值得算；
+   *  - 逐次上报会在拖选时每帧解码整张表，把网格拖卡。
+   * 未接线的宿主（比如把 DataGrid 直接用在别处）→ 导出弹窗的
+   * 「选区 / 当前已加载」保持禁用并给出原因，不偷偷降级成重查。
+   */
+  onExportSnapshot?: (get: (() => GridSnapshotSource) | null) => void;
   /** F5：选中统计回报（null = 无选择）；App 状态栏显示「选中 N 行 / M 格」 */
   onSelectionSummary?: (summary: { rows: number; cells: number } | null) => void;
   /**
@@ -334,6 +347,16 @@ export interface DataGridProps {
    * 避免宿主状态与网格状态两处真相）。
    */
   onToggleGroupStripe?: (col: string | null) => void;
+  /**
+   * P1-9 / P2-18a/b：网格侧的一句话反馈（宿主 toast）。
+   *
+   * 三个此前**静默吞掉**的场景现在必须说出来：
+   *  - 只读表上敲字符 / F2（用户会以为键盘坏了）
+   *  - 「跳转到行」超界（clamp 后毫无反馈）
+   *  - ⌘C 复制失败（剪贴板不可用 / 选中区为空）
+   * 未接线时退化为静默 —— 网格不自己造 toast 状态（它被多个 pane 实例共享）。
+   */
+  onNotice?: (msg: string) => void;
 }
 
 const OVERSCAN = 10;
@@ -416,6 +439,7 @@ export function DataGrid(props: DataGridProps) {
     sortable = true,
     memoryKey,
     onVisibleColumnsChange,
+    onExportSnapshot,
     onSelectionSummary,
     onCopy,
     // 网格 D
@@ -425,9 +449,15 @@ export function DataGrid(props: DataGridProps) {
     onLoadMore,
     groupStripeColumn = null,
     onToggleGroupStripe,
+    onNotice,
   } = props;
 
-  const rowHeight = rowHeightPx(rowHeightMode);
+  /**
+   * P2-18d：行高三档的**网格级**覆盖（null = 跟随宿主 prop）。
+   * 偏好设置里的行高是全局默认；用户在网格里临时想看得更松/更紧，不该去改全局。
+   */
+  const [rowOverride, setRowOverride] = useState<RowHeightMode | null>(null);
+  const rowHeight = rowHeightPx(rowOverride ?? rowHeightMode);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -474,6 +504,19 @@ export function DataGrid(props: DataGridProps) {
    * 所以：判定与清空都以这个 ref 为准（state 只负责渲染）。
    */
   const editingRef = useRef<CellPos | null>(null);
+  /**
+   * P1-9：Esc 取消编辑时暂存的草稿（`row:col` → 文本）。
+   *
+   * 现状：Esc 一按，用户刚敲的半截内容直接消失，而 CellValueModal 里的 Esc
+   * 是**保留草稿**的 —— 同一产品里两套语义，用户没法形成预期。
+   * 现在的口径：第一次 Esc = 暂存草稿（下次进编辑自动回填），在同一格上再按
+   * 一次 Esc = 清空草稿。纯 UI 状态，不进脏单元格、不影响保存链路。
+   */
+  const draftRef = useRef(new Map<string, string>());
+  const [draftVersion, setDraftVersion] = useState(0);
+  // draftVersion 只用来驱动重渲染（草稿存在 ref 里，与 selVersion 同一用法）
+  void draftVersion;
+  const draftKeyOf = (pos: CellPos) => `${pos.row}:${pos.col}`;
   const [editValue, setEditValue] = useState('');
   /**
    * V10：单元格编辑的 SQL 表达式模式（DataGrip 2026.2 同款）。
@@ -571,6 +614,35 @@ export function DataGrid(props: DataGridProps) {
   useEffect(() => {
     visibleCbRef.current?.(visibleColumns.map((v) => v.col.name));
   }, [visibleColumns]);
+
+  /**
+   * P0-1：注册「读当前导出快照」的取数函数（卸载/依赖变化时注销）。
+   *
+   * 依赖里带 rowCount / columns / visibleColumns 是必须的：重新查询或改变列
+   * 显隐之后，旧闭包会给出一份**过期的行数/列序**（导出文件的行列会错位）。
+   * 不把 selection 的内容放进依赖 —— SelectionModel 是可变对象，`ranges` 在
+   * 调用时读取才是最新的（它不会被替换成新实例）。
+   */
+  const snapCbRef = useRef(onExportSnapshot);
+  useEffect(() => {
+    snapCbRef.current = onExportSnapshot;
+  }, [onExportSnapshot]);
+  useEffect(() => {
+    const register = snapCbRef.current;
+    if (!register) return;
+    register(() =>
+      buildGridSnapshotSource({
+        rowCount,
+        columnCount: columns.length,
+        columns,
+        visibleColumns: visibleColumns.map((v) => v.col.name),
+        ranges: selection.ranges,
+        selectedRows: selection.selectedRows,
+        valueAt: (r, c) => source.value(r, c),
+      }),
+    );
+    return () => register(null);
+  }, [rowCount, columns, visibleColumns, selection, source]);
 
   /** 生效列宽：用户拖拽/自适应覆盖值优先，否则用代码默认宽 */
   const widthOf = useCallback((c: GridColumn) => widths[c.name] ?? c.width, [widths]);
@@ -1051,8 +1123,20 @@ export function DataGrid(props: DataGridProps) {
   const submitJump = useCallback(() => {
     const n = Number.parseInt(jumpValue, 10);
     setJumpValue('');
-    if (!Number.isFinite(n) || rowCount === 0) return;
-    const row = Math.min(Math.max(n - 1, 0), rowCount - 1);
+    if (!Number.isFinite(n) || rowCount === 0) {
+      // P2-18a：空网格里输入行号原本什么都不发生 —— 说一句，别静默
+      if (rowCount === 0) onNotice?.('当前没有已加载的行，无法跳转');
+      return;
+    }
+    /**
+     * P2-18a：超界**显式反馈**。原来 clamp 之后直接滚到首/末行 ——
+     * 用户输入 99999 却停在最后一行，看起来像"跳转不生效"。
+     */
+    const clamped = Math.min(Math.max(n, 1), rowCount);
+    if (clamped !== n) {
+      onNotice?.(`行号 ${n} 超出范围（1–${rowCount}），已跳到第 ${clamped} 行`);
+    }
+    const row = clamped - 1;
     const el = viewportRef.current;
     if (el) el.scrollTop = row * rowHeight; // (n-1) * rowHeight，clamp 后直接置 scrollTop
     // 焦点单元格设到该行首列（首列 = 第一个可见列的原始索引）
@@ -1060,7 +1144,7 @@ export function DataGrid(props: DataGridProps) {
     selection.selectCell({ row, col: firstCol });
     bumpSelection();
     viewportRef.current?.focus();
-  }, [jumpValue, rowCount, rowHeight, selection, bumpSelection, visibleColumns]);
+  }, [jumpValue, rowCount, rowHeight, selection, bumpSelection, visibleColumns, onNotice]);
 
   // ---- A2/A17/A4：设 NULL · 选中区复制 · 复制行（网格 B） ----
 
@@ -1141,7 +1225,11 @@ export function DataGrid(props: DataGridProps) {
         columnIndexes: visibleColumns.map((v) => v.originalIndex),
         valueAt: (r, c) => source.value(r, c),
       });
-      if (res.rows.length === 0) return false;
+      if (res.rows.length === 0) {
+        // P2-18b：复制"没反应"是最难自查的一类问题 —— 说清是哪一步为空
+        onNotice?.('没有可复制的内容（先选中单元格或勾选行）');
+        return false;
+      }
       const names = res.columnIndexes.map((i) => columns[i]?.name ?? `列${i + 1}`);
       const text = serializeCopy({
         format,
@@ -1152,11 +1240,29 @@ export function DataGrid(props: DataGridProps) {
         locateColumns,
         includeHeader,
       });
-      if (!text) return false;
-      void navigator.clipboard?.writeText(text).catch(() => undefined);
+      if (!text) {
+        onNotice?.(
+          format === 'update'
+            ? '复制为 UPDATE 需要主键/唯一键（当前表没有定位列）'
+            : '当前选择无法生成该格式的文本',
+        );
+        return false;
+      }
+      /**
+       * P2-18b：写剪贴板失败**不再静默吞掉**（SQL 编辑器早已有这条提示，此处对齐）。
+       * `navigator.clipboard` 在非安全上下文/权限被拒时会 reject 甚至不存在。
+       */
+      const writer = navigator.clipboard?.writeText(text);
+      if (!writer) {
+        onNotice?.('复制失败：当前环境没有剪贴板权限（Electron 下需经 preload 授权）');
+        return false;
+      }
+      void writer.catch((e: unknown) => {
+        onNotice?.(`复制失败：${e instanceof Error ? e.message : String(e)}`);
+      });
       return true;
     },
-    [selection, source, columns, visibleColumns, rowCount, database, tableName, locateColumns],
+    [selection, source, columns, visibleColumns, rowCount, database, tableName, locateColumns, onNotice],
   );
 
   // ---- A5：列选择器下拉（点面板外关闭） ----
@@ -1174,6 +1280,32 @@ export function DataGrid(props: DataGridProps) {
   }, [colMenuOpen]);
 
   const focus = selection.focus;
+
+  /**
+   * P2-18c：非法值清单（脏格里带 invalid 原因的）。
+   *
+   * 数据源会把「粘贴/复制行留下的必填格」标成 invalid；此前只有 hover title
+   * 能看到原因，滚走就再也找不到。这里汇总成一条可点击的清单。
+   * 依赖 selVersion：编辑/标脏都会 bump 它，清单随之刷新（用户主动操作，允许分配）。
+   */
+  const invalidCells = useMemo(
+    () => source.dirtyCells().filter((c): c is typeof c & { invalid: string } => !!c.invalid),
+    [source, selVersion],
+  );
+
+  /** 点非法值条目 → 滚到那一格并选中（同时把原因说出来） */
+  const gotoInvalidCell = useCallback(
+    (row: number, col: number) => {
+      const el = viewportRef.current;
+      if (el) el.scrollTop = Math.max(0, row * rowHeight - rowHeight * 2);
+      selection.selectCell({ row, col });
+      bumpSelection();
+      el?.focus();
+      const reason = source.invalidReason(row, col);
+      if (reason) onNotice?.(`第 ${row + 1} 行「${columns[col]?.name ?? ''}」：${reason}`);
+    },
+    [rowHeight, selection, bumpSelection, source, columns, onNotice],
+  );
 
   /**
    * V10：表达式模式的即时校验。
@@ -1295,20 +1427,31 @@ export function DataGrid(props: DataGridProps) {
   );
 
   const beginEdit = useCallback(
-    (pos: CellPos, exprMode = false) => {
-      if (!editable) return;
+    (
+      pos: CellPos,
+      exprMode = false,
+      /** P1-9：打字即编辑时的初值（用户敲的那个字符，替换原值 —— Excel 习惯） */
+      initial?: string,
+    ) => {
+      if (!editable) {
+        // P1-9：只读表上敲字符/F2 必须说明原因，否则用户只会认为「键盘坏了」
+        onNotice?.('该表只读：没有主键/唯一键，或连接已标记为只读，无法编辑');
+        return;
+      }
       const cur = source.value(pos.row, pos.col);
       // 已是脏的表达式格：回填表达式原文并直接进表达式模式（改表达式不用重切）
       const kind = source.valueKindOf(pos.row, pos.col);
       const useExpr = exprMode || kind === 'sql-expr';
-      setEditValue(cur === null || cur === undefined ? '' : String(cur));
+      // P1-9：优先级 = 用户刚敲的字符 > 暂存草稿 > 库中原值
+      const draft = draftRef.current.get(draftKeyOf(pos));
+      setEditValue(initial ?? draft ?? (cur === null || cur === undefined ? '' : String(cur)));
       setEditExprMode(useExpr);
       setEditExprError(null);
       // ref 先同步，state 只负责渲染（提交判据一律看 ref）
       editingRef.current = pos;
       setEditing(pos);
     },
-    [editable, source],
+    [editable, source, onNotice],
   );
 
   // ---- 键盘（§9.2：全 Cmd，不用 Ctrl） ----
@@ -1327,6 +1470,22 @@ export function DataGrid(props: DataGridProps) {
 
       if (editing) {
         if (e.key === 'Escape') {
+          /**
+           * P1-9：Esc **不再直接丢草稿**（与 CellValueModal 对齐）。
+           * 第一次 = 暂存（下次进编辑自动回填）；在同一格上再按一次 = 清空草稿。
+           * 只暂存「与当前值不同」的输入 —— 没改就没什么可留的。
+           */
+          const key = draftKeyOf(editing);
+          const cur = source.value(editing.row, editing.col);
+          const original = cur === null || cur === undefined ? '' : String(cur);
+          if (editValue !== original && editValue !== '') {
+            draftRef.current.set(key, editValue);
+            setDraftVersion((v) => v + 1);
+            onNotice?.('已暂存本格草稿（再次进入编辑可继续；该格再按一次 Esc 清空）');
+          } else {
+            draftRef.current.delete(key);
+            setDraftVersion((v) => v + 1);
+          }
           cancelEdit(); // 撤销本格改动（含表达式模式）
           viewportRef.current?.focus();
           e.preventDefault();
@@ -1375,6 +1534,62 @@ export function DataGrid(props: DataGridProps) {
         bumpSelection();
         e.preventDefault();
         return;
+      }
+
+      /**
+       * P1-9：Home / End / PgUp / PgDn —— 长表的键盘入口。
+       *
+       * 之前只有方向键：翻页只能拖滚动条。口径与 Excel/DataGrip 一致：
+       *  - Home / End：本行首 / 末**可见**列（隐藏列不该被选中，用户看不见它）
+       *  - ⌘Home / ⌘End：首行 / 末行（保持列）
+       *  - PgUp / PgDn：按一整屏行数跳（-1 行留重叠，避免"跳过去看不到刚才那行"）
+       */
+      if (!meta && !e.altKey && (e.key === 'Home' || e.key === 'End')) {
+        const first = visibleColumns[0]?.originalIndex ?? 0;
+        const last = visibleColumns[visibleColumns.length - 1]?.originalIndex ?? first;
+        selection.setFocus({ row: selection.focus.row, col: e.key === 'Home' ? first : last });
+        bumpSelection();
+        e.preventDefault();
+        return;
+      }
+      if (meta && (e.key === 'Home' || e.key === 'End')) {
+        const row = e.key === 'Home' ? 0 : Math.max(0, rowCount - 1);
+        selection.setFocus({ row, col: selection.focus.col });
+        revealRow(row);
+        bumpSelection();
+        e.preventDefault();
+        return;
+      }
+      if (!meta && !e.altKey && (e.key === 'PageUp' || e.key === 'PageDown')) {
+        const perPage = Math.max(1, Math.floor(viewportHeight / rowHeight) - 1);
+        const row = Math.min(
+          Math.max(selection.focus.row + (e.key === 'PageDown' ? perPage : -perPage), 0),
+          Math.max(0, rowCount - 1),
+        );
+        selection.setFocus({ row, col: selection.focus.col });
+        revealRow(row);
+        bumpSelection();
+        e.preventDefault();
+        return;
+      }
+      /** P1-9：F2 = 进入编辑（Excel 通例） */
+      if (e.key === 'F2') {
+        beginEdit(selection.focus);
+        e.preventDefault();
+        return;
+      }
+      /**
+       * P1-9：在上面所有分支都没命中且当前格有草稿时，Esc = 清空草稿。
+       * （编辑态的 Esc 已在上面处理；这里处理"已退出编辑、草稿还留着"的第二下）
+       */
+      if (e.key === 'Escape') {
+        if (draftRef.current.delete(draftKeyOf(selection.focus))) {
+          setDraftVersion((v) => v + 1);
+          bumpSelection();
+          onNotice?.('已清空该格草稿');
+          e.preventDefault();
+          return;
+        }
       }
 
       if (meta && e.key.toLowerCase() === 'f') {
@@ -1467,6 +1682,19 @@ export function DataGrid(props: DataGridProps) {
         e.preventDefault();
         return;
       }
+      /**
+       * P1-9：**打字即编辑**（Excel / DataGrip / TablePlus 的肌肉记忆）。
+       *
+       * 判据：无任何修饰键 + 单字符 + 不是空格（空格是"勾选整行"，既有语义）。
+       * 敲下去的字符作为初值**替换**原值（Excel 行为），而不是追加 ——
+       * 追加语义会让用户按一次 9 得到 "1.59" 这种莫名其妙的值。
+       * 只读表由 beginEdit 给出明确原因（不静默）。
+       */
+      if (!meta && !e.altKey && e.key.length === 1 && e.key !== ' ') {
+        beginEdit(selection.focus, false, e.key);
+        e.preventDefault();
+        return;
+      }
       if (e.key === ' ') {
         selection.toggleRow(selection.focus.row);
         selection.navigate('down', {});
@@ -1497,6 +1725,12 @@ export function DataGrid(props: DataGridProps) {
       onRedo,
       onDuplicateRow,
       onAddBlankRow,
+      onNotice,
+      source,
+      editValue,
+      viewportHeight,
+      rowCount,
+      visibleColumns,
     ],
   );
 
@@ -2101,6 +2335,26 @@ export function DataGrid(props: DataGridProps) {
           <IconWrap size={13} />
         </button>
 
+        {/**
+          * P2-18d：行高三档的**网格级**入口。
+          * compact/standard/loose 早就实现了，但只能由宿主传 prop 改 —— 用户摸不到。
+          * 这里做成"跟随全局 / 三档覆盖"：临时想看得松一点，不该去改全局偏好。
+          */}
+        <span className="gd-row-height-wrap" title="行高（只影响当前表格，不改全局默认）">
+          <IconRowHeight size={13} />
+          <select
+            className="gd-row-height"
+            data-testid="grid-row-height"
+            value={rowOverride ?? ''}
+            onChange={(e) => setRowOverride(e.target.value === '' ? null : (e.target.value as RowHeightMode))}
+          >
+            <option value="">跟随全局</option>
+            <option value="compact">紧凑</option>
+            <option value="standard">标准</option>
+            <option value="loose">宽松</option>
+          </select>
+        </span>
+
         {/* V8：冻结列（钉住第 1 个可见列；右键列头可「冻结到此列」精确控制） */}
         <button
           type="button"
@@ -2290,6 +2544,32 @@ export function DataGrid(props: DataGridProps) {
         </div>
       ) : null}
 
+      {/**
+        * P2-18c：非法值汇总条。
+        *
+        * 现场：粘贴/复制行留下的「必须填」格子只有 hover 才看得到原因，
+        * 用户滚到别处就再也找不到是哪几格 —— 保存时才发现被拒。
+        * 这里把它们**汇总**出来，点一下就定位到那一格。
+        */}
+      {invalidCells.length > 0 ? (
+        <div className="gd-invalid-bar" role="alert" data-testid="invalid-bar" data-count={invalidCells.length}>
+          <span className="gd-invalid-title">{invalidCells.length} 处非法值（保存时会被拒绝）：</span>
+          {invalidCells.slice(0, 5).map((c) => (
+            <button
+              key={`${c.row}:${c.col}`}
+              type="button"
+              className="gd-invalid-chip"
+              data-testid="invalid-chip"
+              title={c.invalid ?? ''}
+              onClick={() => gotoInvalidCell(c.row, c.col)}
+            >
+              第 {c.row + 1} 行 · {c.column}
+            </button>
+          ))}
+          {invalidCells.length > 5 ? <span className="gd-invalid-more">…等 {invalidCells.length} 处</span> : null}
+        </div>
+      ) : null}
+
       {/* A8：选中区聚合浮动条（左下角，不遮右/下滚动条） */}
       {aggregate ? (
         <div className="gd-aggregate" role="status">
@@ -2427,6 +2707,18 @@ export function DataGrid(props: DataGridProps) {
                     // V10：本格是表达式脏值 → 用 fx 原文展示（区别于字面量的橙色脏底）
                     const isExprDirty = dirty && source.valueKindOf(rowIndex, originalIndex) === 'sql-expr';
 
+                    /**
+                     * 🔴 P0-6（审计）：正文渲染**必须走 `cellToDisplay`**。
+                     *
+                     * 原来是裸 `String(v)`：BLOB 显示成 `137,80,78,71,…`（逗号分隔
+                     * 字节串，毫无可读性），Date 显示成浏览器本地格式 —— 而右键复制
+                     * 输出的是 `(二进制 N B)` / ISO 口径。同一格「看到的」与「复制到的」
+                     * 不一致，是数据保真红线在展示侧的破口。
+                     */
+                    const display = isExprDirty ? String(v) : cellToDisplay(v);
+                    /** P1-9：该格有暂存草稿（Esc 保留的那份） */
+                    const hasDraft = draftRef.current.has(`${rowIndex}:${originalIndex}`);
+
                     const cls = [
                       'grid-cell',
                       isNull ? 'null' : '',
@@ -2442,14 +2734,22 @@ export function DataGrid(props: DataGridProps) {
                       // V8：冻结块的最后一列画右缘分隔线（用户要看清「钉住的到哪为止」）
                       isFrozen && vi === effectiveFrozen - 1 ? 'gd-frozen-last' : '',
                       canFollow ? 'gd-fk' : '',
+                      // P1-9：暂存草稿的可见标记（不然用户不知道为什么这格有个点）
+                      hasDraft ? 'gd-draft' : '',
                     ]
                       .filter(Boolean)
                       .join(' ');
 
-                    const title = isExprDirty
-                      ? `SQL 表达式：${String(v)}`
-                      : invalid ?? (isNull ? 'NULL' : String(v));
-                    const text = isNull ? 'NULL' : String(v);
+                    /**
+                     * 🔴 P0-6（审计）：正文渲染**必须走 `cellToDisplay`**。
+                     *
+                     * 原来是裸 `String(v)`：BLOB 显示成 `137,80,78,71,…`（逗号分隔
+                     * 字节串，毫无可读性），Date 显示成浏览器本地格式 —— 而右键复制
+                     * 输出的是 `(二进制 N B)` / ISO 口径。同一格「看到的」与「复制到的」
+                     * 不一致，是数据保真红线在展示侧的破口。
+                     */
+                    const title = invalid ?? (isExprDirty ? `SQL 表达式：${display}` : hasDraft ? `${display}（有暂存草稿，Enter 继续编辑）` : display);
+                    const text = display;
 
                     return (
                       <div

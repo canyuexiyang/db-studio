@@ -4,6 +4,9 @@ import {
   parseDelimited,
   sniffDelimiter,
   stripBom,
+  sniffEncoding,
+  decodeBytes,
+  normalizeEncoding,
   guessMapping,
   cellTextToValue,
   buildInsertBatches,
@@ -226,6 +229,77 @@ describe('issuesToCsv', () => {
     ]);
     expect(csv.split('\n')[0]).toBe('file_row,column,reason');
     expect(csv).toContain('3,a,');
+  });
+});
+
+/**
+ * P1-10 编码探测与解码。
+ *
+ * 这些断言的价值全在**边界**上：真实用户手上的 GBK 文件按 UTF-8 硬读不会报错，
+ * 只会静默变成 `�`，然后一路乱码进库。所以：
+ *  · 探测必须"严格"，非严格解码永远成功，探测就退化成恒 'utf8'；
+ *  · BOM 必须剥掉，否则首列表头带 `\ufeff`，自动映射认不出来。
+ */
+describe('编码探测与解码（UTF-8 / GBK）', () => {
+  /** 「中文」的 GBK 字节（硬编码：这就是旧系统导出文件里真实出现的东西） */
+  const GBK_ZHONGWEN = new Uint8Array([0xd6, 0xd0, 0xce, 0xc4]);
+  const UTF8_BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
+
+  const concat = (...parts: Uint8Array[]): Uint8Array => {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) {
+      out.set(p, at);
+      at += p.length;
+    }
+    return out;
+  };
+
+  it('有 UTF-8 BOM → utf8（BOM 是最可靠的信号，不用猜）', () => {
+    expect(sniffEncoding(concat(UTF8_BOM, new TextEncoder().encode('中文')))).toBe('utf8');
+  });
+
+  it('纯 UTF-8 中文 → utf8', () => {
+    expect(sniffEncoding(new TextEncoder().encode('id,名称\n1,订单'))).toBe('utf8');
+  });
+
+  it('GBK 字节 → gbk（严格解码失败才判 gbk，不是"看着不像"）', () => {
+    expect(sniffEncoding(GBK_ZHONGWEN)).toBe('gbk');
+  });
+
+  it('空文件按 utf8（空输入没有证据，别选一个更窄的编码）', () => {
+    expect(sniffEncoding(new Uint8Array())).toBe('utf8');
+  });
+
+  it('按 gbk 解码得到中文原文（不是替换字符）', () => {
+    expect(decodeBytes(GBK_ZHONGWEN, 'gbk')).toBe('中文');
+  });
+
+  it('🔴 解码 utf8 时剥掉 BOM —— 否则首列表头带 \\ufeff，自动映射全错', () => {
+    const bytes = concat(UTF8_BOM, new TextEncoder().encode('ID,name'));
+    const text = decodeBytes(bytes, 'utf8');
+    expect(text).toBe('ID,name');
+    expect(text.charCodeAt(0)).not.toBe(0xfeff);
+  });
+
+  it('强制 utf8 读 GBK 文件：不抛错，但结果里没有原文（UI 靠这个现象提示换编码）', () => {
+    const text = decodeBytes(GBK_ZHONGWEN, 'utf8');
+    expect(text).not.toBe('中文');
+  });
+
+  it('编码字面量归一：GBK/gbk/utf-8 都收，默认 utf8', () => {
+    expect(normalizeEncoding('GBK')).toBe('gbk');
+    expect(normalizeEncoding(' gbk ')).toBe('gbk');
+    expect(normalizeEncoding('utf-8')).toBe('utf8');
+    expect(normalizeEncoding(null)).toBe('utf8');
+    expect(normalizeEncoding(undefined)).toBe('utf8');
+  });
+
+  it('双实现一致：index.ts 与 runtime.cjs 的探测/解码结果相同', () => {
+    expect(runtime.sniffEncoding(GBK_ZHONGWEN)).toBe(sniffEncoding(GBK_ZHONGWEN));
+    expect(runtime.decodeBytes(GBK_ZHONGWEN, 'gbk')).toBe(decodeBytes(GBK_ZHONGWEN, 'gbk'));
+    expect(runtime.utf8BomLength(concat(UTF8_BOM, new Uint8Array([1])))).toBe(3);
+    expect(runtime.utf8BomLength(GBK_ZHONGWEN)).toBe(0);
   });
 });
 

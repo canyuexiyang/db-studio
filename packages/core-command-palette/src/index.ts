@@ -267,6 +267,11 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
   // V21 / V23：应用维护与多窗口（action 名同样是 App 分派表的键）
   { id: 'cmd.checkUpdate', action: 'checkUpdate', title: '检查更新', subtitle: '查看是否有新版本（仅打包产物联网）', badge: '命令', keywords: ['update', 'upgrade', 'version', '更新', '升级'] },
   { id: 'cmd.openInNewWindow', action: 'openInNewWindow', title: '在新窗口打开当前表', subtitle: '对照查看两张表或两个库（⌘⇧N）', badge: '命令', keywords: ['window', 'new window', '新窗口', '多窗口', '对照'] },
+  /**
+   * P1-15：筛选此前只有工具栏按钮 + 原生菜单两处入口，命令面板里搜「筛选 / filter / where」
+   * 一个字都搜不到。`action: 'filter'` 与 App 分派表的键一致（同 ⌘⇧F）。
+   */
+  { id: 'cmd.filter', action: 'filter', title: '筛选当前表', subtitle: '按列加条件（⌘⇧F）', badge: '命令', keywords: ['filter', 'where', '筛选', '过滤', '条件'] },
 ];
 
 // ---------- 面板入口 ----------

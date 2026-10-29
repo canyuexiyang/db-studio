@@ -1005,6 +1005,103 @@ try {
   const connCountAfter = await page.locator('.tree-row').count();
   ok('树节点数增加（不是只弹了个 toast）', connCountAfter > connCountBefore, `${connCountBefore} → ${connCountAfter}`);
 
+  /**
+   * P1-8 创建副本。
+   *
+   * 真正要守的是【保存路径】与【密码来路】：
+   *  · 副本必须走新建（拿到新 id）—— 走更新就是把原连接覆盖掉，用户看到"原连接改名了"；
+   *  · 密码读不回来，所以「保存」绝不能因为"没密码"而禁用，否则这功能等于没做；
+   *  · 除密码外的字段（主机/端口/用户/只读/分组）必须照抄，否则副本只是个空壳。
+   */
+  {
+    const srcRow = page.locator('.tree-row').filter({ hasText: '真机验证连接' }).first();
+
+    /**
+     * 先读一遍源连接的真实字段（打开「编辑连接」→ 取消）。
+     * 不硬编码期望值：上面对话里主机是**逐键追加**到默认值后面的，
+     * 写成 '10.0.0.7' 会得到一条"断言错、实现对"的假红。
+     * 这里只要证明「副本里的值 == 源连接里的值」即可。
+     */
+    await srcRow.click({ button: 'right' });
+    await page.waitForSelector('.ctx-menu', { timeout: 5_000 });
+    await page.locator('.ctx-item', { hasText: '编辑连接' }).click();
+    await page.waitForSelector('.connection-editor', { timeout: 15_000 });
+    const srcHost = await page.locator('.ce-field', { hasText: /^主机/ }).first().locator('input').inputValue();
+    const srcUser = await page.locator('.ce-field', { hasText: '用户名' }).locator('input').first().inputValue();
+    await page.locator('.connection-editor footer button', { hasText: /^取消$/ }).click();
+    await page.waitForTimeout(300);
+
+    await srcRow.click({ button: 'right' });
+    await page.waitForSelector('.ctx-menu', { timeout: 5_000 });
+    const connMenu = await page.locator('.ctx-menu').innerText();
+    ok('连接右键菜单含「创建副本…」', /创建副本/.test(connMenu), connMenu.replace(/\n/g, '/').slice(0, 90));
+
+    await page.locator('.ctx-item', { hasText: '创建副本' }).click();
+    await page.waitForSelector('.connection-editor', { timeout: 15_000 });
+    const dupHeader = await page.locator('.connection-editor header').innerText();
+    ok('进入副本态（标题写明「创建副本」）', /创建副本/.test(dupHeader), dupHeader.slice(0, 40));
+
+    const dupName = await page.locator('.ce-field', { hasText: '连接名' }).locator('input').inputValue();
+    ok('连接名预填为「原名 副本」', dupName === '真机验证连接 副本', dupName);
+
+    const dupHost = await page
+      .locator('.ce-field', { hasText: /^主机/ })
+      .first()
+      .locator('input')
+      .inputValue();
+    const dupUser = await page.locator('.ce-field', { hasText: '用户名' }).locator('input').first().inputValue();
+    ok(
+      '除密码外字段照抄（主机/用户名与源连接一致）',
+      dupHost === srcHost && dupUser === srcUser && srcHost !== '127.0.0.1',
+      `副本 ${dupHost}/${dupUser} ← 源 ${srcHost}/${srcUser}`,
+    );
+
+    const dupPwd = await page.locator('.ce-secret input').first();
+    const dupPwdPh = await dupPwd.getAttribute('placeholder');
+    ok('密码框显示「已保存」占位（读不出明文也不逼用户重输）', /已保存/.test(dupPwdPh ?? ''), dupPwdPh ?? '(空)');
+    ok('密码框本身是空的（绝不回填明文/密文）', (await dupPwd.inputValue()) === '');
+
+    const dupNote = await page.locator('[data-testid="ce-duplicate-note"]').innerText().catch(() => '');
+    ok('副本态给出「沿用原连接密码」说明', /沿用原连接已保存的密码/.test(dupNote), dupNote.slice(0, 50));
+
+    // 🔴 关键：没重输密码也能保存
+    const dupSaveBtn = page.locator('.connection-editor footer button', { hasText: /^保存$/ });
+    ok('🔴 没重输密码时保存可用（密文由主进程复制）', !(await dupSaveBtn.isDisabled()));
+
+    const rowsBeforeDup = await page.locator('.tree-row').count();
+    await dupSaveBtn.click();
+    await page.waitForTimeout(1200);
+    ok('保存后弹窗关闭', (await page.locator('.connection-editor').count()) === 0);
+
+    const dupToast = await page.locator('[data-testid="toast"]').innerText().catch(() => '');
+    ok('副本走的是新建（toast 说「连接已创建」）', /连接已创建/.test(dupToast), dupToast.slice(0, 40));
+
+    // 组 key 含成员 id，新建后 key 变了 → 可能折叠，先确保展开再找
+    const ungrouped2 = page.locator('.tree-row', { hasText: '未分组' }).first();
+    const caret2 = ungrouped2.locator('.tree-caret');
+    if ((await caret2.count()) > 0) {
+      const t = ((await caret2.innerText().catch(() => '')) || '').trim();
+      if (t === '▸') {
+        await caret2.click();
+        await page.waitForTimeout(300);
+      }
+    }
+    const treeText2 = await page.locator('.tree').innerText();
+    ok('副本出现在树里', /真机验证连接 副本/.test(treeText2), treeText2.replace(/\n/g, '/').slice(0, 60));
+    // 行内还有 badge/图标，用「含源名但不含副本」来区分两条 —— 若副本覆盖了源连接，
+    // 这里会变成 0，断言正好变红
+    const srcStillThere = await page.evaluate(
+      () =>
+        [...document.querySelectorAll('.tree-row')].filter((n) => {
+          const t = (n.textContent ?? '').trim();
+          return t.includes('真机验证连接') && !t.includes('副本');
+        }).length,
+    );
+    ok('🔴 原连接仍在（副本没有覆盖源连接）', srcStillThere >= 1, `匹配 ${srcStillThere} 行`);
+    const rowsAfterDup = await page.locator('.tree-row').count();
+    ok('树多了一条节点（不是只弹 toast）', rowsAfterDup === rowsBeforeDup + 1, `${rowsBeforeDup} → ${rowsAfterDup}`);
+  }
+
   // 11. 表设计器（§6.5）：打开 → 校验联动 → DDL 预览实时更新
   {
     // 确保当前激活的是表 tab（设计按钮只在表 tab 的工具栏出现）
@@ -1112,6 +1209,19 @@ try {
     const tabsAfterColOpen = await page.locator('.ws-tab').count();
     ok('Q2 列命中点击后打开对应表标签', tabsAfterColOpen === tabsBeforeColOpen + 1,
       `${tabsBeforeColOpen} → ${tabsAfterColOpen}`);
+    /**
+     * 🔴 回归防线：搜索框里按 Backspace 是**改词**，不是「删除表」。
+     *
+     * 搜索框渲染在 `.tree` 容器内，键盘事件会冒泡到树的 onKeyDown ——
+     * 那里 Backspace = 删除表（弹危险确认）。P1-13 加树导航时漏了 input 隔离，
+     * 真机表现是「搜错一个字按退格 → 弹出删除表确认」，本断言把它钉死。
+     * 此刻 activeKey 正是一张表（上一步点开的 wide_metrics），条件成立。
+     */
+    await page.locator('.tree-search').press('Backspace');
+    await page.waitForTimeout(400);
+    ok('搜索框里 Backspace 不触发删除表（输入隔离）',
+      (await page.locator('[data-testid="danger-confirm"]').count()) === 0);
+
     await page.locator('.tree-search').fill('');
     await page.waitForTimeout(300);
 
@@ -3227,6 +3337,399 @@ try {
     const orderTabBack = page.locator('.ws-tab').filter({ hasText: 'order' }).first();
     if ((await orderTabBack.count()) > 0) await orderTabBack.click();
     await page.waitForTimeout(400);
+  }
+
+  /**
+   * 13.x P0-1：导出快照接线（选区 / 当前已加载 / 仅可见列）
+   *
+   * 这条链路最容易「假装通了」：弹窗能打开、选项能点，但宿主根本没把网格的
+   * 行交出去 —— 用户点了「选区」，导出的却是整表。所以断言必须落在
+   * **选项文案里的行数**（由网格上报的快照算出来）与「仅可见列」的可用状态
+   * （由网格上报的可见列决定）。
+   *
+   * demo 后端 exportPickPath 返回 null（浏览器里弹不了原生保存框），所以这里
+   * 只验到「选完保存位置之前」；真落盘由 e2e:transfer / e2e:transfer:ui 负责。
+   */
+  {
+    const orderTab = page.locator('.ws-tab').filter({ hasText: 'order' }).first();
+    if ((await orderTab.count()) > 0) {
+      await orderTab.click();
+      await page.waitForTimeout(400);
+    }
+    await page.waitForSelector('.grid-row', { timeout: 10_000 });
+    const gutter = page.locator('.grid-row .gd-rowno');
+    const rowCount = await gutter.count();
+    ok('导出快照前提：网格有行可选', rowCount >= 3, `${rowCount} 行可见`);
+
+    // 行号点选 + Shift 扩选 = 3 行（明确表达的选区，不是默认光标格）
+    await gutter.nth(0).click();
+    await page.keyboard.down('Shift');
+    await gutter.nth(2).click();
+    await page.keyboard.up('Shift');
+    await page.waitForTimeout(200);
+
+    await page.locator('[data-testid="btn-export"]').click();
+    await page.waitForSelector('[data-testid="export-modal"]', { timeout: 10_000 });
+
+    const selHint = await page.locator('[data-testid="export-scope-hint-selection"]').innerText();
+    ok('P0-1 选区范围可用且行数 = 网格实际选中（3 行）', /3 行/.test(selHint), selHint);
+    const loadedHint = await page.locator('[data-testid="export-scope-hint-loaded"]').innerText();
+    // 行数带千分位（demo 表 50,000 行）—— 正则要容忍逗号
+    ok('P0-1 「当前已加载」可用且给出真实行数', /已加载的 [\d,]+ 行/.test(loadedHint), loadedHint);
+    ok(
+      'P0-1 「仅可见列」可用（网格已上报可见列）',
+      (await page.locator('[data-testid="export-only-visible-columns"]').isDisabled()) === false,
+    );
+
+    await page.locator('[data-testid="export-scope-selection"]').check();
+    await page.waitForTimeout(150);
+    const summary = await page.locator('[data-testid="export-scope-summary"]').innerText();
+    ok('P0-1 选区摘要写清「快照，不再查库」且行数为 3', /快照/.test(summary) && /3 行/.test(summary), summary.slice(0, 70));
+
+    await page.locator('.export-modal footer button', { hasText: '取消' }).click();
+    await page.waitForTimeout(200);
+  }
+
+  /**
+   * 14.x P1-15：筛选器的三个打磨点。
+   *
+   * 这一段之前，**筛选面板在 e2e 里一次都没被打开过** —— 于是「保存当前条件」
+   * 在打包版里是哑巴按钮（Electron 不实现 `window.prompt`，调用返回 undefined）
+   * 也一直没人发现：纯浏览器 demo 里 prompt 是好的，只有真机才红。
+   * 所以这里既要断「面板能打开」，也要断「命名对话框真的把方案存进去了」。
+   *
+   * 断言口径（可证伪）：
+   *  ① ⌘⇧F 必须打开面板 —— 旧代码页面层没接这个键（只有原生菜单认），
+   *     浏览器路径下按下去毫无反应。
+   *  ② 停用一条**填得完整**的条件 → 预览回到"无有效条件"、并显示「1 条已停用」；
+   *     重新启用 → 预览回来。若停用只是加了个灰样式而没接进 buildWhere，② 会红。
+   *  ③ 保存/重命名走对话框：对话框出现 → 输入 → Enter → 列表里出现该名字。
+   *     旧实现（prompt）在 Playwright 下返回 null，什么都不存 → ③ 必红。
+   *  ④ 重名时错误显示在对话框内**且不关窗**（关掉就丢了原因，用户得从头再来）。
+   */
+  {
+    const orderTab15 = page.locator('.ws-tab').filter({ hasText: 'order' }).first();
+    if ((await orderTab15.count()) > 0) {
+      await orderTab15.click();
+      await page.waitForTimeout(400);
+    }
+    await page.waitForSelector('.grid-row', { timeout: 10_000 });
+
+    // ① 快捷键打开
+    await page.keyboard.press('Meta+Shift+F');
+    await page.waitForTimeout(600);
+    ok('P1-15 ⌘⇧F 打开筛选面板', (await page.locator('.filter-modal').count()) === 1,
+      `filter-modal=${await page.locator('.filter-modal').count()}`);
+
+    /**
+     * 条件行可能有两态：种子是 `emptyFilter()`（带一行占位）时直接就有，
+     * 而「组里一条都没有」时面板会给空态引导（`.fb-empty` + 添加条件）。
+     * 两种都按真实用户路径走 —— 空态就点它自己给的按钮，别让断言假设只有一种形态。
+     */
+    let condCount = await page.locator('.filter-cond').count();
+    if (condCount === 0) {
+      await page.locator('.fb-add, .fb-empty button').first().click();
+      await page.waitForTimeout(300);
+      condCount = await page.locator('.filter-cond').count();
+    }
+    ok('P1-15 面板里有可编辑的条件行', condCount >= 1, `.filter-cond=${condCount}`);
+
+    const cond = page.locator('.filter-cond').first();
+    const preview = page.locator('[data-testid="fb-preview"]');
+    const countText = page.locator('[data-testid="fb-preview-count"]');
+
+    // ② 填一条完整条件（status = paid）
+    await cond.locator('.fb-col').selectOption('status');
+    await page.waitForTimeout(200);
+    await cond.locator('.fb-op').selectOption('eq');
+    await page.waitForTimeout(100);
+    await cond.locator('.fb-input').first().fill('paid');
+    await page.waitForTimeout(300);
+    const previewOn = (await preview.innerText()).trim();
+    ok('P1-15 填完条件后 WHERE 预览出现该条件',
+      /`status`/.test(previewOn) && /paid/.test(previewOn), previewOn);
+
+    // ② 停用 → 不进 WHERE，且提示语与「未填完」分开说
+    await cond.locator('[data-testid="fb-enable"]').uncheck();
+    await page.waitForTimeout(300);
+    const previewOff = (await preview.innerText()).trim();
+    const countOff = (await countText.innerText()).trim();
+    ok('P1-15 停用后条件不进 WHERE（预览回到无有效条件）',
+      /无有效条件/.test(previewOff) && !/`status`/.test(previewOff), previewOff);
+    ok('P1-15 停用条数单独计数（不被说成「未填完已跳过」）',
+      /1 条已停用/.test(countOff) && !/未填完/.test(countOff), countOff);
+    ok('P1-15 停用的行仍留在原地（灰显而不是消失）',
+      (await page.locator('.filter-cond.disabled').count()) === 1 &&
+        (await cond.locator('.fb-input').first().inputValue()) === 'paid',
+      `disabled 行=${await page.locator('.filter-cond.disabled').count()}`);
+
+    // ② 重新启用 → 预览回来（停用是可逆的临时开关，不是删除）
+    await cond.locator('[data-testid="fb-enable"]').check();
+    await page.waitForTimeout(300);
+    ok('P1-15 重新启用后 WHERE 立刻回来',
+      /`status`/.test((await preview.innerText()).trim()), (await preview.innerText()).trim());
+
+    // ③ 保存方案：走对话框而不是 window.prompt
+    await page.locator('[data-testid="sf-save-current"]').click();
+    await page.waitForTimeout(300);
+    ok('P1-15 「保存当前条件」弹出命名对话框（不是 window.prompt）',
+      (await page.locator('[data-testid="filter-name-dialog"]').count()) === 1);
+
+    await page.locator('[data-testid="filter-name-input"]').fill('只看已付款');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(500);
+    ok('P1-15 Enter 提交后对话框关闭且方案落库',
+      (await page.locator('[data-testid="filter-name-dialog"]').count()) === 0 &&
+        (await page.locator('.sf-name').filter({ hasText: '只看已付款' }).count()) === 1,
+      `dialog=${await page.locator('[data-testid="filter-name-dialog"]').count()}`);
+
+    // ④ 重名：错误就地显示，对话框不关
+    await page.locator('[data-testid="sf-save-current"]').click();
+    await page.waitForTimeout(300);
+    await page.locator('[data-testid="filter-name-input"]').fill('只看已付款');
+    await page.locator('[data-testid="filter-name-ok"]').click();
+    await page.waitForTimeout(400);
+    const dupErr = await page.locator('[data-testid="filter-name-error"]').innerText().catch(() => '');
+    ok('P1-15 重名时错误显示在对话框内且不关窗',
+      (await page.locator('[data-testid="filter-name-dialog"]').count()) === 1 && dupErr.length > 0,
+      dupErr || '(无错误文案)');
+    // Esc 只该关对话框，不该连筛选面板一起关
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    ok('P1-15 Esc 关闭命名对话框、筛选面板仍在',
+      (await page.locator('[data-testid="filter-name-dialog"]').count()) === 0 &&
+        (await page.locator('.filter-modal').count()) === 1,
+      `dialog=${await page.locator('[data-testid="filter-name-dialog"]').count()} modal=${await page.locator('.filter-modal').count()}`);
+
+    // ③ 重命名：对话框预填旧名，改完列表跟着变
+    await page.locator('[data-testid="sf-rename"]').first().click();
+    await page.waitForTimeout(300);
+    const prefilled = await page.locator('[data-testid="filter-name-input"]').inputValue();
+    ok('P1-15 重命名对话框预填当前方案名', prefilled === '只看已付款', prefilled);
+    await page.locator('[data-testid="filter-name-input"]').fill('已付款订单');
+    await page.locator('[data-testid="filter-name-ok"]').click();
+    await page.waitForTimeout(500);
+    const names = await page.locator('.sf-name').evaluateAll((els) => els.map((e) => (e.textContent ?? '').trim()));
+    ok('P1-15 重命名后列表里旧名消失、新名出现',
+      names.includes('已付款订单') && !names.includes('只看已付款'), names.join('|'));
+
+    // 收尾：关掉筛选面板，别把模态留给后面的章节
+    await page.locator('[data-testid="btn-filter-cancel"]').click();
+    await page.waitForTimeout(300);
+    ok('P1-15 关闭筛选面板后无残留模态', (await page.locator('.filter-modal').count()) === 0);
+  }
+
+  /**
+   * 14.y P1-16：浏览对象视图（可切换的工作区视图）。
+   *
+   * 审计原话：「打开任何一个标签后中间清单整体消失……当前它更像空态装饰」。
+   * 拍板为①：做成可切换视图。断言必须落在**中间面板真的换了内容**上 ——
+   * 只断"按钮可以点"等于没断（点了不换东西正是旧形态的行为）。
+   */
+  {
+    const tabsBarVisibleToggle = page.locator('[data-testid="ws-browse-toggle"]');
+    ok('P1-16 标签栏有「浏览对象」开关', (await tabsBarVisibleToggle.count()) === 1);
+
+    // 前置：此刻中间面板是表标签（不是清单）
+    ok('P1-16 前提：默认显示的是表标签内容（清单不在）',
+      (await page.locator('[data-testid="object-browser"]').count()) === 0);
+
+    await tabsBarVisibleToggle.click();
+    await page.waitForTimeout(400);
+    ok('P1-16 打开浏览视图：清单出现、标签内容让位',
+      (await page.locator('[data-testid="object-browser"]').count()) === 1 &&
+        (await page.locator('.ws-tab-pane:not(.hidden)').count()) === 0,
+      `ob=${await page.locator('[data-testid="object-browser"]').count()} pane=${await page.locator('.ws-tab-pane:not(.hidden)').count()}`);
+    ok('P1-16 开关呈激活态（不是"点了但看不出状态"）',
+      (await tabsBarVisibleToggle.getAttribute('data-active')) === '1');
+
+    await tabsBarVisibleToggle.click();
+    await page.waitForTimeout(400);
+    ok('P1-16 再点回到标签视图',
+      (await page.locator('[data-testid="object-browser"]').count()) === 0 &&
+        (await page.locator('.ws-tab-pane:not(.hidden)').count()) >= 1);
+
+    // 视图里双击打开表 → 自动回到标签视图（否则"双击没反应"）
+    await tabsBarVisibleToggle.click();
+    await page.waitForTimeout(400);
+    const obItem = page.locator('[data-testid="ob-item-order"]').first();
+    ok('P1-16 浏览视图列出了对象（可双击打开）', (await obItem.count()) === 1);
+    await obItem.dblclick();
+    await page.waitForTimeout(1500);
+    ok('P1-16 🔴 从清单双击打开表后自动切回标签视图',
+      (await tabsBarVisibleToggle.getAttribute('data-active')) === '0' &&
+        (await page.locator('[data-testid="object-browser"]').count()) === 0 &&
+        (await page.locator('.grid-row').count()) > 0,
+      `toggle=${await tabsBarVisibleToggle.getAttribute('data-active')} rows=${await page.locator('.grid-row').count()}`);
+  }
+
+  /**
+   * 14.z P2-18h：多语句中途失败 → 「从失败处继续 / 全部停止」。
+   *
+   * 这条链路的危险部分只在失败时才走到：前 k-1 条已写进库里（DML 无隐式事务），
+   * 旧实现直接把剩余语句丢掉 —— 用户只能整段重跑，于是前 k-1 条被**重复执行**。
+   *
+   * demo 后端没有真库，用哨兵 SQL 造一次失败（见 backend.ts 的 queryRun）：
+   * 第 2 条带 `__dbstudio_demo_fail_once__` 只失败**第一次**，所以「继续」之后
+   * 能真的跑完 —— 这样才能断言"续跑没有重跑第 1 条、且最终全部完成"。
+   */
+  {
+    await page.keyboard.press('Meta+t');
+    await page.waitForSelector('.ws-tab-pane:not(.hidden) .cm-editor', { timeout: 15_000 });
+    const activeCm = page.locator('.ws-tab-pane:not(.hidden) .cm-content');
+    await activeCm.click();
+    await page.keyboard.press('Meta+a');
+    await page.keyboard.type(
+      "SELECT 1 AS a;\nSELECT '__dbstudio_demo_fail_once__' AS b;\nSELECT 3 AS c;",
+    );
+    await page.waitForTimeout(300);
+    await page.locator('.ws-tab-pane:not(.hidden) .sql-toolbar [data-testid="sql-run-all"]').click();
+    await page.waitForTimeout(1500);
+
+    const resume = page.locator('[data-testid="sql-resume-banner"]');
+    ok('P2-18h 中途失败后出现续跑横幅', (await resume.count()) === 1);
+    const resumeText = (await resume.innerText().catch(() => '')).replace(/\s+/g, ' ');
+    ok('P2-18h 横幅说清「第 2 条失败、后面还有 1 条、前面已生效」',
+      /第 2 条/.test(resumeText) && /还有 1 条/.test(resumeText) && /已生效/.test(resumeText), resumeText);
+    const tabsAfterFail = await page.locator('.ws-tab-pane:not(.hidden) .sql-tab').count();
+    ok('P2-18h 失败语句留在结果区（不只报个 toast）', tabsAfterFail === 2, `${tabsAfterFail} 个结果标签`);
+
+    await page.locator('[data-testid="sql-resume-continue"]').click();
+    await page.waitForTimeout(1500);
+    ok('P2-18h 🔴 「从失败处继续」跑完后横幅收起', (await resume.count()) === 0,
+      `banner=${await resume.count()}`);
+    const tabsAfterResume = await page.locator('.ws-tab-pane:not(.hidden) .sql-tab').count();
+    /**
+     * 🔴 判「续跑没有重跑第 1 条」只能数**增量**：
+     * 首轮 2 个（第 1 条成功 + 第 2 条失败），续跑从第 2 条开始跑 →
+     * 只该新增 2 个（第 2 条、第 3 条），合计 4。
+     * 若从第 0 条重跑，增量会是 3（合计 5）—— 前 1 条被重复执行。
+     *
+     * 试过用标签 `title` 里的 SQL 文本判，判不了：`describeResultOrigin` 拼的是
+     * 「来源表 · 库 · 时间 · 行数 · 耗时」，**不含 SQL 原文**（实测标题形如
+     * `prod_order · order_db · 18:39:55 · 2,000 行 · 4ms`）。断言得建在
+     * 真正可观测的量上，否则就是照着自己的想象写。
+     */
+    ok('P2-18h 续跑只跑剩余语句（新增恰 2 个 = 4，不是 5）',
+      tabsAfterResume === tabsAfterFail + 2 && tabsAfterResume === 4,
+      `${tabsAfterFail} → ${tabsAfterResume} 个`);
+
+    // 「全部停止」：再制造一次失败，然后放弃剩余语句
+    await activeCm.click();
+    await page.keyboard.press('Meta+a');
+    await page.keyboard.type("SELECT 1 AS a;\nSELECT '__dbstudio_demo_fail__' AS b;\nSELECT 3 AS c;");
+    await page.waitForTimeout(300);
+    await page.locator('.ws-tab-pane:not(.hidden) .sql-toolbar [data-testid="sql-run-all"]').click();
+    await page.waitForTimeout(1500);
+    ok('P2-18h 再次失败后横幅回来', (await resume.count()) === 1);
+    await page.locator('[data-testid="sql-resume-stop"]').click();
+    await page.waitForTimeout(400);
+    ok('P2-18h 「全部停止」收起横幅（剩余语句不再执行）', (await resume.count()) === 0);
+    const stopToast = (await page.locator('[data-testid="toast"]').innerText().catch(() => '')).replace(/\s+/g, ' ');
+    ok('P2-18h 停止时说清还剩几条没执行', /剩余 2 条/.test(stopToast), stopToast.slice(0, 80));
+  }
+
+  /**
+   * 15. P2-18e：会话恢复要落回「关闭前正在看」的标签。
+   *
+   * 真做一次 reload（渲染层重跑 restore 流程）比断言序列化字段可信得多：
+   * 这里唯一能蒙对的方式就是实现真的记住了激活下标 —— 所以先激活**第 1 个**
+   * 标签（旧实现总是落在最后恢复的那个，直接对比即可证伪）。
+   */
+  {
+    const tabs = page.locator('.ws-tab');
+    const n = await tabs.count();
+    ok('P2-18e 前提：至少 2 个标签', n >= 2, `${n} 个`);
+    await tabs.nth(0).click();
+    await page.waitForTimeout(300);
+    /**
+     * 🔴 前置：点击**真的**换到了第 0 个标签。
+     *
+     * 这条不是"多断一次"：上一版没有它，reload 后的红只能说明"没落在第 0 个"，
+     * 却分不清是**恢复没记住下标**还是**点击压根没切换**（两种原因修法完全不同）。
+     * 断言链要能自证基线，否则红了一头雾水。
+     */
+    const preIdx = await page.evaluate(() => {
+      const all = [...document.querySelectorAll('.ws-tab')];
+      return all.findIndex((node) => node.classList.contains('active'));
+    });
+    ok('P2-18e 前提：点击后激活态已切到第 0 个标签', preIdx === 0, `pre-active=${preIdx}`);
+
+    /**
+     * 记下激活标签的**标题**（数字掩码后比较）。
+     *
+     * 只比下标会漏掉一种真实故障：恢复出来的标签顺序变了（表标签要等 schema
+     * 回来才建，并发时会被排到查询标签后面），此时`activeIndex` 指向的是另一个
+     * 标签 —— 下标看似"记得"，落点却错了。标题比对抓的正是这种错位。
+     * 掩掉数字是因为查询标签自带递增序号（"查询 22" 重启后变成 "查询 11"），
+     * 那个数字每次启动都会重新分配，不属于"用户正在看的东西"。
+     */
+    const maskDigits = (s) => (s ?? '').replace(/\d+/g, '#').trim();
+    const preLabel = maskDigits(
+      await page.evaluate(() => document.querySelector('.ws-tab.active')?.textContent ?? ''),
+    );
+
+    await page.waitForTimeout(1200); // 快照落盘 debounce 是 800ms
+    // 落盘后再核一次快照里记的下标（把「序列化」与「恢复」两段分开定位）
+    const snapIdx = await page.evaluate(() => {
+      try {
+        return JSON.parse(localStorage.getItem('dbstudio.session.v1') ?? '{}')?.activeIndex ?? null;
+      } catch {
+        return 'parse-error';
+      }
+    });
+    ok('P2-18e 快照记录了激活下标 0', snapIdx === 0, `snapshot.activeIndex=${snapIdx}`);
+
+    await page.reload();
+    await page.waitForTimeout(3000);
+    const afterCount = await page.locator('.ws-tab').count();
+    ok('reload 后标签被恢复', afterCount >= 2, `${afterCount} 个`);
+    const activeIdx = await page.evaluate(() => {
+      const all = [...document.querySelectorAll('.ws-tab')];
+      return all.findIndex((node) => node.classList.contains('active'));
+    });
+    const afterLabel = maskDigits(
+      await page.evaluate(() => document.querySelector('.ws-tab.active')?.textContent ?? ''),
+    );
+    ok('P2-18e 恢复后标签顺序与快照一致（不是被异步建表打乱）',
+      afterLabel === preLabel, `${preLabel} → ${afterLabel}`);
+    ok('🔴 reload 落在关闭前激活的标签（第 1 个）', activeIdx === 0, `active 下标 = ${activeIdx}`);
+  }
+
+  /**
+   * 16. P2-18j：连接配置导入/导出的**降级口径**。
+   *
+   * 浏览器 demo 没有 fs，这条链路注定做不成事 —— 但"做不成"有两种表现：
+   *  ① 点了没反应（静默，最难自查）；
+   *  ② 明确说清"需要桌面应用环境"。
+   * 这里钉的是②。文件真的写没写、导出文件里有没有密文，由 e2e:app 在真
+   * Electron 上验（demo 里没有真文件可验，写了也是假的）。
+   */
+  {
+    const row = page.locator('.tree-row[data-node-kind="connection"]').first();
+    await row.waitFor({ state: 'visible', timeout: 10_000 });
+    await row.click({ button: 'right' });
+    await page.waitForTimeout(300);
+    const labels = await page.locator('.ctx-item .ctx-label').allInnerTexts();
+    ok(
+      'P2-18j 连接右键菜单有导入/导出两项',
+      labels.some((t) => t.includes('导出全部连接')) && labels.some((t) => t.includes('导入连接')),
+      labels.filter((t) => t.includes('连接')).join(' / '),
+    );
+
+    await page.locator('.ctx-item', { hasText: '导出全部连接…' }).click();
+    await page.waitForTimeout(400);
+    const exportToast = (await page.locator('[data-testid="toast"]').innerText().catch(() => '')).replace(/\s+/g, ' ');
+    ok('P2-18j demo 里导出明确说"需要桌面应用环境"（不是静默无反应）',
+      /演示模式/.test(exportToast) && /桌面应用环境/.test(exportToast), exportToast.slice(0, 90));
+
+    await row.click({ button: 'right' });
+    await page.waitForTimeout(300);
+    await page.locator('.ctx-item', { hasText: '导入连接…' }).click();
+    await page.waitForTimeout(400);
+    const importToast = (await page.locator('[data-testid="toast"]').innerText().catch(() => '')).replace(/\s+/g, ' ');
+    ok('P2-18j demo 里导入明确说"需要桌面应用环境"（不是静默取消）',
+      /导入连接需要桌面应用环境/.test(importToast), importToast.slice(0, 90));
   }
 
   // 14. 控制台干净

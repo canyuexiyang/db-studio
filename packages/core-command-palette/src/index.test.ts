@@ -158,14 +158,30 @@ describe('面板查询', () => {
     expect(queryPalette('a', { items: [] }).results).toEqual([]);
   });
 
-  it('内置命令覆盖 PRD §6.8 的六项 + F2 字体缩放三项 + V21/V23 两项', () => {
+  it('内置命令覆盖 PRD §6.8 的六项 + F2 字体缩放三项 + V21/V23 两项 + P1-15 筛选', () => {
     const actions = BUILTIN_COMMANDS.map((c) => c.action);
     expect(actions).toEqual([
       'newConnection', 'newQuery', 'refresh', 'toggleTheme', 'toggleReadOnly', 'openPreferences',
       'fontZoomIn', 'fontZoomOut', 'fontZoomReset',
       // V21 自动更新 / V23 多窗口
       'checkUpdate', 'openInNewWindow',
+      // P1-15：筛选此前在面板里搜不到（工具栏/菜单之外没有第三个入口）
+      'filter',
     ]);
+  });
+
+  /**
+   * P1-15：筛选必须能被中文与英文关键词命中 —— 面板是「键盘优先」路径，
+   * 搜不到等于没有这个入口。同时钉住 id 前缀不与表条目（`连接:库:表`）混淆。
+   */
+  it('「筛选」命令能被 筛选 / filter / where 命中且 id 带 cmd 前缀', () => {
+    const cmds = BUILTIN_COMMANDS.filter((c) => c.action === 'filter');
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0].id.startsWith('cmd.')).toBe(true);
+    for (const q of ['筛选', 'filter', 'where', '过滤']) {
+      const r = queryPalette(`:${q}`, { items: [] });
+      expect(r.results.map((x) => x.item.id)).toContain('cmd.filter');
+    }
   });
 
   it('前缀常量', () => {

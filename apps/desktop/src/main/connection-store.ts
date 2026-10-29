@@ -48,6 +48,14 @@ export interface SaveConnectionInput {
   passphrase?: string | null;
   /** 显式要求"每次手输" */
   promptEveryTime?: boolean;
+  /**
+   * 创建副本：源连接 id。新建连接时把源连接的密文**按字节复制**过来。
+   *
+   * 为什么需要这个字段：密文只在主进程里，渲染层的 `passwordEnc` 是 '' 占位符，
+   * 无法把"原连接存过的密码"带进新连接。没有它，副本只能是条没密码的连接
+   * （校验会直接拒绝），用户被迫重输一遍谁都记不住的密码。
+   */
+  copySecretsFrom?: string | null;
 }
 
 export class PlaintextSecretError extends Error {
@@ -116,16 +124,41 @@ export class ConnectionStore {
   }
 
   /**
+   * 创建副本时的密文来源。没传返回 undefined（普通新建）；传了但找不到 → 抛。
+   *
+   * ⚠️ 只允许**新建**时走这条路径（调用方已保证 existing 不存在）：
+   *    更新一条已有连接时又从别处复制密文，等于悄悄换了它的密码来源。
+   */
+  private resolveCopySource(id: string | null | undefined): ConnectionConfig | undefined {
+    if (!id) return undefined;
+    const src = this.list.find((c) => c.id === id);
+    if (!src) {
+      throw Object.assign(new Error(`创建副本失败：源连接不存在（${id}）`), { code: 'VALIDATION' });
+    }
+    return src;
+  }
+
+  /**
    * 新增或更新一条连接。
    * 明文密码在这里加密，之后就不再以明文形式存在于任何持久化路径。
    */
   async save(input: SaveConnectionInput): Promise<ConnectionConfig> {
     const existing = this.list.find((c) => c.id === input.config.id);
-    const prevFields: ConnectionSecretFields = existing
+    /**
+     * 密文来源：
+     *  - 更新：这条连接自己（prevFields 沿用）；
+     *  - 创建副本（P1-8）：源连接，密文**原样复制**。
+     *
+     * 🔴 「找不到源连接」必须报错，不能静默降级成"没有密码"再交给校验器 ——
+     *    那样用户看到的是「password 未保存密码」，完全猜不到是副本源丢了。
+     */
+    const copyFrom = existing ? undefined : this.resolveCopySource(input.copySecretsFrom);
+    const secretBase = existing ?? copyFrom;
+    const prevFields: ConnectionSecretFields = secretBase
       ? {
-          passwordEnc: existing.passwordEnc,
-          passphraseEnc: existing.ssh?.passphraseEnc ?? null,
-          promptEveryTime: existing.promptEveryTime,
+          passwordEnc: secretBase.passwordEnc,
+          passphraseEnc: secretBase.ssh?.passphraseEnc ?? null,
+          promptEveryTime: secretBase.promptEveryTime,
         }
       : { passwordEnc: null, passphraseEnc: null, promptEveryTime: false };
 
