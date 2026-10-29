@@ -53,6 +53,18 @@ todo `r1u9iO` 的子任务随完成逐项勾掉。要点：
 - 门禁数字变化：单测 2273 → **2391**（89 文件）、e2e:ui 377 → **434**、
   e2e:app 60 → **72**、e2e:transfer 25 → 36、功能弹窗 chunk 预算 60 → 64KB（涨预算留痕）。
 
+**发版结果（2026-10-29）**
+
+- Release：<https://github.com/canyuexiyang/db-studio/releases/tag/v0.7.2>（tag `v0.7.2` → `2a26267`）
+- 资产（三者 sha256 与本地逐一一致）：
+  - `DB-Studio-0.7.2-arm64.dmg` 153,258,410 B · `2c87702c…9bc67daa`
+  - `DB-Studio-0.7.2-arm64.dmg.blockmap` 160,573 B
+  - `latest-mac.yml` 347 B（`version: 0.7.2`，url 与资产名同为连字符）
+- 验证：`releases/download/v0.7.2/{latest-mac.yml,dmg}` 均 206 可达（updater 增量更新路径通）
+- 本机安装：`ditto` 装 /Applications → `verify:installed` **22/22**
+- 操作留痕：153MB 资产经本地 HTTP 代理上传会在 30 分钟处 `0 bytes received` 超时，
+  加 `--noproxy '*'` 直连后 145 秒完成（1.0 MB/s）
+
 ---
 
 ## v0.7.1（2026-10-28）—— 真机反馈 4 项修复

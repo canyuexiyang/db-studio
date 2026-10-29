@@ -372,20 +372,23 @@ npm run verify:installed # 已安装 .app 的真机验收（22 项，含版本�
 npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染层之外验证）
 ```
 
-**当前基线（v0.7.0 · 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases) 并本机安装）**：
+**当前基线（v0.7.2 · 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases) 并本机安装）**：
 
 | 门禁 | 结果 |
 |---|---|
-| 单元测试 | **2200 passed / 80 文件** |
-| `check:bundle` | 9/9 体积断言通过（首屏 538.0 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip） |
-| e2e:ui（真浏览器 UI 回归） | 372 |
-| e2e:app（Electron 真机） | 60 |
+| 单元测试 | **2391 passed / 89 文件** |
+| `check:bundle` | 9/9 体积断言通过（首屏 563.0 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip） |
+| e2e:ui（真浏览器 UI 回归） | 434 |
+| e2e:app（Electron 真机） | 72 |
 | e2e:keys（五焦点键盘矩阵） | 47 |
-| e2e:idle / e2e:idle:ui（空闲断开自动重连） | 16 / 4 |
+| e2e:idle / e2e:idle:ui（空闲断开自动重连） | 17 / 5 |
+| e2e:keepalive（心跳保活 + 对照组） | 18 |
 | 真库冒烟（e2e:smoke） | 74 |
-| 导入导出（e2e:transfer） | 28 |
+| 导入导出（e2e:transfer） | 36 |
 | SSH 真机（e2e:ssh） | 18 |
-| 冲突检测（e2e:conflict） | 17 |
+| 影响行数三口径（e2e:affected） | 22 |
+| 冲突检测（e2e:conflict） | 18 |
+| 工具栏四档视口（verify:toolbar-fit） | 23 |
 | 脚本导入数据完整性（e2e:script:data） | 10 |
 | 脚本导入 UI（e2e:script:ui） | 18 |
 | verify:installed（装好的 .app） | **22/22** |
