@@ -12,13 +12,16 @@
 
 import { useRef } from 'react';
 import { useMenuBehavior } from '../ui/useMenuBehavior';
-import { IconX, IconCopy, IconSearch, IconColumns, IconJumpDown, IconPin } from '../ui/icons';
+import { IconX, IconCopy, IconSearch, IconColumns, IconJumpDown, IconPin, IconCloseLeft, IconCloseAll } from '../ui/icons';
 import type { TabMenuAction, TabMenuItem } from './tabContextMenuModel';
 
+/** 🔴 必须覆盖 TabMenuAction 全集（Record 会强制）—— 新增动作忘配图标会直接 typecheck 报红 */
 const ICONS: Record<TabMenuAction, (p: { size?: number }) => React.ReactNode> = {
   close: IconX,
   closeOthers: IconColumns,
+  closeLeft: IconCloseLeft,
   closeRight: IconJumpDown,
+  closeAll: IconCloseAll,
   togglePin: IconPin,
   revealInTree: IconSearch,
   copyIdentity: IconCopy,

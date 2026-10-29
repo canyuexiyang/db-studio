@@ -207,14 +207,22 @@ const RAW: Raw[] = [
     id: 'tree-design-table',
     target: 'table',
     label: '设计表…',
-    accelerator: 'F2',
+    /**
+     * 🔴 0.7.3（P1-22）：F2 让位给「重命名表」。
+     *
+     * 旧条目把 F2 绑在「进设计器」上，与 Finder / VSCode / Excel 的肌肉记忆正相反
+     * （F2 = 重命名），属于名实不符。设计器改到 ⇧F2 —— 它本来还有 ⇧⌘D 与
+     * 右键菜单两条路，不缺这一个键位。
+     */
+    accelerator: 'Shift+F2',
     surfaces: ['tree-context'],
     scope: 'tree',
     availableWhen: '树中选中表对象；只读连接禁用',
     localDraftOnly: false,
     requiresSqlConfirm: true,
-    note: '报告 §4.2：F2 旧文案写「重命名」，实际行为是**进入表设计器**（不是树内改名）。文案已按真实行为统一为「设计表…」',
+    note: '报告 §4.2：F2 旧文案写「重命名」，实际行为是**进入表设计器**。0.7.3 已把 F2 还给「重命名表…」，设计器移到 ⇧F2（另有 ⇧⌘D 与右键入口）',
   },
+  { id: 'tree-rename-table', target: 'table', label: '重命名表…', accelerator: 'F2', surfaces: ['tree-context'], scope: 'tree', availableWhen: '树中选中表对象；只读连接禁用', localDraftOnly: false, requiresSqlConfirm: true, note: '0.7.3（P1-22）：RENAME TABLE 走 DDL 白名单通道；成功后关旧标签、刷新结构' },
   { id: 'tree-delete-object', target: 'table', label: '删除表…', accelerator: 'Delete', surfaces: ['tree-context'], scope: 'tree', availableWhen: '树中选中表对象；只读连接禁用', localDraftOnly: false, requiresSqlConfirm: true },
 ];
 

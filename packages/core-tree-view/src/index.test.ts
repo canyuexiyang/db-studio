@@ -127,6 +127,20 @@ describe('建树', () => {
     // 触发器不应混进表/视图分组
     expect(kinds.find((n) => n.objectKind === 'table')!.children!.map((n) => n.label)).toEqual(['order']);
   });
+
+  it('0.7.3（P2-29）：空分组也能出现在树里（key 稳定、badge 为 0）', () => {
+    const roots = buildTree({ connections: [conn('c1', 'dev')], extraGroups: ['归档'] });
+    const keys = roots.map((n) => n.key);
+    // 未分组在前（conn('c1','dev') 无 group），空分组在最后
+    expect(keys).toEqual(['group-root:ungrouped', 'group:归档']);
+    const archive = roots[1];
+    expect(archive.kind).toBe('group');
+    expect(archive.label).toBe('归档');
+    expect(archive.children).toEqual([]);
+    expect(archive.badge).toBe(0);
+    // 对照：不传 extraGroups 时它不该凭空出现
+    expect(buildTree({ connections: [conn('c1', 'dev')] }).map((n) => n.key)).toEqual(['group-root:ungrouped']);
+  });
 });
 
 describe('扁平化', () => {

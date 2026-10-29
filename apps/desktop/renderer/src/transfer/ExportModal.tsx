@@ -114,8 +114,11 @@ export function ExportModal({
   onToast,
 }: ExportModalProps) {
   const [format, setFormat] = useState<ExportFormat>('xlsx');
-  // 默认「全部匹配」= 改造前的「当前表」口径（重查），老用户的操作路径不变
-  const [scope, setScope] = useState<ExportScopeId>('matched');
+  // 默认「全部匹配」= 改造前的「当前表」口径（重查），老用户的操作路径不变。
+  // 0.7.3（P1-24）：库级入口（有库无表、无 SQL）的**唯一**可用范围是整库 ——
+  // 默认落在已经被禁用的一项上，用户会以为弹窗坏了。
+  // ⚠️ 这里直接看 props（table/sql），不能引用下面的 hasSql —— 那行还没执行到（TDZ）。
+  const [scope, setScope] = useState<ExportScopeId>(() => (table || (sql && sql.trim()) ? 'matched' : 'database'));
   const [onlyVisibleColumns, setOnlyVisibleColumns] = useState(false);
   const [advOpen, setAdvOpen] = useState(false);
   const [delimiter, setDelimiter] = useState<string>(',');
@@ -144,6 +147,8 @@ export function ExportModal({
   const facts: ScopeFacts = {
     hasSql,
     hasTable: Boolean(table),
+    // 0.7.3（P1-24）：库级入口 = 有库、没表、没 SQL ——「整库」才该可用
+    hasDatabase: !table && !hasSql,
     filterActive: Boolean(where),
     selectionRowCount: snapshot ? snapshot.selectedRowCount : null,
     loadedRowCount: snapshot ? snapshot.loadedRowCount : null,

@@ -387,6 +387,96 @@ const demoSnippets = new Map<string, Snippet>();
  */
 let demoFailUsed = false;
 
+/**
+ * 0.7.3：demo 侧的库结构（可被 DDL 改动）。
+ *
+ * 🔴 为什么 demo 也必须"真的改"：建库/删库/改名/复制表这几个入口的验收点，
+ *    有一半在**刷新后的树**上（新库出现、旧库消失、表改名）。如果 demo 恒返回
+ *    `DEMO_DATABASES`，浏览器模式下这些断言全部是假绿 —— 界面看起来对，
+ *    只是因为演示数据从来没变过。
+ *
+ * 🔴 每次改动都产出**新数组**（不改原数组元素）：App 的 `treeRoots` 是 useMemo，
+ *    依赖的是 `schemas[connId]` 的引用；原地 push 会让引用不变 → 树不重建 →
+ *    "建库成功但树没反应"（正是本轮要修的那类 bug）。
+ */
+let demoDatabases: DatabaseMeta[] = DEMO_DATABASES.map((d) => ({ ...d, tables: [...d.tables] }));
+
+/** 反引号里的标识符（`` 转 `` `` 的转义还原） */
+function demoUnquoteIdent(raw: string): string {
+  const s = raw.trim();
+  if (s.startsWith('`') && s.endsWith('`')) return s.slice(1, -1).replace(/``/g, '`');
+  return s;
+}
+
+/**
+ * 把一条 DDL 作用到 demo 结构上（只覆盖 0.7.3 入口会发的形态）。
+ *
+ * 判不出来就**什么都不做**：demo 的职责是让 UI 闭环可见，不是当 SQL 引擎 ——
+ * 宁可没效果，也不要在演示数据上做半吊子的语句解释。
+ */
+function demoApplyDdl(sql: string): void {
+  const text = sql.trim().replace(/;\s*$/, '');
+
+  const createDb = /^CREATE\s+DATABASE\s+(`(?:[^`]|``)+`|\S+)/i.exec(text);
+  if (createDb) {
+    const name = demoUnquoteIdent(createDb[1]);
+    if (demoDatabases.some((d) => d.name === name)) throw new Error(`Can't create database '${name}'; database exists`);
+    const charset = /\bCHARACTER\s+SET\s+([A-Za-z0-9_]+)/i.exec(text)?.[1] ?? 'utf8mb4';
+    const collation = /\bCOLLATE\s+([A-Za-z0-9_]+)/i.exec(text)?.[1] ?? 'utf8mb4_general_ci';
+    demoDatabases = [...demoDatabases, { name, charset, collation, tables: [] }];
+    return;
+  }
+
+  const dropDb = /^DROP\s+(?:DATABASE|SCHEMA)\s+(?:IF\s+EXISTS\s+)?(`(?:[^`]|``)+`|\S+)/i.exec(text);
+  if (dropDb) {
+    const name = demoUnquoteIdent(dropDb[1]);
+    if (!demoDatabases.some((d) => d.name === name)) throw new Error(`Can't drop database '${name}'; database doesn't exist`);
+    demoDatabases = demoDatabases.filter((d) => d.name !== name);
+    return;
+  }
+
+  const rename = /^RENAME\s+TABLE\s+(`[^`]+`)\s*\.\s*(`[^`]+`)\s+TO\s+(`[^`]+`)\s*\.\s*(`[^`]+`)$/i.exec(text);
+  if (rename) {
+    const [, dbRaw, fromRaw, toDbRaw, toRaw] = rename;
+    const db = demoUnquoteIdent(dbRaw);
+    const from = demoUnquoteIdent(fromRaw);
+    const toDb = demoUnquoteIdent(toDbRaw);
+    const to = demoUnquoteIdent(toRaw);
+    const source = demoDatabases.find((d) => d.name === db);
+    const target = demoDatabases.find((d) => d.name === toDb);
+    if (!source || !target) throw new Error('表所在库不存在');
+    const idx = source.tables.findIndex((t) => t.name === from);
+    if (idx < 0) throw new Error(`Table '${db}.${from}' doesn't exist`);
+    if (target.tables.some((t) => t.name === to)) throw new Error(`Table '${toDb}.${to}' already exists`);
+    const moved = { ...source.tables[idx], name: to };
+    demoDatabases = demoDatabases.map((d) => {
+      if (d.name === db && d.name === toDb) {
+        return { ...d, tables: d.tables.map((t, i) => (i === idx ? moved : t)) };
+      }
+      if (d.name === db) return { ...d, tables: d.tables.filter((_, i) => i !== idx) };
+      if (d.name === toDb) return { ...d, tables: [...d.tables, moved] };
+      return d;
+    });
+    return;
+  }
+
+  // CREATE TABLE … LIKE（复制表第一步）：把源表元数据克隆一份，名字换成目标名
+  const like = /^CREATE\s+TABLE\s+(`[^`]+`)\s*\.\s*(`[^`]+`)\s+LIKE\s+(`[^`]+`)\s*\.\s*(`[^`]+`)$/i.exec(text);
+  if (like) {
+    const [, toDbRaw, toRaw, fromDbRaw, fromRaw] = like;
+    const toDb = demoUnquoteIdent(toDbRaw);
+    const to = demoUnquoteIdent(toRaw);
+    const fromDb = demoUnquoteIdent(fromDbRaw);
+    const from = demoUnquoteIdent(fromRaw);
+    const source = demoDatabases.find((d) => d.name === fromDb)?.tables.find((t) => t.name === from);
+    if (!source) throw new Error(`Table '${fromDb}.${from}' doesn't exist`);
+    demoDatabases = demoDatabases.map((d) =>
+      d.name === toDb ? { ...d, tables: [...d.tables, { ...source, name: to, estimatedRows: 0 }] } : d,
+    );
+  }
+  // INSERT … SELECT / OPTIMIZE|ANALYZE|CHECK TABLE：demo 里没有数据可言，不产生结构变化
+}
+
 const demoBackend: Backend = {
   kind: 'demo',
 
@@ -438,8 +528,8 @@ const demoBackend: Backend = {
     return idx >= 0;
   },
 
-  schemaGet: async () => DEMO_DATABASES,
-  schemaRefresh: async () => DEMO_DATABASES,
+  schemaGet: async () => demoDatabases,
+  schemaRefresh: async () => demoDatabases,
   schemaGetTable: async (_connId, database, table) => ({
     database,
     // 🔴 宽表必须返回它自己的元数据：若退回 DEMO_TABLE_META（7 列），
@@ -456,12 +546,24 @@ const demoBackend: Backend = {
   }),
   schemaSearchColumn: async () => [],
 
-  // demo：对象定义返回占位文本，表信息返回一组自洽的假数据（UI 流程可走通即可）
+  /**
+   * demo：对象定义。
+   *
+   * 表/例程给占位文本（SHOW CREATE 在浏览器不可用）；**视图给真实形态的
+   * `SHOW CREATE VIEW` 原文** —— 0.7.3 的「改定义（CREATE OR REPLACE）」
+   * 要对这段文本做改写，占位注释会被如实拒绝（toCreateOrReplaceView 返回 null），
+   * 那样 e2e 只能验到降级路径、验不到真正要保的那条。
+   * 这里刻意保留 `ALGORITHM=… DEFINER=… SQL SECURITY …` 修饰子句：
+   * 真机上 90% 的视图定义都长这样，改写必须在 `CREATE` token 上插，而不是插在 VIEW 前。
+   */
   schemaGetObjectDdl: async (req) => ({
     kind: req.kind,
     name: req.name,
     database: req.database,
-    ddl: `-- demo 模式：${req.kind} ${req.database}.${req.name} 的定义\nSHOW CREATE 在浏览器 demo 下不可用`,
+    ddl:
+      req.kind === 'view'
+        ? `CREATE ALGORITHM=UNDEFINED DEFINER=\`demo\`@\`%\` SQL SECURITY DEFINER VIEW \`${req.database}\`.\`${req.name}\` AS select 1 AS \`col1\``
+        : `-- demo 模式：${req.kind} ${req.database}.${req.name} 的定义\nSHOW CREATE 在浏览器 demo 下不可用`,
   }),
   schemaGetTableInfo: async () => ({
     engine: 'InnoDB',
@@ -615,14 +717,18 @@ const demoBackend: Backend = {
   },
   queryCancel: async () => true,
 
-  mutationApply: async (req) => ({
-    affected: req.statements.length,
-    elapsedMs: 5,
-    insertIds: req.statements.map(() => null),
-    outcome: 'ok' as const,
-    conflicts: [],
-    committed: true,
-  }),
+  mutationApply: async (req) => {
+    // 0.7.3：DDL 在 demo 里真的改结构，刷新后的树才是可信证据
+    if (req.mode === 'ddl') for (const st of req.statements) demoApplyDdl(st.sql);
+    return {
+      affected: req.statements.length,
+      elapsedMs: 5,
+      insertIds: req.statements.map(() => null),
+      outcome: 'ok' as const,
+      conflicts: [],
+      committed: true,
+    };
+  },
 
   // demo：导出/导入模拟（浏览器 dev 模式下至少 UI 流程可走）
   exportStart: async () => ({ jobId: `demo-export-${Date.now()}` }),

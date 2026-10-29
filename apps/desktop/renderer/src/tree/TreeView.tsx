@@ -14,14 +14,14 @@
  *  - 【右键】树侧能力（查看定义/复制 DDL/INSERT 模板/收藏）由本组件构造，
  *    经 onNodeContextMenu 的第 4 参 `extra.treeItems` 交给宿主菜单合并；
  *    宿主没接 onNodeContextMenu 时自绘降级菜单，功能不灭。
- *  - 【键盘】F2 = 重命名表（onRenameRequest）、Delete/Backspace = 删除表
- *    （onDeleteRequest，宿主自带危险确认）；prop 未传时按键无操作。
+ *  - 【键盘】F2 = 重命名表（onRenameRequest）、⇧F2 = 打开表设计器（onDesignRequest）、
+ *    Delete/Backspace = 删除表（onDeleteRequest，宿主自带危险确认）；prop 未传时按键无操作。
  *  - 【拖拽】表对象行可拖出（C7）：dataTransfer 带结构化表元数据 + text/plain 限定名。
  *
  * 🔴 状态标记一律用 CSS 圆点（.tree-state::before），不许用 emoji/字符符号。
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import {
   flattenTree,
   // P0-2：搜索态要基于**全树**（未展开库里的表也必须搜得到）
@@ -70,6 +70,13 @@ export interface TreeViewProps {
   onDeleteConnection?: (cfg: ConnectionConfig) => void;
   /** 数据库节点「新建表」：打开表设计器（§6.5.4）。显式带 connId，避免同名库跨连接（T03/R03） */
   onNewTable?: (database: string, connId: string) => void;
+  /**
+   * 0.7.3（P0-19）：新建数据库。**入口挂在库列表尾部**（连接展开时最后一行
+   * 「＋ 新建数据库」），不是连接行上的第 4 个 hover 按钮 —— 后者会把连接行的
+   * 动作区挤到行宽中线，点行中间就误开对话框（详见 `addDbAfter` 的注释）。
+   * 右键菜单与命令面板里也有同一条。
+   */
+  onNewDatabase?: (connId: string) => void;
   /** 搜索按字段名命中（Q2）时打开对应表 —— 列命中在树里没有节点，由这里跳转 */
   onOpenTableRef?: (database: string, tableName: string) => void;
   /**
@@ -84,8 +91,16 @@ export interface TreeViewProps {
   onShowDefinition?: (req: ShowDefinitionRequest) => void;
   /** C3/C5 轻量反馈通道（toast）。未传时动作照常执行，只是无提示 */
   onToast?: (msg: string) => void;
-  /** C6 F2：表节点重命名（宿主转表设计器编辑态）。未传时按键无操作 */
+  /**
+   * C6 F2：表节点**重命名**（0.7.3 P1-22 起名副其实）。
+   *
+   * 旧实现把这个键接到「打开表设计器」，与 Finder/VSCode/Excel 的 F2 语义相反。
+   * 现在 F2 = 重命名（宿主弹输名对话框 → RENAME TABLE），⇧F2 = 进设计器（onDesignRequest）。
+   * 未传时按键无操作。
+   */
   onRenameRequest?: (req: TreeTableActionRequest) => void;
+  /** 0.7.3（P1-22）：⇧F2 = 打开表设计器（F2 已让位给重命名）。未传时按键无操作 */
+  onDesignRequest?: (req: TreeTableActionRequest) => void;
   /** C6 Delete/Backspace：删除表（宿主转 onTableDestructive，自带危险确认）。未传时按键无操作 */
   onDeleteRequest?: (req: TreeTableActionRequest) => void;
   /**
@@ -170,12 +185,14 @@ export function TreeView({
   onEditConnection,
   onDeleteConnection,
   onNewTable,
+  onNewDatabase,
   onOpenTableRef,
   onNodeContextMenu,
   onBackgroundContextMenu,
   onShowDefinition,
   onToast,
   onRenameRequest,
+  onDesignRequest,
   onDeleteRequest,
   onSelectionChange,
 }: TreeViewProps) {
@@ -213,6 +230,42 @@ export function TreeView({
     () => (query.trim() ? filterFlatByQuery(flattenAll(roots), hits) : flat),
     [flat, query, hits, roots],
   );
+
+  /**
+   * P0-19：库区末尾的「＋ 新建数据库」行 —— 挂在**每个已展开连接**的库列表尾部。
+   *
+   * 🔴 为什么不做成连接行上的第 4 个 hover 按钮（最初就是这么写的，被 e2e 打回）：
+   *    连接行的动作区是右对齐的，4 个按钮共 ~100px，在 240px 侧栏里它的左缘已经
+   *    压到行宽中线 —— **点连接行的中点会直接弹「新建数据库」对话框**，而不是选中
+   *    这一行（真机 e2e 的「单击树节点即选中」当场变红，左分隔条也因为弹出的遮罩
+   *    拖不动）。行内条目的归属是「库列表」，放在列表尾部既符合语义，也不再挤占用
+   *    户点行的命中区。
+   *
+   * 值 = 追加在该**可见行索引**之后；连接收起 / 搜索态时不渲染（免得出现一行
+   * 挂在别人家孩子下面的按钮）。
+   */
+  const addDbAfter = useMemo(() => {
+    const m = new Map<number, { connId: string; depth: number }>();
+    if (!onNewDatabase || query.trim()) return m;
+    for (let i = 0; i < visible.length; i++) {
+      const node = visible[i].node;
+      if (node.kind !== 'connection' || !node.connection) continue;
+      if (!expanded.has(node.key)) continue;
+      const depth = visible[i].depth;
+      // 只认**库层**的行（连接的直接子节点）；库展开后的表/类别不算，否则按钮会被
+      // 顶到最后一张表的下一层，看起来像"这张表里能建库"
+      let last = i;
+      for (let j = i + 1; j < visible.length; j++) {
+        const g = visible[j];
+        if (g.depth <= depth) break;
+        if (g.depth === depth + 1 && g.node.kind === 'database') last = j;
+      }
+      // 缩进必须按**连接**的层级算（+1 = 库层），不能按"被追加的那一行"算 ——
+      // 追加点是最后一个库行，本身已经是库层，再 +1 就缩到类别层去了（e2e 抓到）
+      m.set(last, { connId: node.connection.id, depth: depth + 1 });
+    }
+    return m;
+  }, [visible, expanded, query, onNewDatabase]);
 
   const onToggle = useCallback(
     (key: string) => onExpandedChange(toggleExpanded(expanded, key)),
@@ -559,6 +612,14 @@ export function TreeView({
       const connId = connIdOfObjectKey(node.key);
       if (!connId) return;
       if (e.key === 'F2') {
+        // 0.7.3（P1-22）：F2 = 重命名表；⇧F2 = 进设计器。
+        // 🔴 ⇧F2 时**不能**回退成重命名 —— 「按了却没反应」比「做错事」安全得多。
+        if (e.shiftKey) {
+          if (!onDesignRequest) return;
+          e.preventDefault();
+          onDesignRequest({ connId, database: node.database, table: node.table });
+          return;
+        }
         if (!onRenameRequest) return;
         e.preventDefault();
         onRenameRequest({ connId, database: node.database, table: node.table });
@@ -568,7 +629,7 @@ export function TreeView({
         onDeleteRequest({ connId, database: node.database, table: node.table });
       }
     },
-    [roots, activeKey, onRenameRequest, onDeleteRequest, visible, onToggle, moveActiveTo],
+    [roots, activeKey, onRenameRequest, onDesignRequest, onDeleteRequest, visible, onToggle, moveActiveTo],
   );
 
   return (
@@ -608,7 +669,7 @@ export function TreeView({
         </div>
       ) : null}
 
-      {visible.map((f) => {
+      {visible.map((f, vi) => {
         const n = f.node;
         const st = n.connection ? connStates?.[n.connection.id] : undefined;
         const live = isLiveState(st?.state);
@@ -658,8 +719,8 @@ export function TreeView({
           : undefined;
 
         return (
+          <Fragment key={n.key}>
           <div
-            key={n.key}
             ref={(el) => {
               if (el) rowEls.current.set(n.key, el);
               else rowEls.current.delete(n.key);
@@ -677,6 +738,16 @@ export function TreeView({
              */
  data-node-kind={n.kind}
       data-node-depth={f.depth}
+            /**
+             * 0.7.3：节点 key 也暴露出来。
+             *
+             * 为什么非要它：key 是 `obj:<connId>:<db>:<table>` 这种**全局唯一**的
+             * 口径，而标签只是同一层里的显示名 —— demo 里两个连接共享同一份库结构
+             * （`log_db.access_log` 会出现两行），e2e 一按标签找就取到了另一个连接
+             * 的那一行，"这张表已改名"的断言永远为假（真机 e2e 抓到）。
+             * 有了 key，断言可以精确到「哪个连接下的哪张表」。
+             */
+            data-node-key={n.key}
             draggable={isTableObj}
             onDragStart={onDragStart}
             onClick={(e) => onRowClick(f, e)}
@@ -806,6 +877,20 @@ onSelectNode?.(n);
               <span className={`tree-state state-${st.state}`} title={st.lastError ?? stateLabel(st.state)} />
             ) : null}
           </div>
+          {addDbAfter.has(vi) && onNewDatabase ? (
+            <div
+              className="tree-adddb"
+              style={{ paddingLeft: 6 + addDbAfter.get(vi)!.depth * 14 }}
+              data-node-kind="add-database"
+              data-conn-id={addDbAfter.get(vi)!.connId}
+              title="新建数据库（连接右键里也有同一条）"
+              onClick={() => onNewDatabase(addDbAfter.get(vi)!.connId)}
+            >
+              <IconPlus size={10} />
+              新建数据库
+            </div>
+          ) : null}
+          </Fragment>
         );
       })}
 

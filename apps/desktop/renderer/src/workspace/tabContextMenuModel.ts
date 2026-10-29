@@ -17,7 +17,9 @@ import type { WorkspaceTab } from './useWorkspaceTabs';
 export type TabMenuAction =
   | 'close'
   | 'closeOthers'
+  | 'closeLeft'
   | 'closeRight'
+  | 'closeAll'
   | 'togglePin'
   | 'revealInTree'
   | 'copyIdentity';
@@ -75,6 +77,30 @@ export function closeRightIds(
   const idx = tabs.findIndex((t) => t.id === targetId);
   if (idx < 0) return [];
   return tabs.slice(idx + 1).filter((t) => closable(t, opts)).map((t) => t.id);
+}
+
+/**
+ * 0.7.3（P1-26）：关闭左侧 —— 严格在 target **之前**的可关闭标签；target 不存在 → []。
+ *
+ * 与「关闭右侧」同一个边界纪律：target 找不到时返回空集，绝不能退化成"关掉全部"
+ * （右键的标签可能刚好在这一帧被 ⌘W 关掉）。
+ */
+export function closeLeftIds(
+  tabs: readonly WorkspaceTab[],
+  targetId: string,
+  opts?: ClosableOptions,
+): string[] {
+  const idx = tabs.findIndex((t) => t.id === targetId);
+  if (idx < 0) return [];
+  return tabs.slice(0, idx).filter((t) => closable(t, opts)).map((t) => t.id);
+}
+
+/**
+ * 0.7.3（P1-26）：关闭全部 —— 所有可关闭的标签（含 target 自己）。
+ * 固定标签同样不参与（与「关闭其他/左侧/右侧」共用 isClosable 钩子）。
+ */
+export function closeAllIds(tabs: readonly WorkspaceTab[], opts?: ClosableOptions): string[] {
+  return tabs.filter((t) => closable(t, opts)).map((t) => t.id);
 }
 
 // ---------- 批量关闭的脏清单 ----------
@@ -254,11 +280,14 @@ export function buildTabMenuItems(input: TabMenuInput): TabMenuItem[] {
 
   const others = closeOthersIds(tabs, tab.id, opts);
   const right = closeRightIds(tabs, tab.id, opts);
+  const left = closeLeftIds(tabs, tab.id, opts);
+  const all = closeAllIds(tabs, opts);
   const identity = objectIdentityOf(tab);
   const treeKey = treeKeyOfTab(tab);
 
   const totalOthers = tabs.filter((t) => t.id !== tab.id).length;
   const rightTotal = tabs.length - 1 - tabs.findIndex((t) => t.id === tab.id);
+  const leftTotal = tabs.findIndex((t) => t.id === tab.id);
 
   return [
     {
@@ -287,6 +316,18 @@ export function buildTabMenuItems(input: TabMenuInput): TabMenuItem[] {
             : '其余标签都不可关闭'
           : undefined,
     },
+    /** 0.7.3（P1-26）：与「关闭右侧」对称，补齐浏览器/VSCode 的标准四件套 */
+    {
+      key: 'closeLeft',
+      label: '关闭左侧标签',
+      disabled: left.length === 0,
+      disabledReason:
+        left.length === 0
+          ? leftTotal <= 0
+            ? '没有左侧标签'
+            : '左侧没有可关闭的标签'
+          : undefined,
+    },
     {
       key: 'closeRight',
       label: '关闭右侧标签',
@@ -297,6 +338,12 @@ export function buildTabMenuItems(input: TabMenuInput): TabMenuItem[] {
             ? '没有右侧标签'
             : '右侧没有可关闭的标签'
           : undefined,
+    },
+    {
+      key: 'closeAll',
+      label: '关闭全部标签',
+      disabled: all.length === 0,
+      disabledReason: all.length === 0 ? '没有可关闭的标签（固定标签需先取消固定）' : undefined,
     },
     {
       key: 'revealInTree',

@@ -102,6 +102,37 @@ import { loadTableView, saveTableView } from './workspace/tableViewMemory';
 // R1 集成：应用壳（F1 菜单/F2 缩放/F4 会话恢复/F7 空态/D1 断线横幅）
 import { EmptyState } from './workspace/EmptyState';
 import { ObjectBrowser } from './workspace/ObjectBrowser';
+// 0.7.3：库生命周期（建库/删库）与对象 DDL 的唯一构造处 + 复用首屏 .modal 壳的对话框
+import { CreateDatabaseModal } from './database/DdlDialogs';
+import { NamePromptModal } from './database/DdlDialogs';
+import {
+  MAINTENANCE_LABELS,
+  OBJECT_KIND_TEXT,
+  buildCopyTableSql,
+  buildCreateDatabaseSql,
+  buildDropDatabaseSql,
+  buildMaintenanceSql,
+  buildObjectTemplate,
+  buildRenameTableSql,
+  defaultCollationOf,
+  toCreateOrReplaceView,
+  validateNewName,
+  type MaintenanceAction,
+  type ObjectCreateKind,
+} from './database/ddlTemplates';
+import { CopyTableModal } from './database/DdlDialogs';
+import {
+  addEmptyGroup,
+  childGroupPath,
+  groupDisplayName,
+  isInGroup,
+  loadEmptyGroups,
+  normalizeGroupPath,
+  removeEmptyGroupSubtree,
+  renameEmptyGroups,
+  renameGroupPatch,
+  saveEmptyGroups,
+} from './workspace/connectionGroups';
 import { ConnStateBanner } from './workspace/ConnStateBanner';
 import { nextZoom, loadFontZoom, saveFontZoom, applyFontZoom } from './workspace/fontZoom';
 import { snippetActionOf, snippetCommandId, snippetOriginLabel, findSnippetByAction } from './workspace/snippetCommand';
@@ -473,6 +504,14 @@ export function App() {
   const [booting, setBooting] = useState(true);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /**
+   * 0.7.3（P2-29）：空分组路径清单。
+   *
+   * 分组是**派生**的（连接的 `group` 字段），所以"没有连接的分组"本不存在 ——
+   * 用户点「新建分组」后它会立刻消失。这份清单被 buildTree 并进树里，
+   * 只存路径、不碰连接与凭据。声明在这里（而不是靠近用途）是因为 treeRoots 要用它。
+   */
+  const [emptyGroups, setEmptyGroups] = useState<string[]>(() => loadEmptyGroups());
   const [activeKey, setActiveKey] = useState<string | null>(null);
   /**
    * 0.7.1（真机反馈 3）：中间对象清单的**作用域锚点**。
@@ -1005,8 +1044,9 @@ export function App() {
   // ---------- 树 ----------
   const treeRoots: TreeNode[] = useMemo(() => {
     if (connections.length === 0) return [];
-    return buildTree({ connections, schemas });
-  }, [connections, schemas]);
+    // 0.7.3：extraGroups 让"空分组"也能出现在树里（分组是派生的，没连接就不存在）
+    return buildTree({ connections, schemas, extraGroups: emptyGroups });
+  }, [connections, schemas, emptyGroups]);
 
   // Q2：字段名 → 含该字段的表。搜索框输入字段名时反查表（内存 Map，schema 变化才重建）
   const columnIndex = useMemo(() => buildColumnIndex(schemas), [schemas]);
@@ -2945,6 +2985,439 @@ export function App() {
   }, []);
 
   /**
+   * 0.7.3（P0-19）：DDL 完成后「展开并定位」到目标节点。
+   *
+   * 🔴 为什么不能就地 setExpanded：`onRefreshConnSchema` 只是把新结构写进 schemas，
+   *    `treeRoots` 要到下一次渲染才包含新库。此刻拿旧树去 `expandAncestors` 找不到节点，
+   *    等于什么都没展开（用户看到「创建成功」但树上没反应）。
+   *    所以这里只登记意图，由下面的 effect 在树跟上之后执行一次。
+   */
+  const pendingRevealRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = pendingRevealRef.current;
+    if (!key) return;
+    if (!findTreeNode(treeRoots, key)) return; // 树还没跟上（schema 推送未到）→ 等下一次
+    pendingRevealRef.current = null;
+    setActiveKey(key);
+    setObScopeKey(key);
+    setExpanded((prev) => expandAncestors(prev, treeRoots, key));
+  }, [treeRoots]);
+
+  // ---- 0.7.3 P0-19：新建数据库 ----
+  /**
+   * 对话框上下文。`existing` 取自**已加载的 schema**：它是重名判定的唯一依据
+   * （服务端仍会再判一次，这里只是让用户在点确认前就知道重名）。
+   */
+  const [dbCreate, setDbCreate] = useState<{
+    connId: string;
+    connName: string;
+    existing: string[];
+    defaultCharset: string;
+    defaultCollation: string;
+  } | null>(null);
+  const [dbCreateBusy, setDbCreateBusy] = useState(false);
+  const [dbCreateError, setDbCreateError] = useState<string | null>(null);
+
+  /**
+   * 打开「新建数据库」对话框。
+   *
+   * 三道前置：只读连接直接拒（写了也是被主进程拦）、连接先握手（DDL 要有活会话）、
+   * promptEveryTime 连接先要密码（输完经 pendingAfterConnectRef 回到这里）。
+   */
+  const openCreateDb = useCallback(
+    async (connId: string) => {
+      const cfg = connections.find((c) => c.id === connId);
+      if (!cfg) {
+        setToast('该连接已不存在（可能刚被删除）');
+        return;
+      }
+      if (cfg.readOnly) {
+        setToast('该连接已标记为只读，不允许建库（写语句会被主进程 AST 守卫拦截）');
+        return;
+      }
+      const ensure = await ensureConnection(connId);
+      if (ensure === 'need-password') {
+        setPwdPrompt(cfg);
+        pendingAfterConnectRef.current = () => void openCreateDb(connId);
+        setToast('该连接要求手动输入密码，输入后自动继续');
+        return;
+      }
+      if (ensure === 'failed') {
+        setToast('连接未建立，无法建库（左树单击连接节点重试）');
+        return;
+      }
+      // 字符集/排序规则默认跟随**该实例已有库的第一个** —— 新库与既有库保持一致，
+      // 比写死 utf8mb4 更贴近真实环境（有的实例整体是 latin1）
+      const dbs = schemas[connId] ?? [];
+      const first = dbs.find((d) => d.charset);
+      const charset = first?.charset ?? 'utf8mb4';
+      setDbCreateError(null);
+      setDbCreate({
+        connId,
+        connName: cfg.name,
+        existing: dbs.map((d) => d.name),
+        defaultCharset: charset,
+        defaultCollation: first?.collation ?? defaultCollationOf(charset),
+      });
+    },
+    [connections, ensureConnection, schemas],
+  );
+
+  /** 执行 CREATE DATABASE（对话框点「创建」） */
+  const submitCreateDb = useCallback(
+    async (v: { name: string; charset: string; collation: string }) => {
+      if (!dbCreate) return;
+      const { connId } = dbCreate;
+      let sql: string;
+      try {
+        sql = buildCreateDatabaseSql(v);
+      } catch (e) {
+        setDbCreateError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      setDbCreateBusy(true);
+      setDbCreateError(null);
+      try {
+        /**
+         * 🔴 `database: ''`：CREATE DATABASE 没有库上下文，传空串让主进程跳过 `USE`。
+         *    传一个不相干的库名虽然也能执行，但会把会话的默认库改掉（副作用）。
+         */
+        await backend.mutationApply({
+          connId,
+          database: '',
+          statements: [{ sql, params: [] }],
+          mode: 'ddl',
+        });
+        setDbCreate(null);
+        /**
+         * 🔴 两件事的顺序都不能动：
+         *  1. 登记定位意图必须**在刷新之前** —— `onRefreshConnSchema` 内部 setSchemas
+         *     会触发一次重渲染，那个 effect（依赖 treeRoots）就在那一刻跑；先 await
+         *     再登记的话 effect 已经带着空 key 跑完了，之后不再跑 → 树永远不展开。
+         *  2. 成功回执必须**在刷新之后** —— `onRefreshConnSchema` 自己会 toast
+         *     「已刷新表结构」，先报结果会被它盖掉（用户只看到"刷新了"，不知道库建成了）。
+         */
+        pendingRevealRef.current = `db:${connId}:${v.name}`;
+        await onRefreshConnSchema(connId);
+        setToast(`已创建数据库 ${v.name}`);
+      } catch (e) {
+        // 失败不关弹窗：用户填的字符集/名字要留着，服务端原文贴在框里
+        setDbCreateError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setDbCreateBusy(false);
+      }
+    },
+    [dbCreate, onRefreshConnSchema],
+  );
+
+  /**
+   * 0.7.3（P0-20）：删除数据库。
+   *
+   * 🔴 **必须走危险第三层**（输库名），而且**无条件**——不像删表只在生产环境才输名。
+   *    删库是不可逆的范围最大操作，Navicat 也是无条件输名；生产红标则由 confirmDanger
+   *    自动升级标题与红标。
+   * 🔴 `database: ''` 同样是为了不 `USE` 这个即将被删的库。
+   */
+  const onDropDatabase = useCallback(
+    async (connId: string, database: string) => {
+      if (connections.some((c) => c.id === connId && c.readOnly === true)) {
+        setToast('该连接已标记为只读，不允许删除数据库（写语句会被主进程 AST 守卫拦截）');
+        return;
+      }
+      let sql: string;
+      try {
+        sql = buildDropDatabaseSql(database);
+      } catch (e) {
+        setToast(`无法构造删除语句：${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+      const isProduction = connections.find((c) => c.id === connId)?.colorTag === 'red';
+      const tabsInDb = ws.tabs.filter((t) => t.connId === connId && t.database === database).length;
+      const confirmed = await confirmDanger(connId, {
+        title: isProduction ? '生产环境危险操作' : '删除数据库',
+        statements: [sql],
+        reason:
+          `将删除数据库 ${database} 及其下全部表、视图、例程与数据，无法自动恢复。` +
+          (tabsInDb > 0 ? `将同时关闭该库上的 ${tabsInDb} 个标签。` : ''),
+        // 无条件输库名（比删表更严格：删表只在生产环境要求输名）
+        requireText: database,
+      });
+      if (!confirmed) {
+        setToast('已取消执行');
+        return;
+      }
+      try {
+        await backend.mutationApply({ connId, database: '', statements: [{ sql, params: [] }], mode: 'ddl' });
+        /**
+         * 🔴 回执必须放在刷新**之后**：`onRefreshConnSchema` 自己会 `setToast('已刷新
+         * 表结构')`，先报「已删除数据库 X」会被它当场盖掉（真机 e2e 抓到，用户看到
+         * 的是一条与操作无关的刷新提示）。
+         */
+        await onRefreshConnSchema(connId);
+        setToast(`已删除数据库 ${database}`);
+        // 该库上的标签全部关闭 —— 它们指向的对象已经不存在，留着只会每点必报错
+        for (const t of ws.tabs) {
+          if (t.connId === connId && t.database === database) ws.closeTab(t.id);
+        }
+        // 选中项指向已消失的库时清掉，避免详情面板/工具条拿着死 key
+        setActiveKey((prev) => (prev?.startsWith(`db:${connId}:${database}`) || prev?.startsWith(`kind:${connId}:${database}:`) || prev?.startsWith(`obj:${connId}:${database}:`) ? null : prev));
+        setObScopeKey((prev) => (prev === `db:${connId}:${database}` || prev?.startsWith(`kind:${connId}:${database}:`) ? null : prev));
+      } catch (e) {
+        setToast(`删除数据库失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [connections, confirmDanger, ws, onRefreshConnSchema],
+  );
+
+  // ---- 0.7.3 P1-22：重命名表（RENAME TABLE） ----
+  const [renameTable, setRenameTable] = useState<{ connId: string; database: string; table: TableMeta } | null>(null);
+
+  /**
+   * 提交重命名。
+   *
+   * 三条纪律：
+   *  1. 走**同一条** DDL 通道（`mode: 'ddl'`）—— RENAME 是 DDL，不属于网格写语句；
+   *  2. 旧表标签**关掉**：它记着旧表名，留着每点必 `doesn't exist`。不做"自动改名复用"
+   *     是因为标签上还有筛选/排序/草稿，静默把它们挂到另一张表上更容易出事；
+   *  3. 完成后展开定位到**新表**（用户下一步多半就是打开它）。
+   */
+  const submitRenameTable = useCallback(
+    async (rawNewName: string) => {
+      if (!renameTable) return;
+      const { connId, database, table } = renameTable;
+      if (connections.some((c) => c.id === connId && c.readOnly === true)) {
+        setToast('该连接已标记为只读，不允许重命名表（写语句会被主进程 AST 守卫拦截）');
+        return;
+      }
+      const newName = rawNewName.trim();
+      if (newName === table.name) {
+        setRenameTable(null);
+        setToast('表名未变化');
+        return;
+      }
+      let sql: string;
+      try {
+        sql = buildRenameTableSql(database, table.name, newName);
+      } catch (e) {
+        setToast(`无法构造重命名语句：${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+      try {
+        await backend.mutationApply({ connId, database, statements: [{ sql, params: [] }], mode: 'ddl' });
+        setRenameTable(null);
+        // 登记在刷新之前（同 submitCreateDb 的说明）；回执在刷新之后再说，否则被"已刷新"盖掉
+        pendingRevealRef.current = `obj:${connId}:${database}:${newName}`;
+        await onRefreshConnSchema(connId);
+        setToast(`已把 ${database}.${table.name} 重命名为 ${newName}`);
+        for (const t of ws.tabs) {
+          if (t.kind === 'table' && t.connId === connId && t.database === database && t.tableName === table.name) {
+            ws.closeTab(t.id);
+          }
+        }
+      } catch (e) {
+        // 失败保留对话框：用户改的名字不该丢，服务端原文（如「已存在」）由 toast 报出
+        setToast(`重命名失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [renameTable, connections, ws, onRefreshConnSchema],
+  );
+
+  /**
+   * 0.7.3（P2-27）：表维护（优化 / 分析 / 检查）。
+   *
+   * 审计口径：这三条是**安全操作**（不改行数据），所以不做危险确认 ——
+   * 但必须把服务端回执如实报出来：ANALYZE 之后 `estimatedRows` 会变，
+   * OPTIMIZE 在大表上可能跑几十秒。回一句「已优化」而不带结果等于让用户猜。
+   */
+  const onMaintainTable = useCallback(
+    async (action: MaintenanceAction, connId: string, database: string, tableName: string) => {
+      if (connections.some((c) => c.id === connId && c.readOnly === true)) {
+        setToast('该连接已标记为只读，不执行维护命令（写语句会被主进程 AST 守卫拦截）');
+        return;
+      }
+      const label = MAINTENANCE_LABELS[action];
+      let sql: string;
+      try {
+        sql = buildMaintenanceSql(database, tableName, action);
+      } catch (e) {
+        setToast(`无法构造${label}语句：${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+      setToast(`正在${label} ${database}.${tableName}…`);
+      try {
+        const r = await backend.mutationApply({
+          connId,
+          database,
+          statements: [{ sql, params: [] }],
+          mode: 'ddl',
+        });
+        /**
+         * ANALYZE 会改统计信息（树的估算行数），刷新一次让数字跟上。
+         * 🔴 必须 `await` 且放在回执**之前**：`onRefreshConnSchema` 自带
+         *    `setToast('已刷新表结构')`，后发就把「优化表完成：…（回执 N 条 / X ms）」
+         *    盖掉，用户看不到维护结果（真机 e2e 抓到）。
+         */
+        await onRefreshConnSchema(connId);
+        setToast(`${label}完成：${database}.${tableName}（服务端回执 ${r.affected} 条结果，${r.elapsedMs} ms）`);
+      } catch (e) {
+        setToast(`${label}失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [connections, onRefreshConnSchema],
+  );
+
+  // ---- 0.7.3 P2-28：复制表（结构 / 结构 + 数据） ----
+  const [copyTable, setCopyTable] = useState<{ connId: string; database: string; table: TableMeta } | null>(null);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+
+  /**
+   * 执行复制。
+   *
+   * 🔴 两条语句**分开发**：`CREATE TABLE … LIKE` 属 DDL 白名单，`INSERT … SELECT`
+   *    属写语句白名单 —— 混在一条里必被其中一套拒绝（既有缺陷的形态）。
+   * 🔴 第一步成功、第二步失败时**不假装整体失败**：表已经建好了，用户需要知道
+   *    「结构在、数据没进来」，否则他会以为什么都没发生再点一次（撞重名）。
+   */
+  const submitCopyTable = useCallback(
+    async (v: { name: string; targetDatabase: string; withData: boolean }) => {
+      if (!copyTable) return;
+      const { connId, database, table } = copyTable;
+      if (connections.some((c) => c.id === connId && c.readOnly === true)) {
+        setToast('该连接已标记为只读，不允许复制表（写语句会被主进程 AST 守卫拦截）');
+        return;
+      }
+      let statements: string[];
+      try {
+        statements = buildCopyTableSql({
+          database,
+          table: table.name,
+          newTable: v.name,
+          targetDatabase: v.targetDatabase,
+          withData: v.withData,
+        });
+      } catch (e) {
+        setCopyError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      const [createSql, insertSql] = statements;
+      setCopyBusy(true);
+      setCopyError(null);
+      try {
+        await backend.mutationApply({
+          connId,
+          database: v.targetDatabase,
+          statements: [{ sql: createSql, params: [] }],
+          mode: 'ddl',
+        });
+      } catch (e) {
+        setCopyError(e instanceof Error ? e.message : String(e));
+        setCopyBusy(false);
+        return;
+      }
+      if (insertSql) {
+        try {
+          await backend.mutationApply({
+            connId,
+            database: v.targetDatabase,
+            statements: [{ sql: insertSql, params: [] }],
+            mode: 'grid-write',
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setCopyError(`表结构已复制成功，但数据没进来：${msg}`);
+          setCopyBusy(false);
+          pendingRevealRef.current = `obj:${connId}:${v.targetDatabase}:${v.name}`;
+          void onRefreshConnSchema(connId);
+          return;
+        }
+      }
+      setCopyBusy(false);
+      setCopyTable(null);
+      // 登记在刷新之前、回执在刷新之后（同 submitCreateDb 的说明）
+      pendingRevealRef.current = `obj:${connId}:${v.targetDatabase}:${v.name}`;
+      await onRefreshConnSchema(connId);
+      setToast(
+        `已复制 ${database}.${table.name} → ${v.targetDatabase}.${v.name}${v.withData ? '（含数据）' : '（仅结构）'}`,
+      );
+    },
+    [copyTable, connections, onRefreshConnSchema],
+  );
+
+  // ---- 0.7.3 P2-29：分组管理（空分组 + 重命名） ----
+  const [groupPrompt, setGroupPrompt] = useState<{ mode: 'create' | 'rename'; path: string } | null>(null);
+
+  /** 空分组清单的唯一写入口（内存与 localStorage 一起改，避免两处不一致） */
+  const commitEmptyGroups = useCallback((next: string[]) => {
+    setEmptyGroups(next);
+    saveEmptyGroups(next);
+  }, []);
+
+  /** 新建（子）分组：只落一条路径，不碰任何连接 */
+  const submitCreateGroup = useCallback(
+    (name: string) => {
+      if (!groupPrompt) return;
+      const full = childGroupPath(groupPrompt.path, name);
+      const normalized = normalizeGroupPath(full);
+      if (!normalized) {
+        setToast('分组名不合法');
+        return;
+      }
+      commitEmptyGroups(addEmptyGroup(emptyGroups, normalized));
+      setGroupPrompt(null);
+      // 建完就展开父分组，让新节点立刻可见（否则用户以为没建成）
+      setExpanded((prev) => new Set(prev).add(`group:${groupPrompt.path}`));
+      setToast(`已新建分组 ${normalized}`);
+    },
+    [groupPrompt, emptyGroups, commitEmptyGroups],
+  );
+
+  /**
+   * 重命名分组 = 批量改该组连接的 `group` 字段（分组是派生结构，没有独立存储）。
+   * 空分组清单也跟着改，否则旧路径会作为一个空壳留在树里。
+   */
+  const submitRenameGroup = useCallback(
+    async (name: string) => {
+      if (!groupPrompt) return;
+      const from = groupPrompt.path;
+      const parent = from.split('/').slice(0, -1).join('/');
+      const to = normalizeGroupPath(childGroupPath(parent, name));
+      if (!to || to === from) {
+        setGroupPrompt(null);
+        return;
+      }
+      const patch = renameGroupPatch(connections, from, to);
+      let ok = 0;
+      const failures: string[] = [];
+      for (const p of patch) {
+        const cfg = connections.find((c) => c.id === p.id);
+        if (!cfg) continue;
+        try {
+          await backend.connSave({ config: { ...cfg, group: p.group } });
+          ok += 1;
+        } catch (e) {
+          failures.push(`${cfg.name}：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      commitEmptyGroups(renameEmptyGroups(emptyGroups, from, to));
+      setGroupPrompt(null);
+      await reloadConnections();
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.delete(`group:${from}`);
+        next.add(`group:${to}`);
+        return next;
+      });
+      if (failures.length > 0) {
+        setToast(`已重命名 ${ok} 个连接，${failures.length} 个失败（${failures.join('；')}）`);
+      } else {
+        setToast(`分组 ${from} 已重命名为 ${to}（${ok} 个连接）`);
+      }
+    },
+    [groupPrompt, connections, emptyGroups, commitEmptyGroups, reloadConnections],
+  );
+
+  /**
    * 清空/删除表（树右键，Navicat 对应能力）。
    * 走与网格写操作完全相同的安全链路：confirmDanger（生产环境自动第三层输表名）
    * → mutationApply（主进程只读守卫再兜一次）。标识符转义走 core-sql-ident（红线 5）。
@@ -2995,6 +3468,78 @@ export function App() {
   const copyText = useCallback((text: string) => {
  void navigator.clipboard?.writeText(text).catch(() => undefined);
     setToast(`已复制 ${text}`);
+  }, []);
+
+  /**
+   * 0.7.3（P1-21）：新建视图/过程/函数/触发器/事件 —— **模板方案**。
+   *
+   * 为什么不建专用设计器：这五类对象的语法各有方言差异（定义者、分隔符、
+   * 触发器时机…），一个半吊子设计器只会生成跑不通的 DDL。给一段**单语句、
+   * 改了就能执行**的模板，用户在自己的编辑器里改完按 ⌘R，比任何表单都准。
+   *
+   * 🔴 模板里不含 `BEGIN … END`：编辑器的 splitStatements 按 `;` 切分，块体会被
+   *    切成几条废语句（"填了模板 → 执行 → 语法错误"是最伤人的假实现）。
+   */
+  const openObjectTemplate = useCallback(
+    (kind: ObjectCreateKind, connId: string, database: string) => {
+      try {
+        ws.newQuery(connId, database, buildObjectTemplate(kind, database));
+        setToast(`已在查询标签里放好${OBJECT_KIND_TEXT[kind]}模板 —— 改掉名字后执行（⌘R），左侧结构会自动刷新`);
+      } catch (e) {
+        setToast(`无法生成${OBJECT_KIND_TEXT[kind]}模板：${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [ws],
+  );
+
+  /**
+   * 0.7.3（P2-30）：视图「改定义」一步到位。
+   *
+   * `SHOW CREATE VIEW` 的原文是 `CREATE … VIEW`，直接拿来改会撞「已存在」；
+   * 这里换成 `CREATE OR REPLACE VIEW` 放进新查询标签 —— 用户改完 SELECT 执行就生效，
+   * 不用先 DROP（DROP 会丢权限/依赖，这是视图改定义最容易出事的做法）。
+   */
+  const onOpenViewDefinition = useCallback(
+    async (connId: string, database: string, name: string) => {
+      try {
+        const r = await backend.schemaGetObjectDdl({ connId, database, name, kind: 'view' });
+        const asReplace = toCreateOrReplaceView(r.ddl);
+        if (!asReplace) {
+          setToast(`没能从服务端返回的定义里认出 CREATE VIEW（${name}）—— 已改用「查看定义」展示原文`);
+          fillSqlToEditor(r.ddl);
+          return;
+        }
+        ws.newQuery(connId, database, asReplace);
+        setToast(`已把 ${name} 的定义放进新查询标签（CREATE OR REPLACE：改完执行即生效）`);
+      } catch (e) {
+        setToast(`读取视图定义失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [ws, fillSqlToEditor],
+  );
+
+  /**
+   * 0.7.3（P1-25）：连接右键「测试连接」。
+   *
+   * 与连接编辑器里的「测试连接」走**同一个** `backend.connTest`：主进程会临时建连、
+   * 跑完立刻关，不进注册表也不落盘；不传 `password` 字段 = 沿用已存密码
+   * （否则「什么都没改，测试却说 Access denied」）。
+   *
+   * 🔴 结果一定回报出**服务端版本 + 耗时**：只回一句「连接成功」的话，用户无法区分
+   *    「真的连到目标实例」和「连到了本机另一个 3306」—— 这在多环境机器上是真事故。
+   */
+  const onTestStoredConnection = useCallback(async (cfg: ConnectionConfig) => {
+    setToast(`正在测试 ${cfg.name}…`);
+    try {
+      const r = await backend.connTest({ config: cfg });
+      if (r.ok) {
+        setToast(`${cfg.name}：连接成功（${r.serverVersion ?? '版本未知'}，${r.elapsedMs} ms）`);
+      } else {
+        setToast(`${cfg.name}：连接失败 —— ${r.message ?? '服务端未返回原因'}`);
+      }
+    } catch (e) {
+      setToast(`${cfg.name}：测试失败 —— ${e instanceof Error ? e.message : String(e)}`);
+    }
   }, []);
 
   /**
@@ -3363,6 +3908,13 @@ export function App() {
           onToggleConnectionNode(cfg, live),
         );
         push('newquery', '新建查询', <IconTerminal size={12} />, () => ws.newQuery(cfg.id, null));
+        /**
+         * 0.7.3（P0-19）：新建数据库。
+         *
+         * 放在「新建查询」之后、「编辑连接」之前 —— 它是**对象生命周期**的第一环，
+         * 与后面的「编辑/复制/连接维护」分开；Navicat 的连接右键也是这个次序。
+         */
+        push('newdb', '新建数据库…', <IconPlus size={12} />, () => void openCreateDb(cfg.id), roGuard(cfg.id));
         push('edit', '编辑连接…', <IconGear size={12} />, () =>
           setEditorState({ config: cfg, duplicateOf: null }),
         );
@@ -3381,6 +3933,8 @@ export function App() {
             duplicateOf: cfg.id,
           }),
         );
+        // 0.7.3（P1-25）：测试连接 —— 与编辑器内那颗按钮同一个后端调用，结果带版本与耗时
+        push('testconn', '测试连接', <IconPlug size={12} />, () => void onTestStoredConnection(cfg));
         // V7：连接级「运行 SQL 脚本…」入口 —— 先弹目标库选择（连接可能挂多个库）
         push('runscript', '运行 SQL 脚本…', <IconFileCode size={12} />, () =>
           void openConnScriptPick(cfg.id, cfg.name),
@@ -3413,6 +3967,9 @@ export function App() {
           setDesigner({ mode: 'new', database: node.database!, table: null, connId }),
           roGuard(connId),
         );
+        // 0.7.3（P0-19 第三入口）：库级也放一条「新建数据库」—— 用户想建库时手常常
+        // 已经在某个库上（"再建一个同规格的库"），不必回连接节点
+        push('newdb', '新建数据库…', <IconPlus size={12} />, () => void openCreateDb(connId), roGuard(connId));
         // 运行 SQL 脚本：库级别入口（删库重建 / 导入建表+数据脚本）
         push(
           'runscript',
@@ -3427,14 +3984,60 @@ export function App() {
           ws.newQuery(connId, node.database!, `SELECT * FROM ${quoteQualified([node.database!])}.`),
         );
         push('copyname', '复制库名', <IconCopy size={12} />, () => copyText(node.database!));
+        /**
+         * 0.7.3（P1-24）：导出整库。
+         *
+         * 🔴 `table: null`：整库没有"当前表"，弹窗据此把范围预选成「整库」
+         *    （其余三项如实禁用）。导出弹窗本来就有整库能力（E4），缺的只是入口。
+         */
+        push(
+          'exportdb',
+          '导出整库…',
+          <IconExport size={12} />,
+          () => setExportTarget({ connId, database: node.database!, table: null }),
+          // 导出是纯读操作 —— 只读连接照样能导（不要用 roGuard 误伤）
+          { separatorBefore: true },
+        );
         push('refresh', '刷新', <IconRefresh size={12} />, () => void onRefreshConnSchema(connId), {
           separatorBefore: true,
+        });
+        /**
+         * 0.7.3（P1-21）：库级也放一条「新建视图」—— 视图是这五类里唯一高频的
+         * （固化的查询口径 / 报表口径）。过程/函数/触发器/事件从对应**类别**节点
+         * 发起：那里才是"我在看这一类对象"的上下文，五个都堆在库菜单里只是噪音。
+         */
+        push('newview', '新建视图…', <IconPlus size={12} />, () =>
+          openObjectTemplate('view', connId, node.database!),
+          roGuard(connId, { separatorBefore: true }),
+        );
+        /**
+         * 0.7.3（P0-20）：删除数据库 —— 危险第三层（无条件输库名）。
+         * 放在最后且单独隔开：它是该库上唯一不可逆的操作。
+         */
+        push('dropdb', '删除数据库…', <IconXSmall size={12} />, () => void onDropDatabase(connId, node.database!), {
+          ...roGuard(connId, { danger: true, separatorBefore: true }),
         });
       } else if (node.kind === 'kind' && node.database) {
         const connId = parsed?.connId ?? '';
         if (node.objectKind === 'table') {
           push('newtable', '新建表…', <IconPlus size={12} />, () =>
             setDesigner({ mode: 'new', database: node.database!, table: null, connId }),
+            roGuard(connId),
+          );
+        } else if (
+          node.objectKind === 'view' ||
+          node.objectKind === 'procedure' ||
+          node.objectKind === 'function' ||
+          node.objectKind === 'trigger' ||
+          node.objectKind === 'event'
+        ) {
+          /**
+           * 0.7.3（P1-21）：类别节点上的「新建 X…」—— 此前这五类**只有「刷新」**
+           * （能看不能建）。模板走新建查询标签，用户改完执行即可（P1-21 的克制路线）。
+           */
+          const kind = node.objectKind as ObjectCreateKind;
+          push('newobj', `新建${OBJECT_KIND_TEXT[kind]}…`, <IconPlus size={12} />, () =>
+            openObjectTemplate(kind, connId, node.database!),
             roGuard(connId),
           );
         }
@@ -3466,9 +4069,27 @@ export function App() {
             ws.newQuery(connId, node.database!, `SELECT * FROM ${qualified} LIMIT 100;`),
           );
         }
+        /**
+         * 0.7.3（P2-30）：视图改定义一步到位（CREATE OR REPLACE）。
+         * 与树侧的「查看定义」互补：查看是只读看原文，改定义是**可执行**的模板。
+         */
+        if (table.kind === 'view') {
+          push('view-redefine', '在新查询中打开定义（可改）', <IconFileCode size={12} />, () =>
+            void onOpenViewDefinition(connId, node.database!, table.name),
+            roGuard(connId),
+          );
+        }
         if (table.kind === 'table') {
           push('design', '设计表…', <IconDesign size={12} />, () =>
             setDesigner({ mode: 'edit', database: node.database!, table, connId }),
+            roGuard(connId),
+          );
+          /**
+           * 0.7.3（P1-22）：重命名表（F2）。放在「设计表」之前 —— 它比设计器更常用，
+           * 且 F2 的肌肉记忆就落在这里（Finder/VSCode/Excel 都是 F2 改名）。
+           */
+          push('rename', '重命名表…', <IconDesign size={12} />, () =>
+            setRenameTable({ connId, database: node.database!, table }),
             roGuard(connId),
           );
           push('export', '导出数据…', <IconExport size={12} />, () =>
@@ -3490,6 +4111,27 @@ export function App() {
         push('copyqualified', '复制完整限定名', <IconCopy size={12} />, () => copyText(qualified));
         // 合并树侧自管菜单项（查看定义 / 复制 DDL / INSERT 模板 / 收藏）——排在危险项之前
         if (extra?.treeItems?.length) items.push(...extra.treeItems);
+        /**
+         * 0.7.3（P2-28 / P2-27）：复制表 + 表维护。
+         * 都放在清空/删除**之前**：安全操作不该排在危险操作后面（用户看到红色项
+         * 就容易停手，而复制表恰恰是他最想找的那一项）。
+         */
+        if (table.kind === 'table') {
+          push('copytable', '复制表…', <IconCopy size={12} />, () =>
+            setCopyTable({ connId, database: node.database!, table }),
+            roGuard(connId, { separatorBefore: true }),
+          );
+          // 维护三项平铺（菜单没有二级结构）：优化/分析/检查都是单表命令，文案自成一句
+          for (const action of ['optimize', 'analyze', 'check'] as MaintenanceAction[]) {
+            push(
+              `maintain-${action}`,
+              `${MAINTENANCE_LABELS[action]}…`,
+              <IconRefresh size={12} />,
+              () => void onMaintainTable(action, connId, node.database!, table.name),
+              roGuard(connId),
+            );
+          }
+        }
 if (table.kind === 'table') {
       push('truncate', '清空表…', null, () => void onTableDestructive('truncate', connId, node.database!, table),
             roGuard(connId, { danger: true, separatorBefore: true }),
@@ -3513,11 +4155,48 @@ if (table.kind === 'table') {
         }
       } else if (node.kind === 'group') {
         push('newconn', '新建连接…', <IconPlus size={12} />, () => setEditorState('new'));
+        /**
+         * 0.7.3（P2-29）：分组管理。
+         *
+         * 此前整理分组只能逐个进连接编辑器手输 `生产/订单` 路径字符串 ——
+         * 「分组」这个能力有了界面却没作业面。
+         * 🔴 未分组（`group-root:ungrouped`）**不是**可重命名的实体，不给这两项。
+         */
+        const groupPath = node.key.startsWith('group:') ? node.key.slice('group:'.length) : '';
+        if (groupPath) {
+          push('newgroup', '新建子分组…', <IconPlus size={12} />, () =>
+            setGroupPrompt({ mode: 'create', path: groupPath }),
+            { separatorBefore: true },
+          );
+          push('renamegroup', '重命名分组…', <IconDesign size={12} />, () =>
+            setGroupPrompt({ mode: 'rename', path: groupPath }),
+          );
+          /**
+           * 删除分组：**只允许删空分组**。
+           *
+           * 有连接的分组"删除"到底意味着什么（连接去哪？）没有无歧义的答案，
+           * 所以不做——给出原因，让用户先把连接挪走。空分组则必须能删：
+           * 否则「新建分组」就只能建、不能撤销（那是本功能自己造的死路）。
+           */
+          const groupHasConns = connections.some((c) => isInGroup(c.group, groupPath));
+          push(
+            'deletegroup',
+            '删除分组…',
+            <IconXSmall size={12} />,
+            () => {
+              commitEmptyGroups(removeEmptyGroupSubtree(emptyGroups, groupPath));
+              setToast(`已删除空分组 ${groupPath}`);
+            },
+            groupHasConns
+              ? { disabled: true, disabledReason: '该分组下还有连接：请先把连接移到别的分组（或删除连接）再删分组' }
+              : { danger: true },
+          );
+        }
       }
 
       if (items.length > 0) setCtxMenu({ x, y, title: node.label, items });
     },
-    [connStates, connections, onToggleConnectionNode, onDeleteConnection, onRefreshConnSchema, onOpenObject, ws, copyText, onTableDestructive, openScriptModal, openConnScriptPick, treeSelection, resolveSelectedTables, dropSelectedTables, onExportConnections, onImportConnections],
+    [connStates, connections, onToggleConnectionNode, onDeleteConnection, onRefreshConnSchema, onOpenObject, ws, copyText, onTableDestructive, openScriptModal, openConnScriptPick, treeSelection, resolveSelectedTables, dropSelectedTables, onExportConnections, onImportConnections, openCreateDb, onDropDatabase, onTestStoredConnection, openObjectTemplate, onOpenViewDefinition, onMaintainTable, commitEmptyGroups, emptyGroups],
   );
 
   /** 树空白区右键：新建连接 */
@@ -3578,9 +4257,25 @@ if (table.kind === 'table') {
           };
         }
       }
-      return backend.queryRun(req);
+      return backend.queryRun(req).then((out) => {
+        /**
+         * 0.7.3（P1-21）：DDL 跑完自动刷新结构。
+         *
+         * 建视图/过程/函数/触发器/事件走的是「模板 → 编辑器 → 执行」，执行器此前
+         * **不刷新 schema** —— 用户执行成功后左边树上还是旧结构，看起来像没建成，
+         * 只能自己想起来去点「刷新」。
+         *
+         * 判据用关键字而不是 AST：AST 分类器在首屏之外，而且只吃单条语句；
+         * 这里要做的决定只是「要不要多跑一次 schemaRefresh」——那是纯读、
+         * 幂等、开销可控。**宁可多刷一次，也不要让树停在旧结构上。**
+         */
+        if (/\b(?:create|alter|drop|rename|truncate)\b/i.test(req.sql)) {
+          void onRefreshConnSchema(req.connId);
+        }
+        return out;
+      });
     },
-    [ensureConnection, connections, confirmDanger, sqlConnId],
+    [ensureConnection, connections, confirmDanger, sqlConnId, onRefreshConnSchema],
   );
   const onCancelSql = useCallback((queryId: string) => backend.queryCancel(queryId), []);
 
@@ -3948,6 +4643,19 @@ if (table.kind === 'table') {
         if (openTab) openFilter();
         else setToast('筛选需要先打开一张表标签');
       }
+      /**
+       * 0.7.3（P0-19 第三入口）：命令面板「新建数据库」。
+       * 目标连接按**当前上下文**推：树上选中的节点所属连接 > 激活标签的连接 > 第一个连接
+       * （与「刷新当前对象」同一口径）。推不出来就明说，不静默无反应。
+       */
+      else if (action === 'createDatabase') {
+        const cid = (activeKey ? parseTreeKeyContext(activeKey)?.connId : null) ?? sqlConnId;
+        if (!cid) {
+          setToast('还没有可用连接：先新建并连接一个连接');
+          return;
+        }
+        void openCreateDb(cid);
+      }
       else if (action.startsWith('snippet:')) {
         // T04/R06：按 (connectionId, database, name) 精确回查同名片段
         const s = findSnippetByAction(snippets, action);
@@ -3959,7 +4667,7 @@ if (table.kind === 'table') {
         setToast(s.database ? `已插入片段：${s.name}（${s.database}）` : `已插入片段：${s.name}`);
       } else setToast(`执行命令：${action}`);
     },
-    [openSql, cycleTheme, snippets, fillSqlToEditor, zoomStep, refreshCurrent, toggleReadOnlyCurrent, checkUpdate, openCurrentInNewWindow, openFilter, openTab],
+    [openSql, cycleTheme, snippets, fillSqlToEditor, zoomStep, refreshCurrent, toggleReadOnlyCurrent, checkUpdate, openCurrentInNewWindow, openFilter, openTab, activeKey, sqlConnId, openCreateDb],
   );
 
   // ---- F1 原生菜单命令订阅 ----
@@ -4287,10 +4995,11 @@ if (table.kind === 'table') {
             onDeleteConnection={(cfg) => void onDeleteConnection(cfg)}
             onNodeContextMenu={openNodeMenu}
             onBackgroundContextMenu={openTreeBackgroundMenu}
-            // C2/C3/C5/C6：查看定义、收藏 toast、F2 重命名（进设计器）、Del 删除（走危险确认）
+            // C2/C3/C5/C6：查看定义、收藏 toast、F2 重命名（0.7.3 起名副其实）、⇧F2 设计器、Del 删除
             onShowDefinition={(req) => void onShowDefinition(req)}
             onToast={setToast}
-            onRenameRequest={(req) => setDesigner({ mode: 'edit', database: req.database, table: req.table, connId: req.connId })}
+            onRenameRequest={(req) => setRenameTable({ connId: req.connId, database: req.database, table: req.table })}
+            onDesignRequest={(req) => setDesigner({ mode: 'edit', database: req.database, table: req.table, connId: req.connId })}
             onDeleteRequest={(req) => void onTableDestructive('drop', req.connId, req.database, req.table)}
             // v0.6.0：多选集合回传（批量删除在宿主侧弹危险确认后执行）
             onSelectionChange={setTreeSelection}
@@ -4303,6 +5012,8 @@ if (table.kind === 'table') {
               }
               setDesigner({ mode: 'new', database, table: null, connId });
             }}
+            // 0.7.3（P0-19）：连接行内的「+ 库」（与库行「+ 表」对称）
+            onNewDatabase={(connId) => void openCreateDb(connId)}
           />
         )}
       </aside>
@@ -4675,6 +5386,8 @@ if (table.kind === 'table') {
               onSelectObject={(node) => setActiveKey(node.key)}
               onOpenObject={onOpenObject}
               findByKey={findTreeNode}
+              /* 0.7.3 P1-23：右键转手宿主分级菜单 —— 权限/只读/生产危险项一份实现 */
+              onNodeContextMenu={(node, x, y) => openNodeMenu(node, x, y)}
             />
           ) : (
             <EmptyState
@@ -5095,6 +5808,114 @@ if (table.kind === 'table') {
             }}
           />
         </Suspense>
+      ) : null}
+
+      {/* 0.7.3（P0-19）：新建数据库。静态引入 —— 它复用首屏 .modal 壳，不值得为几十行 JSX 付一次 Suspense 塌陷 */}
+      {dbCreate ? (
+        <CreateDatabaseModal
+          connName={dbCreate.connName}
+          existing={dbCreate.existing}
+          defaultCharset={dbCreate.defaultCharset}
+          defaultCollation={dbCreate.defaultCollation}
+          busy={dbCreateBusy}
+          error={dbCreateError}
+          onCancel={() => {
+            if (dbCreateBusy) return;
+            setDbCreate(null);
+            setDbCreateError(null);
+          }}
+          onConfirm={(v) => void submitCreateDb(v)}
+        />
+      ) : null}
+
+      {/* 0.7.3（P1-22）：重命名表。SQL 原文实时预览 —— 改名是不可撤销的结构变更 */}
+      {renameTable ? (
+        <NamePromptModal
+          title={`重命名表 — ${renameTable.database}.${renameTable.table.name}`}
+          label="新表名"
+          initial={renameTable.table.name}
+          validate={(v) =>
+            validateNewName(v, {
+              label: '新表名',
+              // 源表名从"已存在"里排除：否则用户还没改就被判重名
+              existing: (schemas[renameTable.connId] ?? [])
+                .find((d) => d.name === renameTable.database)
+                ?.tables.filter((t) => t.name !== renameTable.table.name)
+                .map((t) => t.name) ?? [],
+              conflictSuffix: `${renameTable.database} 中`,
+            }).error
+          }
+          preview={(v) => {
+            const check = validateNewName(v, { label: '新表名' });
+            if (!check.ok) return null;
+            try {
+              return buildRenameTableSql(renameTable.database, renameTable.table.name, check.value);
+            } catch {
+              return null;
+            }
+          }}
+          hint="只改表名，数据、索引、外键不会被重建；该表的旧标签会被关闭。"
+          confirmLabel="重命名"
+          testId="rename-table-modal"
+          onCancel={() => setRenameTable(null)}
+          onConfirm={(v) => void submitRenameTable(v)}
+        />
+      ) : null}
+
+      {/* 0.7.3（P2-28）：复制表。两条 SQL 都实时预览（CREATE … LIKE / INSERT … SELECT） */}
+      {copyTable ? (
+        <CopyTableModal
+          database={copyTable.database}
+          table={copyTable.table.name}
+          databases={(schemas[copyTable.connId] ?? []).map((d) => d.name)}
+          existingByDb={Object.fromEntries(
+            (schemas[copyTable.connId] ?? []).map((d) => [d.name, d.tables.map((t) => t.name)]),
+          )}
+          busy={copyBusy}
+          error={copyError}
+          onCancel={() => {
+            if (copyBusy) return;
+            setCopyTable(null);
+            setCopyError(null);
+          }}
+          onConfirm={(v) => void submitCopyTable(v)}
+        />
+      ) : null}
+
+      {/* 0.7.3（P2-29）：新建子分组 / 重命名分组（只改配置，不执行 SQL） */}
+      {groupPrompt ? (
+        <NamePromptModal
+          title={groupPrompt.mode === 'create' ? `新建子分组 — ${groupPrompt.path}` : `重命名分组 — ${groupPrompt.path}`}
+          label="分组名"
+          initial={groupPrompt.mode === 'rename' ? groupDisplayName(groupPrompt.path) : ''}
+          placeholder="例如 订单"
+          validate={(v) =>
+            groupPrompt.mode === 'rename' && v.trim() === groupDisplayName(groupPrompt.path)
+              ? null
+              : validateNewName(v, {
+                  label: '分组名',
+                  // 分组名只禁 `:`（树节点 key 的分段符）；斜杠在这里是子分组分隔符，允许
+                  forbid: [':'],
+                  // 同层重名会被派生结构合并成一个节点，等于"创建了但看起来没创建"
+                  existing:
+                    groupPrompt.mode === 'create'
+                      ? treeRoots
+                          .filter((n) => n.kind === 'group')
+                          .flatMap((n) => (n.children ?? []).filter((c) => c.kind === 'group').map((c) => c.label))
+                      : [],
+                  conflictSuffix: '同级中',
+                }).error
+          }
+          hint={
+            groupPrompt.mode === 'create'
+              ? '分组只是整理用的标签，不改变连接本身；空分组会保留在树里（可继续往里拖连接）。'
+              : '会批量改写该分组及其子分组下所有连接的 group 字段（弹窗里看不到，但连接本身不受影响）。'
+          }
+          confirmLabel={groupPrompt.mode === 'create' ? '新建' : '重命名'}
+          testId="group-name-modal"
+          onCancel={() => setGroupPrompt(null)}
+          onConfirm={(v) => (groupPrompt.mode === 'create' ? submitCreateGroup(v) : void submitRenameGroup(v))}
+        />
       ) : null}
 
       {dangerRequest ? (

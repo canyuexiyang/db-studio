@@ -26,6 +26,8 @@ import { TabDirtyCloseModal } from './TabDirtyCloseModal';
 import { tabDisplayTitle } from './tabOrder';
 import {
   buildTabMenuItems,
+  closeAllIds,
+  closeLeftIds,
   closeOthersIds,
   closeRightIds,
   formatObjectIdentity,
@@ -172,6 +174,13 @@ export const WorkspaceTabsBar = memo(function WorkspaceTabsBar({
           return;
         case 'closeRight':
           runBatch(closeRightIds(tabs, tab.id, { isClosable }));
+          return;
+        /** 0.7.3（P1-26）：左侧 / 全部同样走 planBatchClose（脏标签一次列全，不连弹框） */
+        case 'closeLeft':
+          runBatch(closeLeftIds(tabs, tab.id, { isClosable }));
+          return;
+        case 'closeAll':
+          runBatch(closeAllIds(tabs, { isClosable }));
           return;
         case 'togglePin':
           onTogglePin?.(tab.id);

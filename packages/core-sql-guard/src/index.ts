@@ -610,17 +610,84 @@ export function statementKindOf(sql: string, dialect: Dialect = 'mysql'): Statem
 const DDL_WHITELIST = new Set(['drop', 'truncate', 'create', 'alter', 'rename']);
 
 /**
+ * 标识符形态（文本兜底用）：反引号包裹（`` ` `` 可成对转义）或裸名字。
+ * 只给下面的 ADMIN_DDL_FORMS 用，**不作为通用的 SQL 分词器**。
+ */
+const IDENT_TEXT = '(?:`(?:[^`]|``)+`|[A-Za-z0-9_$]+)';
+
+/** 限定名（`db`.`t`）：标识符 + 任意层 `.` 分隔 —— 表维护语句的常见书写形态 */
+const QUALIFIED_TEXT = `${IDENT_TEXT}(?:\\.${IDENT_TEXT})*`;
+
+/**
+ * 🔴 0.7.3：解析器覆盖不到的 DDL 形态（DDL 入口的文本兜底）。
+ *
+ * 背景（实测 node-sql-parser 5.4.0，非猜测）：
+ *  - `DROP DATABASE \`x\`` / `DROP SCHEMA \`x\`` **解析失败**（去掉反引号反而能过）；
+ *  - `OPTIMIZE|ANALYZE|CHECK|REPAIR TABLE …` 完全不被识别（一律 parse-failed）。
+ * 于是「删除数据库」「优化/分析/检查表」这两类本来完全正常的操作，在 DDL 入口
+ * 会被判成「无法判定是否安全」而永远做不到 —— 这不是安全，是功能缺失。
+ *
+ * 🔴 为什么这里可以用文本判定而**不违反**「不用正则当主防线」：
+ *  1. 只在 **解析失败之后** 才走这条路 —— 凡是能解析的语句仍然 100% 走 AST 白名单，
+ *     判据一点没松；
+ *  2. 形态是**闭合枚举**（4 种前缀 + 标识符），且**整串锚定**（`^…$`）：
+ *     任何分号、任何额外 token 都不匹配；
+ *  3. 归一化后仍含 `;` 直接放弃（多语句是注入的最短路径，不在兜底范围）；
+ *  4. 原文含 MySQL **可执行注释**（`/` + `*` + `!` 开头那种）直接放弃 —— 里面的内容
+ *     会真的被执行，而 stripCommentsAndNormalize 会把它当注释删掉（那等于隐藏语句）。
+ *
+ * 净效果：只把**此前必然被拒**的一类正常语句放进来，不改变任何既有判定。
+ */
+const ADMIN_DDL_FORMS: { re: RegExp; type: string }[] = [
+  // 删除库（P0-20）。IF EXISTS 只在用户显式要求时出现，本产品不拼，但放行无害
+  {
+    re: new RegExp(`^DROP\\s+(?:DATABASE|SCHEMA)\\s+(?:IF\\s+EXISTS\\s+)?${IDENT_TEXT}$`, 'i'),
+    type: 'drop',
+  },
+  // 表维护（P2-27）：不改行数据，但会重写/统计表，属结构级命令
+  {
+    re: new RegExp(
+      `^(?:OPTIMIZE|ANALYZE|CHECK|REPAIR)\\s+(?:NO_WRITE_TO_BINLOG\\s+|LOCAL\\s+)?TABLE\\s+${QUALIFIED_TEXT}(?:\\s*,\\s*${QUALIFIED_TEXT})*$`,
+      'i',
+    ),
+    type: 'maintenance',
+  },
+];
+
+/**
+ * 解析失败后的文本兜底判定。
+ * @returns 命中的语句类型；null = 不认（照旧拒绝）
+ */
+function matchAdminDdlForm(sql: string): string | null {
+  // 可执行注释里的语句会真的跑，而归一化会把注释删掉 —— 这种输入一律不兜底
+  if (/\/\*!/.test(sql)) return null;
+
+  const norm = stripCommentsAndNormalize(sql).replace(/;\s*$/, '').trim();
+  if (!norm) return null;
+  // 归一化后仍有分号 = 多语句（或语句内部藏了分隔符）：不在兜底范围
+  if (norm.includes(';')) return null;
+
+  for (const form of ADMIN_DDL_FORMS) {
+    if (form.re.test(norm)) return form.type;
+  }
+  return null;
+}
+
+/**
  * DDL 入口的结构校验。
  *
  * 判定（fail-closed）：
  *  1. 必须恰好一条语句 —— 分号拼第二条同样是注入的最短路径；
  *  2. 类型必须在 DDL 白名单里 —— 不允许从 DDL 入口偷跑 SELECT/INSERT 等。
+ *  3. 解析失败的，只放行 `ADMIN_DDL_FORMS` 里那几种闭合形态（见上）。
  */
 export function checkDdlStatement(sql: string, dialect: Dialect = 'mysql'): GuardResult {
   if (!sql || !sql.trim()) return reject('empty', '空语句');
 
   const parsed = parseStatements(sql, dialect);
   if ('error' in parsed) {
+    const adminType = matchAdminDdlForm(sql);
+    if (adminType) return ok([adminType]);
     return reject('parse-failed', `无法判定该 DDL 语句是否安全，已阻止执行（解析失败：${parsed.error.slice(0, 120)}）`);
   }
 

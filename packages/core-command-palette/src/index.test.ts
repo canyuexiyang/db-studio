@@ -158,7 +158,7 @@ describe('面板查询', () => {
     expect(queryPalette('a', { items: [] }).results).toEqual([]);
   });
 
-  it('内置命令覆盖 PRD §6.8 的六项 + F2 字体缩放三项 + V21/V23 两项 + P1-15 筛选', () => {
+  it('内置命令覆盖 PRD §6.8 的六项 + F2 字体缩放三项 + V21/V23 两项 + P1-15 筛选 + P0-19 建库', () => {
     const actions = BUILTIN_COMMANDS.map((c) => c.action);
     expect(actions).toEqual([
       'newConnection', 'newQuery', 'refresh', 'toggleTheme', 'toggleReadOnly', 'openPreferences',
@@ -167,7 +167,20 @@ describe('面板查询', () => {
       'checkUpdate', 'openInNewWindow',
       // P1-15：筛选此前在面板里搜不到（工具栏/菜单之外没有第三个入口）
       'filter',
+      // P0-19：建库此前全应用零入口（只能在编辑器里手写 CREATE DATABASE）
+      'createDatabase',
     ]);
+  });
+
+  /**
+   * P0-19：建库命令必须能被中英文关键词命中 —— 用户的两种说法都要搜得到，
+   * 否则「面板里有这条命令」在实践中等于不存在。
+   */
+  it('「新建数据库」命令能被 建库 / 数据库 / database / create 命中', () => {
+    for (const kw of ['建库', '数据库', 'database', 'create', 'newdb']) {
+      const hit = rankItems(BUILTIN_COMMANDS, kw).some((s) => s.item.id === 'cmd.createDatabase');
+      expect(hit, `关键词「${kw}」搜不到新建数据库命令`).toBe(true);
+    }
   });
 
   /**

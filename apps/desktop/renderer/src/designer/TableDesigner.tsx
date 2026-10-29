@@ -13,7 +13,7 @@
  * DDL 执行走 backend.queryRun（只读连接会被主进程 AST 白名单拦截 —— 正确行为）。
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Backend } from '../backend';
 import { IconX } from '../ui/icons';
 import type { TableMeta, DatabaseMeta } from '@dbstudio/core-schema-cache';
@@ -274,6 +274,29 @@ export function TableDesigner({
       setSaving(false);
     }
   }, [errors.length, isEdit, create.sql, alter.statements, database, design.tableName, existingTable, baseMeta, dangerConfirm, backend, connId, onToast, onSaved, onClose]);
+
+  /**
+   * Esc 关闭（0.7.3 补齐）：App 的全局快捷键闸门只拦「非 Esc」，注释里写的是
+   * "Esc 仍留给模态关闭，见各弹窗的 onKey" —— 但设计器先前没有任何 keydown，
+   * 结果它是全仓唯一「只能点遮罩 / 点取消」才能退出的模态（e2e 里 Escape 按了
+   * 没反应，残留 `.modal-mask` 把后续点击全吃掉）。
+   *
+   * 挂 window + capture：焦点可能在列名输入框、DDL 预览的 <pre>、甚至 body 上，
+   * 挂在外壳上会在这些情形漏收。saving 期间不关（正在逐条执行 ALTER，关掉就
+   * 看不到失败详情了）。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (saving) return;
+      // 内层还有弹窗（依赖确认 / 危险确认）时，Esc 归内层
+      if (document.querySelectorAll('.modal-mask').length > 1) return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [saving, onClose]);
 
   // ---------- 渲染 ----------
   const hasChanges = isEdit ? alter.statements.length > 0 : true;
@@ -743,7 +766,7 @@ export function TableDesigner({
         </div>
 
         <footer>
-          <button onClick={onClose} disabled={saving}>取消</button>
+          <button onClick={onClose} disabled={saving} data-testid="designer-cancel">取消</button>
           <button
             className="primary"
             onClick={() => void save()}

@@ -43,6 +43,8 @@ apps/desktop/src
   preload/ + shared/       IPC 通道与类型(ipc-channels 是唯一通道清单)
 apps/desktop/renderer/src  React 19 渲染层
   backend.ts               双后端:有 IPC 走真实现,纯浏览器 dev 自动降级 demo 后端
+  database/                **0.7.3 全部 DDL 的唯一构造处**(ddlTemplates.ts 零 React 依赖
+                           + DdlDialogs.tsx 建库/删库/改名/复制表/名称输入四类弹窗)
   grid/ tree/ editor/ workspace/ filter/ transfer/ designer/ danger/ ...
   ui/icons.tsx             全部 SVG 图标唯一出处
   styles.css               全部视觉 token 与组件样式(单文件)
@@ -123,7 +125,7 @@ npm run dist             # 打包 mac arm64(.dmg + .app)
 npm run dist:dir         # 只打 .app + ad-hoc 外层重签 + 签名自检(本机安装用)
 ```
 
-- `npm run verify` 的链条:typecheck → test → check:bundle → e2e → e2e:transfer → e2e:ssh → e2e:grid → **e2e:idle → e2e:idle:ui** → e2e:ui → e2e:app。`verify:installed` / `verify:traffic-lights` **不在链里**(前者需要已安装的 .app,后者要像素比对),改对应代码后单独跑。
+- `npm run verify` 的链条（19 道）：typecheck → **gen:actions --check** → test → check:bundle → e2e(冒烟) → e2e:transfer → e2e:ssh → e2e:grid → **e2e:idle → e2e:keepalive → e2e:idle:ui** → e2e:ui → verify:toolbar-fit → e2e:script:data → e2e:affected → e2e:conflict → e2e:script:ui → e2e:app → e2e:keys。`verify:installed` / `verify:traffic-lights` **不在链里**（前者需要已安装的 .app，后者要像素比对），改对应代码后单独跑。
 - e2e 脚本(playwright-core)复用本机 Chromium:`~/Library/Caches/ms-playwright/`,缺失时设 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`。
 - e2e:smoke / e2e:app / e2e:idle 需要本地 MySQL fixture;纯 UI 改动跑 `e2e:ui` 即可,数据层改动跑对应专项。
 
@@ -144,6 +146,12 @@ npm run dist:dir         # 只打 .app + ad-hoc 外层重签 + 签名自检(本�
 - **装完新包首次跑 `verify-installed` 会撞 CDP 冷启动窗口**:DevTools 地址已打印、`/json/version` 已 200,但 ws 握手还没就绪(主线程忙)。脚本已加固(探活 + 重试 3 次);**别误判成新包有缺陷**,用旧包做基线对照定性。
 - **⛔ 未提交的工作区里 `git checkout <file>` = 回到初始提交**,不是「撤销我的改动」—— 曾一次性丢掉整个 v1.3 的 e2e-app 改动。要撤自己的改动只能手工反向编辑。
 - **写断言前先问「此刻基线是什么」**:恒真断言与**前提不成立**是同一坏习惯的两面 → 断**口径**(不变量/相对变化/双向蕴含)而非具体值;**造不出前置条件的断言宁可不写**(会变成不改代码也通过的假绿);新断言要在**错误输入**上确认它会红。
+- 🔴 **模态必须有退路**:`TableDesigner` 曾是全仓唯一没有 Esc、也没有 footer 取消钩子的模态 → e2e 里关不掉,残留 `.modal-mask` 把后面**所有**点击吃掉,表现为一串 30s 超时(看着像「功能坏了」,其实是上一个模态没退)。新模态一律「Esc(降级前先让内层处理)+ 点遮罩 + 明确的取消按钮」三条都有。
+- 🔴 **DDL 后的三件事顺序固定**:登记定位意图(`pendingRevealRef`,必须在 `await` **之前**)→ `schemaRefresh` → **最后**才 `setToast` 成功回执。`onRefreshConnSchema` 自带「已刷新表结构」toast,回执写早了必被盖掉(用户只看到刷新)。
+- 🔴 **守卫层兜底只能在解析失败之后**:`node-sql-parser` 不认带反引号的 `DROP DATABASE`、完全不认 `OPTIMIZE/ANALYZE/CHECK/REPAIR TABLE` → 文本兜底必须**闭合枚举 + 整串锚定**,显式拒绝多语句(`;`)与 `/`+`*`+`!` 可执行注释。**兜底不能变成后门**,加兜底必配反例测试。
+- 🔴 **demo 后端每次必须返回新对象**:返回同一个常量/同一 ref → `useMemo` 判未变 → 建库/删库/改名在纯浏览器 e2e 里**全是假绿**。
+- **树行断言按 key 不按标签**:demo 两个连接共享同一份库结构,同名表会出现两行;`filter({ hasText })` 又是**子串**匹配(`access_log` 命中 `access_log_zz`)。`data-node-key` + 精确等值,两道都要。
+- **菜单项点击必须精确等值**:`hasText: '复制表'` 会先命中「复制表名」→ 弹窗永不出现,看着像「点了没反应」。
 
 ## 九、工作习惯约定
 

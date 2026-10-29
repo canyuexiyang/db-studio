@@ -50,13 +50,20 @@
  * 为什么不选②（砍成纯空态引导）：清单已经有真实价值（跨库对象一览 + 单击看
  * DDL），砍掉是把可用能力换成"更少的维护面"，而真正的成本（右键菜单）本就不在
  * 这里 —— 右键菜单仍只挂在左树，避免同一动作两套入口各写一遍权限/脏检查。
+ *
+ * ## 🔴 0.7.3 P1-23：右键与键盘补齐
+ *
+ * 上一版的判断被证伪了一半：**菜单项可以复用，判断不能复用。** 宿主 `openNodeMenu`
+ * 收的是 `TreeNode`，清单里每一项正好能反查到同一个节点 —— 所以右键菜单直接转手给
+ * 宿主（权限/只读/生产危险项一份实现），本组件不新增任何操作逻辑。
+ * 同时补 ↑↓ 导航：清单此前只能鼠标点，键盘用户进得去出不来。
  */
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { OBJECT_KIND_LABELS, type TreeNode } from '@dbstudio/core-tree-view';
 import type { ObjectKind } from '@dbstudio/core-schema-cache';
 import { IconTable, IconEye, IconBraces, IconFn, IconZap, IconClock, IconDatabase } from '../ui/icons';
-import { collectConnNames, collectObjects, scopeFromActiveKey } from './objectBrowserModel';
+import { collectConnNames, collectObjects, scopeFromActiveKey, stepObjectIndex } from './objectBrowserModel';
 
 const KIND_ICON: Record<ObjectKind, (p: { size?: number }) => React.ReactNode> = {
   table: IconTable,
@@ -84,6 +91,15 @@ export interface ObjectBrowserProps {
   onOpenObject: (node: TreeNode) => void;
   /** 按 key 反查节点（选中/打开都要拿到完整 TreeNode） */
   findByKey: (roots: TreeNode[], key: string) => TreeNode | null;
+  /**
+   * 0.7.3（P1-23）：清单项右键。
+   *
+   * 🔴 复用宿主的分级菜单（与左树同一个 `openNodeMenu`）：传入的就是清单项对应的
+   * **TreeNode**，所以「打开表 / 设计表 / 导出 / 复制限定名 / 清空 / 删除」等
+   * 对象级动作、只读禁用、生产危险项全部自动继承 —— 不在这里另写一套权限判断。
+   * 未接时不出菜单（不做一个点了没反应的假右键）。
+   */
+  onNodeContextMenu?: (node: TreeNode, x: number, y: number) => void;
 }
 
 export function ObjectBrowser({
@@ -93,8 +109,10 @@ export function ObjectBrowser({
   onSelectObject,
   onOpenObject,
   findByKey,
+  onNodeContextMenu,
 }: ObjectBrowserProps) {
   const scope = useMemo(() => scopeFromActiveKey(activeKey), [activeKey]);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const connNames = useMemo(() => collectConnNames(roots), [roots]);
 
@@ -138,16 +156,42 @@ export function ObjectBrowser({
         <span className="ob-title">{title}</span>
         <span className="ob-count" data-testid="ob-count">{objects.length}</span>
       </div>
-      <div className="ob-list">
+      <div
+        className="ob-list"
+        ref={listRef}
+        /**
+         * 0.7.3（P1-23）：↑↓ 在条目间移动（选中态跟手，右侧详情同步）。
+         * 落点计算在 `stepObjectIndex`（纯函数，单测钉住循环与越界），
+         * 这里只负责把焦点搬到目标行 —— 否则连按 ↓ 时焦点留在原按钮上，
+         * 屏幕阅读器与键盘用户会失去位置感。
+         */
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+          // 🔴 ⌘↓/Ctrl↓ 在按钮上已被"打开"消费掉（它先于冒泡执行并 preventDefault），
+          // 这里必须让路，否则同一次按键既开标签又跳一行。
+          if (e.defaultPrevented) return;
+          const idx = objects.findIndex((o) => o.key === selectedKey);
+          const nextIdx = stepObjectIndex(idx, e.key === 'ArrowDown' ? 1 : -1, objects.length);
+          if (nextIdx < 0) return;
+          e.preventDefault();
+          const node = findByKey(roots, objects[nextIdx].key);
+          if (!node) return;
+          onSelectObject(node);
+          listRef.current
+            ?.querySelector<HTMLElement>(`[data-ob-key="${objects[nextIdx].key.replace(/"/g, '\\"')}"]`)
+            ?.focus();
+        }}
+      >
         {objects.map((o) => {
           const Ico = KIND_ICON[o.table.kind];
           const selected = o.key === selectedKey;
+          const nodeOf = () => findByKey(roots, o.key);
           const selectNode = () => {
-            const node = findByKey(roots, o.key);
+            const node = nodeOf();
             if (node) onSelectObject(node);
           };
           const openNode = () => {
-            const node = findByKey(roots, o.key);
+            const node = nodeOf();
             if (node) onOpenObject(node);
           };
           return (
@@ -156,15 +200,25 @@ export function ObjectBrowser({
               className="ob-item"
               title={
                 (showConn ? `${o.connName} · ${o.database}.${o.name}` : `${o.database}.${o.name}`) +
-                '\n单击查看表设计 / DDL，双击打开'
+                '\n单击查看表设计 / DDL，双击打开；右键出对象菜单'
               }
               data-testid={`ob-item-${o.name}`}
               data-conn-id={o.connId}
+              data-ob-key={o.key}
               /* 语义钩子：e2e 靠它判"当前选中哪一行"，别改用 class 或观感 */
               data-active={selected ? '1' : undefined}
               aria-current={selected ? 'true' : undefined}
               onClick={selectNode}
               onDoubleClick={openNode}
+              onContextMenu={(e) => {
+                if (!onNodeContextMenu) return;
+                const node = nodeOf();
+                if (!node) return;
+                e.preventDefault();
+                // Navicat 语义：右键 = 选中 + 出菜单（与左树完全一致）
+                onSelectObject(node);
+                onNodeContextMenu(node, e.clientX, e.clientY);
+              }}
               onKeyDown={(e) => {
                 // 键盘等价双击：Enter / ⌘↓ 打开。这里必须 preventDefault ——
                 // 否则 <button> 的 Enter 激活会紧接着再触发一次 onClick（选中）。

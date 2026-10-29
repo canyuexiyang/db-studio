@@ -511,3 +511,23 @@ export function IconRowHeight({ size = 12 }: IconProps) {
     </svg>
   );
 }
+
+/** 关闭左侧（0.7.3 P1-26）：一条竖线 + 向左的叉，语义是"线左边的都关掉" */
+export function IconCloseLeft({ size = 12 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 4v16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M9 9.5 13.5 14M13.5 9.5 9 14" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M17.5 12h4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" opacity="0.45" />
+    </svg>
+  );
+}
+
+/** 关闭全部（0.7.3 P1-26）：两条错开的叉，表示整排都关掉 */
+export function IconCloseAll({ size = 12 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 6l6 6-6 6M13 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

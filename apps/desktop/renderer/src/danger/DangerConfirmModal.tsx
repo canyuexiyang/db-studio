@@ -35,14 +35,22 @@ export interface DangerConfirmModalProps {
 }
 
 export function DangerConfirmModal({ request, onResolve }: DangerConfirmModalProps) {
-  const isProduction = request.requireText != null && request.requireText !== '';
+  /**
+   * 🔴 0.7.3：这里的判据是「**需要输名**」，不是「生产环境」。
+   *
+   * 两者过去被混成一个布尔，结果是文案替调用方撒谎：非生产的「删除数据库」
+   * 也走第三层（审计红线：删库比删表更严格），弹窗却写着「这是生产环境连接」。
+   * 环境判断属于 `confirmDanger`（它知道 colorTag 并据此改标题与红标），
+   * 弹窗只负责「要不要输名」这一件事。
+   */
+  const needsText = request.requireText != null && request.requireText !== '';
   const [input, setInput] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 生产模式自动聚焦输入框
+  // 需要输名时自动聚焦输入框（键盘用户不必先 Tab）
   useEffect(() => {
-    if (isProduction) inputRef.current?.focus();
-  }, [isProduction]);
+    if (needsText) inputRef.current?.focus();
+  }, [needsText]);
 
   /**
    * 🔴 T18 / 报告 §4.5：Esc 关闭。
@@ -61,8 +69,8 @@ export function DangerConfirmModal({ request, onResolve }: DangerConfirmModalPro
   }, [onResolve]);
 
   const match = useMemo(
-    () => !isProduction || input.trim() === request.requireText,
-    [isProduction, input, request.requireText],
+    () => !needsText || input.trim() === request.requireText,
+    [needsText, input, request.requireText],
   );
 
   const confirm = () => {
@@ -73,8 +81,8 @@ export function DangerConfirmModal({ request, onResolve }: DangerConfirmModalPro
   return (
     <div className="modal-mask" data-testid="danger-confirm">
       <div className="modal danger-modal" onClick={(e) => e.stopPropagation()}>
-        <header className={isProduction ? 'danger' : ''}>
-          {isProduction ? <span className="state-dot danger-dot" aria-label="生产环境" /> : <IconAlert />}
+        <header className={needsText ? 'danger' : ''}>
+          {needsText ? <span className="state-dot danger-dot" aria-label="危险操作" /> : <IconAlert />}
           {request.title}
         </header>
         <div className="body">
@@ -87,10 +95,10 @@ export function DangerConfirmModal({ request, onResolve }: DangerConfirmModalPro
             ))}
           </div>
 
-          {isProduction ? (
+          {needsText ? (
             <div className="danger-input-row">
               <label>
-                这是生产环境连接。请输入 <b>{request.requireText}</b> 以确认：
+                请输入 <b>{request.requireText}</b> 以确认（此操作不可恢复）：
               </label>
               <input
                 ref={inputRef}
@@ -116,7 +124,7 @@ export function DangerConfirmModal({ request, onResolve }: DangerConfirmModalPro
             onClick={confirm}
             data-testid="danger-confirm-btn"
           >
-            {isProduction ? '确认执行（不可恢复）' : '确认执行'}
+            {needsText ? '确认执行（不可恢复）' : '确认执行'}
           </button>
         </footer>
       </div>

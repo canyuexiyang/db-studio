@@ -573,6 +573,80 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
   font-weight: 500;
 }
 
+/* ---------- 0.7.3 对象生命周期对话框（新建库 / 重命名 / 复制表） ----------
+   新建的文件不走 lazy（与 ScriptDbPicker 同口径：组件很小，静态引入），
+   但样式仍必须出现在首屏 —— 否则弹窗打开的第一帧是无样式白块。 */
+
+.ddl-modal { width: 520px; }
+
+.ddl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.ddl-label {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.ddl-input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+}
+
+.ddl-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.ddl-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+}
+
+.ddl-hint {
+  margin: 6px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.ddl-hint code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--bg-alt);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.ddl-error {
+  margin: 4px 0 8px;
+  font-size: var(--fs-sm);
+  color: var(--error-bar);
+  line-height: 1.5;
+}
+
+.ddl-check { margin: 2px 0 10px; }
+
+.ddl-sql { margin-top: 4px; }
+
+.ddl-sql-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
 /* ---------- V5 偏好设置面板（外壳样式必须在首屏就位，红线 9） ---------- */
 
 .prefs-modal { width: 560px; }
@@ -1013,6 +1087,25 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .tree-act:hover { color: var(--accent); background: var(--row-hover); }
 .tree-row.active .tree-act { color: rgba(255, 255, 255, 0.9); }
 .tree-row.active .tree-act:hover { color: var(--on-accent); background: rgba(255, 255, 255, 0.15); }
+
+/**
+ * 0.7.3（P0-19）：库列表尾部的「＋ 新建数据库」。
+ *
+ * 刻意**不用 `.tree-row`**：它不是树节点（不参与选中/键盘/多选/`.tree-row` 计数），
+ * 只是一条行内入口。用 dim 色 + hover 高亮，让它在库列表里"在但不抢镜"。
+ */
+.tree-adddb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding-right: 8px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  cursor: default;
+  opacity: 0.72;
+}
+.tree-adddb:hover { color: var(--accent); background: var(--row-hover); opacity: 1; }
 
 /* 连接状态标记：纯 CSS 圆点（不用 emoji/字符），失败态红、活动态绿 */
 .tree-state { flex: 0 0 auto; }

@@ -117,3 +117,18 @@ export function scopeFromActiveKey(
   }
   return null;
 }
+
+/**
+ * 0.7.3（P1-23）：清单内的 ↑↓ 导航落点 —— 纯计算，单测钉住。
+ *
+ * 三种输入形态都要有确定答案：
+ *  - 当前选中项**不在本清单里**（在树里选了别的库/表）= -1：↓ 落到第一行，↑ 落到最后一行；
+ *  - 已经在边界：**循环**（与命令面板 / 树导航一致，到底再按 ↓ 回到第一行）；
+ *  - 空清单：-1（调用方据此不动作）。
+ */
+export function stepObjectIndex(current: number, delta: number, count: number): number {
+  if (count <= 0) return -1;
+  if (current < 0 || current >= count) return delta >= 0 ? 0 : count - 1;
+  const next = (current + delta) % count;
+  return next < 0 ? next + count : next;
+}

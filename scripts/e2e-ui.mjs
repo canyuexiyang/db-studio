@@ -3732,7 +3732,379 @@ try {
       /导入连接需要桌面应用环境/.test(importToast), importToast.slice(0, 90));
   }
 
-  // 14. 控制台干净
+  // 14. 0.7.3 交互完备性（库生命周期 / 对象入口 / 表作业 / 分组）
+  /**
+   * 这一整段的判据都建立在**真实点击链路**上，不是"菜单项存在"。
+   * 审计的原话是「入口缺位」——所以每一项都要一路走到副作用（弹窗、DDL、树变化）。
+   * 每个输入类断言先用**错误输入**确认会红（非法名字 → 报错且确认禁用），
+   * 再走正确输入；否则"按钮能点"会被误当成"功能可用"。
+   */
+  {
+    const toastText = async () =>
+      ((await page.locator('[data-testid="toast"]').innerText().catch(() => '')) ?? '').replace(/\s+/g, ' ');
+
+    /** 清掉树搜索框（前面的章节可能留了关键词，会让树只剩几行） */
+    const clearTreeSearch = async () => {
+      const input = page.locator('.tree-search');
+      if (((await input.inputValue().catch(() => '')) ?? '').trim() !== '') {
+        await input.fill('');
+        await page.waitForTimeout(300);
+      }
+    };
+
+    const openRowMenu = async (locator) => {
+      await locator.click({ button: 'right' });
+      await page.waitForSelector('.ctx-menu', { timeout: 5_000 });
+      await page.waitForTimeout(150);
+      return (await page.locator('.ctx-item .ctx-label').allInnerTexts()).map((t) => t.trim());
+    };
+
+    /**
+     * 点菜单项 —— **精确等值**，不是子串。
+     *
+     * 🔴 踩过：`hasText: '复制表'` 会先把「复制表名」点掉（它在 DOM 里还排在
+     *    「复制表…」前面），于是复制表弹窗永远不出现，看起来像"菜单点了没反应"。
+     *    末尾省略号是可选的（文案里带不带 `…` 都算同一个词）。
+     */
+    const clickMenu = async (text) => {
+      const esc = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const exact = new RegExp(`^${esc}…?$`);
+      const item = page
+        .locator('.ctx-item')
+        .filter({ has: page.locator('.ctx-label', { hasText: exact }) })
+        .first();
+      if ((await item.count()) === 0) {
+        const labels = (await page.locator('.ctx-item .ctx-label').allInnerTexts()).map((t) => t.trim());
+        throw new Error(`菜单里没有「${text}」，实际有：${labels.join(' / ')}`);
+      }
+      await item.click();
+      await page.waitForTimeout(400);
+    };
+
+    /** 取树行的全局唯一 key（`obj:<connId>:<db>:<table>` 之类） */
+    const keyOf = async (locator) => ((await locator?.getAttribute('data-node-key')) ?? '').trim();
+    const rowByKey = (key) => page.locator(`.tree-row[data-node-key="${key}"]`);
+    const waitRowKey = async (key, present = true, timeout = 6_000) => {
+      const deadline = Date.now() + timeout;
+      while (Date.now() < deadline) {
+        const has = (await rowByKey(key).count()) > 0;
+        if (present ? has : !has) return true;
+        await page.waitForTimeout(150);
+      }
+      return false;
+    };
+
+    /**
+     * 按**精确标签**取树行。
+     *
+     * 🔴 不能用 `filter({ hasText })`：它是子串匹配，`access_log` 会同时命中
+     *    `access_log_zz`，于是「旧表名已消失」永远为假、「新表名已出现」永远为真 ——
+     *    两条断言同时失去证伪能力（测试全绿但什么都没验）。
+     */
+    const rowByExactLabel = async (kind, text) => {
+      const rows = page.locator(`.tree-row[data-node-kind="${kind}"]`);
+      const n = await rows.count();
+      for (let i = 0; i < n; i++) {
+        const label = ((await rows.nth(i).locator('.tree-label').innerText().catch(() => '')) ?? '').trim();
+        if (label === text) return rows.nth(i);
+      }
+      return null;
+    };
+
+    /** 等到某个语义节点出现/消失（树是异步刷新的，直接 count 会假红） */
+    const waitTreeRow = async (kind, text, present = true, timeout = 6_000) => {
+      const deadline = Date.now() + timeout;
+      while (Date.now() < deadline) {
+        const has = (await rowByExactLabel(kind, text)) !== null;
+        if (present ? has : !has) return true;
+        await page.waitForTimeout(150);
+      }
+      return false;
+    };
+
+    await clearTreeSearch();
+    const connRow = page.locator('.tree-row[data-node-kind="connection"]').first();
+
+    // 14.1 连接右键：建库 + 测试连接（P0-19 / P1-25）
+    const connLabels = await openRowMenu(connRow);
+    ok(
+      'P0-19 连接右键有「新建数据库…」',
+      connLabels.some((t) => t.includes('新建数据库')),
+      connLabels.filter((t) => t.includes('库')).join(' / '),
+    );
+    ok(
+      'P1-25 连接右键有「测试连接」',
+      connLabels.some((t) => t.includes('测试连接')),
+      connLabels.join(' / ').slice(0, 120),
+    );
+
+    await clickMenu('测试连接');
+    await page.waitForTimeout(600);
+    const testToast = await toastText();
+    ok(
+      'P1-25 测试连接回报服务端版本 + 耗时（不是只说"成功"）',
+      /连接成功/.test(testToast) && /8\.4\.0-demo|版本未知/.test(testToast) && /\d+\s*ms/.test(testToast),
+      testToast.slice(0, 110),
+    );
+
+    // 14.2 新建数据库：错误输入先红，正确输入才建（P0-19）
+    /**
+     * 14.1b 行内入口：库列表尾部「＋ 新建数据库」。
+     *
+     * 这条也是**回归防线**：初版把入口做成连接行上的第 4 个 hover 按钮，动作区被
+     * 挤到行宽中线 —— 上面「单击树节点即选中」因此变红（点行中点弹对话框）。
+     * 现在它挂在库列表末尾，且刻意不用 `.tree-row` 类（不参与选中/键盘/树行计数）。
+     */
+    {
+      const addRow = page.locator('.tree-adddb').first();
+      const addCount = await addRow.count();
+      ok('P0-19 库列表尾部有行内「新建数据库」入口', addCount >= 1, `${addCount} 个连接展开着`);
+      const indent = addCount >= 1
+        ? Number.parseFloat(await addRow.evaluate((el) => getComputedStyle(el).paddingLeft))
+        : 0;
+      const connIndent = await connRow.evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingLeft));
+      ok(
+        'P0-19 行内入口缩进在库层（比连接行多一级，不是挂在连接行里）',
+        indent === connIndent + 14,
+        `连接 ${connIndent}px → 入口 ${indent}px`,
+      );
+      if (addCount >= 1) {
+        await addRow.click();
+        await page.waitForTimeout(400);
+        const opened = (await page.locator('[data-testid="create-db-modal"]').count()) === 1;
+        ok('P0-19 点行内入口真的打开建库对话框', opened);
+        if (opened) {
+          await page.locator('[data-testid="create-db-modal"] button', { hasText: '取消' }).click();
+          await page.waitForTimeout(300);
+        }
+      }
+    }
+
+    await openRowMenu(connRow);
+    await clickMenu('新建数据库');
+    await page.waitForSelector('[data-testid="create-db-modal"]', { timeout: 5_000 });
+
+    await page.locator('[data-testid="create-db-name"]').fill('bad.name');
+    await page.waitForTimeout(150);
+    const badErr = await page.locator('[data-testid="create-db-error"]').innerText().catch(() => '');
+    const okDisabled = await page.locator('[data-testid="create-db-ok"]').isDisabled();
+    ok(
+      'P0-19 非法库名（含点号）当场报错且「创建」禁用',
+      /句点/.test(badErr) && okDisabled,
+      `错误「${badErr}」，按钮 disabled=${okDisabled}`,
+    );
+    ok(
+      'P0-19 名字非法时不展示 CREATE 预览（不给"看起来能执行"的假象）',
+      (await page.locator('[data-testid="create-db-sql"]').count()) === 0,
+    );
+
+    await page.locator('[data-testid="create-db-name"]').fill('e2e_archive');
+    await page.waitForTimeout(200);
+    const previewSql = await page.locator('[data-testid="create-db-sql"]').innerText().catch(() => '');
+    ok(
+      'P0-19 执行前可见 CREATE DATABASE 原文',
+      /CREATE DATABASE/.test(previewSql) && /e2e_archive/.test(previewSql),
+      previewSql.replace(/\s+/g, ' ').slice(0, 90),
+    );
+
+    await page.locator('[data-testid="create-db-ok"]').click();
+    await page.waitForTimeout(900);
+    const createToast = await toastText();
+    ok('P0-19 建库成功有明确回执', /已创建数据库 e2e_archive/.test(createToast), createToast.slice(0, 90));
+    ok('P0-19 新建的库出现在树上（刷新 + 定位闭环）', await waitTreeRow('database', 'e2e_archive'));
+
+    // 14.3 库级右键：删库 / 导出整库 / 新建视图（P0-20 / P1-24 / P1-21）
+    const newDbRow = await rowByExactLabel('database', 'e2e_archive');
+    if (!newDbRow) throw new Error('新建的库没出现在树上，后续库级断言无从进行');
+    const dbLabels = await openRowMenu(newDbRow);
+    ok('P0-20 库右键有「删除数据库…」', dbLabels.some((t) => t.includes('删除数据库')), dbLabels.join(' / ').slice(0, 140));
+    ok('P1-24 库右键有「导出整库…」', dbLabels.some((t) => t.includes('导出整库')), dbLabels.join(' / ').slice(0, 140));
+    ok('P1-21 库右键有「新建视图…」', dbLabels.some((t) => t.includes('新建视图')), dbLabels.join(' / ').slice(0, 140));
+
+    // 14.4 导出整库：范围预选 database，其余三项如实禁用（P1-24）
+    await clickMenu('导出整库');
+    await page.waitForSelector('[data-testid="export-modal"]', { timeout: 5_000 });
+    const dbChecked = await page.locator('[data-testid="export-scope-database"]').isChecked();
+    const matchedDisabled = await page.locator('[data-testid="export-scope-matched"]').isDisabled();
+    ok('P1-24 整库导出预选「整库」范围', dbChecked);
+    ok('P1-24 库级导出时「全部匹配」禁用（没有表上下文）', matchedDisabled);
+    // pick 阶段的取消按钮没有 testid（running 阶段的「取消导出」才是 export-cancel）
+    await page.locator('[data-testid="export-modal"] footer button', { hasText: '取消' }).first().click();
+    await page.waitForTimeout(300);
+    ok('P1-24 关闭整库导出弹窗', (await page.locator('[data-testid="export-modal"]').count()) === 0);
+
+    // 14.5 删除数据库：第三层输名 —— 输错不给过（P0-20）
+    await openRowMenu(newDbRow);
+    await clickMenu('删除数据库');
+    await page.waitForSelector('[data-testid="danger-confirm"]', { timeout: 5_000 });
+    const hasInput = (await page.locator('[data-testid="danger-confirm-input"]').count()) === 1;
+    ok('P0-20 删库走危险第三层（要输库名，不是「点一下就行」）', hasInput);
+
+    if (hasInput) {
+      await page.locator('[data-testid="danger-confirm-input"]').fill('e2e_archiv');
+      await page.waitForTimeout(150);
+      ok(
+        'P0-20 输错库名时确认按钮禁用（第三层真的在判，不是摆设）',
+        await page.locator('[data-testid="danger-confirm-btn"]').isDisabled(),
+      );
+      await page.locator('[data-testid="danger-confirm-input"]').fill('e2e_archive');
+      await page.waitForTimeout(150);
+      ok('P0-20 输对库名后确认按钮可用', !(await page.locator('[data-testid="danger-confirm-btn"]').isDisabled()));
+      await page.locator('[data-testid="danger-confirm-btn"]').click();
+      await page.waitForTimeout(900);
+      ok('P0-20 删库成功有回执', /已删除数据库 e2e_archive/.test(await toastText()));
+      ok('P0-20 被删的库从树上消失', await waitTreeRow('database', 'e2e_archive', false));
+    }
+
+    // 14.6 命令面板入口（P0-19 第三入口）
+    await page.keyboard.press('Meta+k');
+    await page.waitForTimeout(300);
+    await page.locator('.palette input').fill(':建库');
+    await page.waitForTimeout(300);
+    const paletteHit = await page.locator('.palette').innerText().catch(() => '');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(600);
+    const paletteOpenedModal = (await page.locator('[data-testid="create-db-modal"]').count()) === 1;
+    ok(
+      'P0-19 命令面板「建库」能搜到并真的打开对话框',
+      paletteOpenedModal && /新建数据库/.test(paletteHit),
+      paletteOpenedModal ? '' : paletteHit.replace(/\s+/g, ' ').slice(0, 90),
+    );
+    if (paletteOpenedModal) {
+      await page.locator('[data-testid="create-db-modal"] button', { hasText: '取消' }).click();
+      await page.waitForTimeout(300);
+    }
+
+    // 14.7 重命名表：F2 语义 + RENAME TABLE（P1-22）
+    await clearTreeSearch();
+    const tableRows = page.locator('.tree-row[data-node-kind="object"]:has(.tree-fav)');
+    const targetRow = tableRows.last();
+    const targetName = ((await targetRow.locator('.tree-label').innerText().catch(() => '')) ?? '').trim();
+    // 🔴 用 key 而不是标签定位：demo 里两个连接共享同一份库结构，同名表会出现两行
+    //    （`log_db.access_log` × c1/c2），按标签必取到"另一个连接"的那一行
+    const srcKey = await keyOf(targetRow);
+    const dstKey = srcKey ? srcKey.replace(/:[^:]+$/, `:${targetName}_zz`) : '';
+    ok('P1-22 找到一张可操作的表用于重命名', Boolean(targetName && srcKey), `${targetName} @ ${srcKey}`);
+    await targetRow.click();
+    await page.waitForTimeout(250);
+    await page.keyboard.press('F2');
+    await page.waitForTimeout(500);
+    const renameOpened = (await page.locator('[data-testid="rename-table-modal"]').count()) === 1;
+    ok('P1-22 F2 = 重命名表（不再是"打开设计器"）', renameOpened);
+    ok('P1-22 重命名前可见 RENAME TABLE 原文', /RENAME TABLE/.test(
+      await page.locator('[data-testid="rename-table-modal-sql"]').innerText().catch(() => ''),
+    ));
+
+    if (renameOpened) {
+      await page.locator('[data-testid="rename-table-modal-input"]').fill(`${targetName}_zz`);
+      await page.waitForTimeout(200);
+      await page.locator('[data-testid="rename-table-modal-ok"]').click();
+      await page.waitForTimeout(1000);
+      ok('P1-22 重命名成功有回执', /重命名为/.test(await toastText()), (await toastText()).slice(0, 90));
+      ok('P1-22 新表名出现在树上', await waitRowKey(dstKey));
+      ok('P1-22 旧表名从树上消失', await waitRowKey(srcKey, false), `${srcKey} 仍在树上`);
+    }
+
+    // 14.8 ⇧F2 = 进设计器（设计器让位，两个键位不抢）
+    {
+      const r = rowByKey(dstKey);
+      if ((await r.count()) === 1) await r.click();
+      await page.waitForTimeout(250);
+    }
+    await page.waitForTimeout(250);
+    await page.keyboard.press('Shift+F2');
+    await page.waitForTimeout(900);
+    ok('P1-22 ⇧F2 打开表设计器（F2 已让位给重命名）',
+      (await page.locator('[data-testid="table-designer"]').count()) === 1);
+
+    /**
+     * 14.8b 设计器必须能退出去（0.7.3 修的真缺口）。
+     *
+     * 先前 TableDesigner 没有任何 keydown，而 App 的全局闸门把「非 Esc」全拦下、
+     * 注释却写「Esc 仍留给模态关闭」—— 于是它是全仓唯一只能点遮罩才能退的模态。
+     * 这条断言在修之前是红的（按了 Escape 设计器还在，残留 `.modal-mask` 把后面
+     * 所有点击都吃掉）。两条退出路径都要验：Esc 与底部「取消」。
+     */
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    ok('P1-22 设计器可用 Esc 关闭（此前是全仓唯一退不出的模态）',
+      (await page.locator('[data-testid="table-designer"]').count()) === 0);
+
+    await page.keyboard.press('Shift+F2');
+    await page.waitForTimeout(800);
+    const cancelBtn = page.locator('[data-testid="designer-cancel"]');
+    if ((await cancelBtn.count()) === 1) await cancelBtn.click();
+    await page.waitForTimeout(500);
+    ok('P1-22 设计器「取消」按钮可关闭',
+      (await page.locator('[data-testid="table-designer"]').count()) === 0);
+
+    // 兜底清理：若还有遮罩，best-effort 点掉，避免后面每章都 30s 超时连坐。
+    // 这里吞错不算假绿 —— 紧随其后的断言才是判据（遮罩必须为 0）。
+    if ((await page.locator('.modal-mask').count()) > 0) {
+      await page.locator('.modal-mask').first().click({ position: { x: 8, y: 8 } }).catch(() => {});
+      await page.waitForTimeout(300);
+    }
+    ok('P1-22 设计器退出后没有残留遮罩（否则后续点击全被拦截）',
+      (await page.locator('.modal-mask').count()) === 0);
+
+    // 14.9 复制表（P2-28）
+    const renamedRow = rowByKey(dstKey);
+    const renamedFound = (await renamedRow.count()) === 1;
+    ok('P2-28 前提：改名后的表可在树上定位', renamedFound, renamedFound ? '' : `${dstKey} 未找到`);
+    if (!renamedFound) throw new Error('改名后的表不在树上，无法继续复制表断言');
+    await openRowMenu(renamedRow);
+    await clickMenu('复制表');
+    await page.waitForSelector('[data-testid="copy-table-modal"]', { timeout: 5_000 });
+    const copyPreview = await page.locator('[data-testid="copy-table-sql"]').innerText().catch(() => '');
+    ok(
+      'P2-28 复制表预览含 CREATE … LIKE 与 INSERT … SELECT 两条',
+      /CREATE TABLE/.test(copyPreview) && /LIKE/.test(copyPreview) && /INSERT INTO/.test(copyPreview),
+      copyPreview.replace(/\s+/g, ' ').slice(0, 120),
+    );
+    await page.locator('[data-testid="copy-table-name"]').fill('e2e_copy');
+    await page.waitForTimeout(200);
+    await page.locator('[data-testid="copy-table-ok"]').click();
+    await page.waitForTimeout(1200);
+    ok('P2-28 复制表成功有回执', /已复制/.test(await toastText()), (await toastText()).slice(0, 90));
+    // 副本落在**同一个库**下：key 只换表名段，避免又被另一个连接的同名表糊过去
+    const copyKey = dstKey ? dstKey.replace(/:[^:]+$/, ':e2e_copy') : '';
+    ok('P2-28 副本出现在树上', await waitRowKey(copyKey));
+
+    // 14.10 表维护（P2-27）
+    const copyRow = rowByKey(copyKey);
+    await openRowMenu(copyRow);
+    await clickMenu('优化表');
+    await page.waitForTimeout(900);
+    ok('P2-27 优化表有服务端回执', /优化表完成/.test(await toastText()), (await toastText()).slice(0, 100));
+
+    // 14.11 分组管理（P2-29）：新建空子分组 → 出现在树上 → 删掉
+    await clearTreeSearch();
+    const groupRow = page.locator('.tree-row[data-node-kind="group"]').first();
+    const groupLabels = await openRowMenu(groupRow);
+    ok(
+      'P2-29 分组右键有「新建子分组…」「重命名分组…」',
+      groupLabels.some((t) => t.includes('新建子分组')) && groupLabels.some((t) => t.includes('重命名分组')),
+      groupLabels.join(' / ').slice(0, 120),
+    );
+    await clickMenu('新建子分组');
+    await page.waitForSelector('[data-testid="group-name-modal"]', { timeout: 5_000 });
+    await page.locator('[data-testid="group-name-modal-input"]').fill('e2e_sub');
+    await page.waitForTimeout(200);
+    await page.locator('[data-testid="group-name-modal-ok"]').click();
+    await page.waitForTimeout(700);
+    ok('P2-29 新建的空分组出现在树上（否则"建了但看不见"）', await waitTreeRow('group', 'e2e_sub'));
+
+    const subGroupRow = await rowByExactLabel('group', 'e2e_sub');
+    ok('P2-29 前提：新分组可在树上定位', Boolean(subGroupRow));
+    if (subGroupRow) {
+      await openRowMenu(subGroupRow);
+      await clickMenu('删除分组');
+      await page.waitForTimeout(700);
+      ok('P2-29 空分组可删除（新建不是单向门）', await waitTreeRow('group', 'e2e_sub', false));
+    }
+  }
+
+  // 15. 控制台干净
   ok('无控制台错误', errors.length === 0, errors.slice(0, 2).join(' ; '));
 } finally {
   await browser.close();

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { TreeNode } from '@dbstudio/core-tree-view';
 import type { TableMeta } from '@dbstudio/core-schema-cache';
-import { collectObjects, collectConnNames, scopeFromActiveKey } from './objectBrowserModel';
+import { collectObjects, collectConnNames, scopeFromActiveKey, stepObjectIndex } from './objectBrowserModel';
 
 /** 造一张表的 TableMeta（测试只关心 name/kind，其余字段给足形状） */
 function table(name: string, kind: TableMeta['kind'] = 'table'): TableMeta {
@@ -111,5 +111,29 @@ describe('collectConnNames / scopeFromActiveKey', () => {
     expect(scopeFromActiveKey('db:c1:order_db')).toEqual({ connId: 'c1', database: 'order_db', onlyKind: null });
     expect(scopeFromActiveKey('conn:c1')).toBeNull();
     expect(scopeFromActiveKey(null)).toBeNull();
+  });
+});
+
+describe('0.7.3 P1-23：↑↓ 导航落点', () => {
+  it('正常步进：↕ 在 0..n-1 之间移动', () => {
+    expect(stepObjectIndex(0, 1, 3)).toBe(1);
+    expect(stepObjectIndex(2, -1, 3)).toBe(1);
+  });
+
+  it('边界循环：最后一行 ↓ 回到第一行，第一行 ↑ 到末尾', () => {
+    expect(stepObjectIndex(2, 1, 3)).toBe(0);
+    expect(stepObjectIndex(0, -1, 3)).toBe(2);
+  });
+
+  it('当前选中项不在清单里（-1）：↓ 从第一行开始，↑ 从最后一行开始', () => {
+    expect(stepObjectIndex(-1, 1, 4)).toBe(0);
+    expect(stepObjectIndex(-1, -1, 4)).toBe(3);
+    // 越界的旧下标同样按"不在清单里"处理，不许算出 NaN/undefined
+    expect(stepObjectIndex(99, 1, 4)).toBe(0);
+  });
+
+  it('空清单 → -1（调用方据此不动作，不越界）', () => {
+    expect(stepObjectIndex(0, 1, 0)).toBe(-1);
+    expect(stepObjectIndex(-1, -1, 0)).toBe(-1);
   });
 });

@@ -76,11 +76,21 @@ export interface BuildTreeInput {
   connections: ConnectionConfig[];
   /** 连接 id → 已拉取的库元数据。没有则为"未连接/未加载" */
   schemas?: Record<string, DatabaseMeta[]>;
+  /**
+   * 0.7.3（P2-29）：**空分组**路径清单（`生产` / `生产/订单`）。
+   *
+   * 分组本来由连接的 `group` 字段派生，于是"没有连接的分组"根本不存在 ——
+   * 用户点「新建分组」后什么都看不到，等于按钮坏了。宿主把显式创建过的
+   * 空分组路径传进来，这里把它们并进分组树（成员为 0，badge 为 0）。
+   *
+   * ⚠️ 只影响渲染，不产生任何连接配置变更；已有连接的分组路径重复传入是无害的（按 path 去重）。
+   */
+  extraGroups?: readonly string[];
   /** 展开状态由外部维护（D1），这里只负责渲染 */
 }
 
 export function buildTree(input: BuildTreeInput): TreeNode[] {
-  const groups = buildGroupTree(input.connections ?? []);
+  const groups = buildGroupTree(input.connections ?? [], input.extraGroups ?? []);
   const schemas = input.schemas ?? {};
   return groups.map((g) => groupNode(g, schemas));
 }

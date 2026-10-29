@@ -415,6 +415,20 @@ describe('分组树', () => {
   it('空列表返回空树', () => {
     expect(buildGroupTree([])).toEqual([]);
   });
+
+  it('0.7.3：空分组（extraGroups）并进树，且逐段补父节点', () => {
+    const tree = buildGroupTree([validCfg({ id: '1', name: 'a', group: '开发' })], ['归档', '归档/2025']);
+    expect(tree.map((n) => n.name)).toEqual(['开发', '归档']);
+    const archive = tree.find((n) => n.name === '归档');
+    expect(archive?.connections).toEqual([]); // 空分组：没有成员，但存在
+    expect(archive?.children.map((c) => c.name)).toEqual(['2025']);
+  });
+
+  it('空分组路径与已有分组重名时不重复、也不吃掉成员', () => {
+    const tree = buildGroupTree([validCfg({ id: '1', name: 'a', group: '开发' })], ['开发', '开发']);
+    expect(tree.filter((n) => n.name === '开发')).toHaveLength(1);
+    expect(tree.find((n) => n.name === '开发')?.connections.map((c) => c.name)).toEqual(['a']);
+  });
 });
 
 describe('生产环境判定', () => {

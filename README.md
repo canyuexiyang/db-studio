@@ -9,8 +9,8 @@ MySQL 优先、单机自用、macOS 原生观感 —— 对标 Navicat Premium�
 
 Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · 虚拟滚动
 
-[![version](https://img.shields.io/badge/version-0.7.0-blue)](docs/RELEASES.md)
-[![tests](https://img.shields.io/badge/tests-2200_passed-brightgreen)](#验证)
+[![version](https://img.shields.io/badge/version-0.7.3-blue)](docs/RELEASES.md)
+[![tests](https://img.shields.io/badge/tests-2470_passed-brightgreen)](#验证)
 [![platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue)](#系统与环境限制)
 [![arch](https://img.shields.io/badge/arch-Apple%20Silicon%20%C2%B7%20Intel-orange)](#适配芯片)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
@@ -115,6 +115,8 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 <summary><b>连接与安全</b></summary>
 
 - 连接 CRUD + 8 色标签 + 嵌套分组；SSH 隧道（密码/私钥）+ SSL/TLS
+- **连接配置导入/导出**：导出走白名单（密码/私钥/证书路径一律不带），导入整体校验 + 重名自动改名 + 强制回手输密码
+- **右键测试连接**：不用进编辑弹窗就能验证连通性（返回服务端版本与往返耗时）
 - 密码经 macOS **safeStorage** 加密落盘（绝不明文，保存前扫描自检）
 - 连接级只读模式：写语句被 **SQL AST 白名单**拦截（node-sql-parser，解析失败 fail-closed）
 - 断线检测 + 自动重连横幅；三级危险操作确认（二次确认/输对象名/生产红标自动升级）
@@ -125,6 +127,10 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 <summary><b>对象浏览 · 导入导出 · 应用壳</b></summary>
 
 - 5 层库表树（6 类对象：表/视图/存储过程/函数/触发器/事件）、字段名反查搜索、树展开记忆
+- **对象生命周期闭环**：新建数据库（连接右键 / 库列表尾部行内「＋ 新建数据库」/ 命令面板 `:建库`，实时 SQL 预览 + 非法名当场报错）、删除数据库（**无条件**输库名，比删表更严）
+- **5 类对象新建模板**（表 / 视图 / 存储过程 / 函数 / 触发器）+ 视图「改定义」；模板一律单条语句、DDL 执行后自动刷新树
+- **表级三件套**：重命名（F2，⇧F2 进设计器）、复制表（仅结构 / 结构+数据）、维护（优化 / 分析 / 检查表，服务端回执）
+- **分组管理**：新建/重命名/删除空分组，空分组也可见（不会「建完就消失」）
 - 详情面板三区块：表信息 / 字段（**注释常驻显示**）/ 建表语句 DDL；单元格完整值在弹窗里看
 - 可视化表设计器（字段/索引/外键三 Tab + 差异 ALTER + DDL 预览）
 - 导入 4 格式（csv/tsv/xlsx/json）向导；导出 5 格式（xlsx/csv/json/sql/markdown）+ 整库备份
@@ -133,6 +139,7 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 - **工具栏身份条**：连接 / 环境 / 库 / 对象四段常显，缺数据时如实写「未命名连接」而非拿 connId 顶替；按**可用宽度**在 full/compact 间切换（导出/导入/设计/粘贴收进「更多」菜单，保存与筛选永不折叠）
 - **更新检查四态**：`unconfigured` / `failed` / `update` / `latest` —— 没配发布通道不会谎报「已是最新」
 - macOS 原生菜单栏、原生交通灯、Liquid Glass 玻璃窗、三栏可拖拽布局、多标签、多窗口、会话恢复、三态主题、⌘K 命令面板
+- **标签右键 8 项**（关闭 / 关闭其他 / 关闭右侧 / **关闭左侧** / **关闭全部** / 固定 / 重命名 / 复制路径）、中间清单右键与 ↑↓ 巡行（单击选中、双击或 Enter 打开）
 
 </details>
 
@@ -372,27 +379,27 @@ npm run verify:installed # 已安装 .app 的真机验收（22 项，含版本�
 npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染层之外验证）
 ```
 
-**当前基线（v0.7.2 · 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases) 并本机安装）**：
+**当前基线（v0.7.3 · 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases) 并本机安装）**：
 
 | 门禁 | 结果 |
 |---|---|
-| 单元测试 | **2391 passed / 89 文件** |
-| `check:bundle` | 9/9 体积断言通过（首屏 563.0 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip） |
-| e2e:ui（真浏览器 UI 回归） | 434 |
+| 单元测试 | **2470 passed / 92 文件** |
+| `check:bundle` | 9/9 体积断言通过（首屏 563.0 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip；功能弹窗合计 61.1 KB / 64 KB gzip） |
+| e2e:ui（真浏览器 UI 回归） | 476 |
 | e2e:app（Electron 真机） | 72 |
 | e2e:keys（五焦点键盘矩阵） | 47 |
-| e2e:idle / e2e:idle:ui（空闲断开自动重连） | 17 / 5 |
-| e2e:keepalive（心跳保活 + 对照组） | 18 |
+| e2e:idle / e2e:idle:ui（空闲断开自动重连） | 16 / 4 |
+| e2e:keepalive（心跳保活 + 对照组） | 17 |
 | 真库冒烟（e2e:smoke） | 74 |
 | 导入导出（e2e:transfer） | 36 |
 | SSH 真机（e2e:ssh） | 18 |
-| 影响行数三口径（e2e:affected） | 22 |
-| 冲突检测（e2e:conflict） | 18 |
-| 工具栏四档视口（verify:toolbar-fit） | 23 |
+| 影响行数三口径（e2e:affected） | 21 |
+| 冲突检测（e2e:conflict） | 17 |
+| 工具栏四档视口（verify:toolbar-fit） | 22 |
 | 脚本导入数据完整性（e2e:script:data） | 10 |
 | 脚本导入 UI（e2e:script:ui） | 18 |
 | verify:installed（装好的 .app） | **22/22** |
-| verify:traffic-lights（像素） | **6/6** |
+| verify:traffic-lights（像素） | **6/6**（本轮未改窗口参数，沿用 0.7.2 结果） |
 
 > 🔴 **不跑 `npm run verify` 不许宣告完成**（AGENTS.md §五）。
 

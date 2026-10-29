@@ -583,7 +583,7 @@ export interface GroupNode {
 }
 
 /** 按 group 字段（"生产/订单" 形式）构建分组树 */
-export function buildGroupTree(list: ConnectionConfig[]): GroupNode[] {
+export function buildGroupTree(list: ConnectionConfig[], extraGroups: readonly string[] = []): GroupNode[] {
   const roots: GroupNode[] = [];
   const index = new Map<string, GroupNode>();
 
@@ -633,6 +633,19 @@ export function buildGroupTree(list: ConnectionConfig[]): GroupNode[] {
       if (roots[i].path === '') roots.splice(i, 1);
     }
     roots.push(merged);
+  }
+
+  /**
+   * 0.7.3（P2-29）：并进**空分组**。
+   *
+   * 放在最后：空分组的顺序因此稳定（宿主已排序），也不会挤到"未分组"前面。
+   * `ensure` 会逐段补父节点，所以只传 `生产/订单` 时会自动补出 `生产`。
+   * 已存在的路径（有连接落在里面）直接跳过 —— 不会重复也不会清空成员。
+   */
+  for (const raw of extraGroups) {
+    const path = (raw ?? '').replace(/^\/+|\/+$/g, '').trim();
+    if (!path || index.has(path)) continue;
+    ensure(path);
   }
 
   return roots;

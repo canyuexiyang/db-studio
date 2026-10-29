@@ -35,6 +35,14 @@ export interface ScopeFacts {
   hasSql: boolean;
   /** 有表上下文（表 tab / 树右键的表） */
   hasTable: boolean;
+  /**
+   * 0.7.3（P1-24）：有**库**上下文但没有具体表（树右键「导出整库…」）。
+   *
+   * 为什么单独一个字段：整库导出的可用性此前绑在 `hasTable` 上，于是「在库节点上
+   * 导出整库」这条最自然的路径反而点不了整库（既没表也没有 SQL）。库级入口的
+   * 整库是**唯一**有意义的范围，其余三项应如实禁用。
+   */
+  hasDatabase?: boolean;
   /** 有生效的筛选条件 */
   filterActive: boolean;
   /** 网格选区行数；null = 宿主没有选区快照 */
@@ -133,10 +141,11 @@ export function describeScopeOptions(facts: ScopeFacts): ScopeOption[] {
       label: '整库',
       hint: '重查：逐表重新查询并导出结构与数据 —— 不是快照，导出期间的数据变化会进文件。',
       source: 'requery',
-      enabled: !hasSql && hasTable,
+      // 0.7.3：库级入口（有库无表）也应能用 —— 那正是「整库」这个范围存在的理由
+      enabled: !hasSql && (hasTable || facts.hasDatabase === true),
       disabledReason: hasSql
         ? '查询结果没有库范围（整库备份请从表或库入口发起）'
-        : hasTable
+        : hasTable || facts.hasDatabase === true
           ? null
           : '需要表或库上下文',
     },

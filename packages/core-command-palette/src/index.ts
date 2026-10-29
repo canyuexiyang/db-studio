@@ -272,6 +272,11 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
    * 一个字都搜不到。`action: 'filter'` 与 App 分派表的键一致（同 ⌘⇧F）。
    */
   { id: 'cmd.filter', action: 'filter', title: '筛选当前表', subtitle: '按列加条件（⌘⇧F）', badge: '命令', keywords: ['filter', 'where', '筛选', '过滤', '条件'] },
+  /**
+   * 0.7.3（P0-19）：建库此前**全应用零入口** —— 只能去编辑器手写 CREATE DATABASE。
+   * 命令面板补一条，让「先想动作、再找入口」的用户也能走通；目标连接按当前上下文推。
+   */
+  { id: 'cmd.createDatabase', action: 'createDatabase', title: '新建数据库…', subtitle: '在当前连接上建库（含字符集/排序规则）', badge: '命令', keywords: ['create', 'database', 'schema', 'newdb', '建库', '新建库', '数据库'] },
 ];
 
 // ---------- 面板入口 ----------

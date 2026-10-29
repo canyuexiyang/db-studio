@@ -88,6 +88,43 @@ describe('describeScopeOptions · 四种范围口径与快照/重查标记', () 
   });
 });
 
+describe('0.7.3（P1-24）库级入口：只有「整库」可用', () => {
+  /** 库节点右键导出：有库、没表、没 SQL、也没有网格快照 */
+  const DB_ONLY: ScopeFacts = {
+    hasSql: false,
+    hasTable: false,
+    hasDatabase: true,
+    filterActive: false,
+    selectionRowCount: null,
+    loadedRowCount: null,
+    visibleColumnCount: null,
+    columnCount: 0,
+  };
+
+  it('整库可用，其余三项禁用且各有原因', () => {
+    const byId = Object.fromEntries(describeScopeOptions(DB_ONLY).map((o) => [o.id, o]));
+    expect(byId.database.enabled).toBe(true);
+    expect(byId.database.disabledReason).toBeNull();
+    // 没有表上下文 ⇒ 「全部匹配」不可点（否则会导出一张不存在的表）
+    expect(byId.matched.enabled).toBe(false);
+    expect(byId.matched.disabledReason).toBeTruthy();
+    expect(byId.selection.enabled).toBe(false);
+    expect(byId.loaded.enabled).toBe(false);
+  });
+
+  it('🔴 不带 hasDatabase 时整库仍然禁用（证明这个开关真的在起作用，不是恒真）', () => {
+    const db = describeScopeOptions({ ...DB_ONLY, hasDatabase: false }).find((o) => o.id === 'database')!;
+    expect(db.enabled).toBe(false);
+    expect(db.disabledReason).toBe('需要表或库上下文');
+  });
+
+  it('自定义 SQL 结果集即使标了 hasDatabase，整库也禁用（SQL 没有库范围）', () => {
+    const db = describeScopeOptions({ ...DB_ONLY, hasSql: true }).find((o) => o.id === 'database')!;
+    expect(db.enabled).toBe(false);
+    expect(db.disabledReason).toContain('库范围');
+  });
+});
+
 describe('describeColumnScope · 仅可见列开关的可用性', () => {
   it('表重查 / 快照：可见列已上报 → 可用', () => {
     expect(describeColumnScope(TABLE_FACTS, 'matched')).toMatchObject({ enabled: true, reason: null, visible: 2, total: 4 });

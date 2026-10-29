@@ -10,6 +10,8 @@ import { describe, it, expect } from 'vitest';
 import type { TableMeta } from '@dbstudio/core-schema-cache';
 import type { WorkspaceTab } from './useWorkspaceTabs';
 import {
+  closeAllIds,
+  closeLeftIds,
   closeOthersIds,
   closeRightIds,
   dirtyEntriesOf,
@@ -106,8 +108,52 @@ describe('关闭其他 / 关闭右侧：目标集合计算', () => {
   });
 });
 
-describe('批量关闭的脏清单（T27 核心验收：一次列全，不连弹十个框）', () => {
-  it('多个脏表 → 一次列出全部，不是只返回第一个', () => {
+describe('0.7.3 P1-26：关闭左侧 / 关闭全部', () => {
+  const tabs = [
+    tableTab('a', 'c1', 'db', 'ta'),
+    tableTab('b', 'c1', 'db', 'tb'),
+    tableTab('c', 'c1', 'db', 'tc'),
+    tableTab('d', 'c1', 'db', 'td'),
+  ];
+
+  it('关闭左侧：严格在 target 之前，按 tabs 原序', () => {
+    expect(closeLeftIds(tabs, 'c')).toEqual(['a', 'b']);
+    // 对照：自己与右侧都不在集合里
+    expect(closeLeftIds(tabs, 'c')).not.toContain('c');
+    expect(closeLeftIds(tabs, 'c')).not.toContain('d');
+  });
+
+  it('关闭左侧边界：第一个标签 / target 不存在 → 空集（不许退化成关全部）', () => {
+    expect(closeLeftIds(tabs, 'a')).toEqual([]);
+    expect(closeLeftIds(tabs, 'zzz')).toEqual([]);
+  });
+
+  it('关闭全部：含 target 自己，但固定标签不参与', () => {
+    expect(closeAllIds(tabs)).toEqual(['a', 'b', 'c', 'd']);
+    expect(closeAllIds(tabs, onlyNonPinned(['b']))).toEqual(['a', 'c', 'd']);
+    // 对照：全部固定 → 空集（菜单项据此禁用，而不是"点了没反应"）
+    expect(closeAllIds(tabs, onlyNonPinned(['a', 'b', 'c', 'd']))).toEqual([]);
+  });
+
+  it('菜单项：左侧为空时禁用并说明是「没有左侧标签」', () => {
+    const build = (tabId: string) =>
+      buildTabMenuItems({
+        tabs,
+        tab: tabs.find((t) => t.id === tabId)!,
+        activeId: tabId,
+        canRevealInTree: true,
+      });
+    const first = build('a');
+    const closeLeft = first.find((i) => i.key === 'closeLeft')!;
+    expect(closeLeft.disabled).toBe(true);
+    expect(closeLeft.disabledReason).toContain('没有左侧标签');
+    expect(build('b').find((i) => i.key === 'closeLeft')!.disabled).toBe(false);
+    // 「关闭全部」在有多标签时始终可用
+    expect(build('a').find((i) => i.key === 'closeAll')!.disabled).toBe(false);
+  });
+});
+
+describe('批量关闭的脏清单（T27 核心验收：一次列全，不连弹十个框）', () => {  it('多个脏表 → 一次列出全部，不是只返回第一个', () => {
     const tabs = [
       tableTab('a', 'c1', 'db', 'ta', 2),
       tableTab('b', 'c1', 'db', 'tb', 0),
