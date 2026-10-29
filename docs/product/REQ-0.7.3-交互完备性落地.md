@@ -160,5 +160,8 @@ e2e 里按 Esc 关不掉，残留 `.modal-mask` 把后面所有点击吃掉（�
 | `verify:installed` | **22/22**（含「已安装版本 = package.json 版本」断言） |
 
 - 任务：todo `rWzZlb` 父任务 + 11 个子任务**全部 done**。
-- 分发：`dist:dir` → `ditto` 装 /Applications → v0.7.3 已发 GitHub Release。
+- 分发：`dist:dir` → `ditto` 装 /Applications → v0.7.3 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases/tag/v0.7.3)
+  （dmg 153,927,463 B / blockmap / latest-mac.yml，远程 digest 与本地 sha256 一致）。
+- 发版前抓出并修掉第 5 个缺陷：`publish.owner` 拼成 `canyuexiang`（少一个 y）→
+  应用内检查更新永远 404；已补「owner == `package.json.repository` == `releaseBaseUrl()`」3 项单测。
 - 当日踩坑与真缺陷复盘：[`../devlog/DEV-PROGRESS-2026-10-29-0.7.3.md`](../devlog/DEV-PROGRESS-2026-10-29-0.7.3.md)。

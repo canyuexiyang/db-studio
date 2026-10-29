@@ -62,7 +62,23 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
   已修 owner，并把 `package.json.repository` 立成第二证据源 + 3 项单测钉住
   「`publish.owner/repo` == `repository` == `releaseBaseUrl()`」（在错 owner 上确认会红）。
 - 门禁数字变化：单测 2391 → **2473**（92 文件）、e2e:ui 434 → **476**（新增第 14 章 40 条）。
-- 本轮未发 Release（代码与门禁完成）。
+
+**发版结果（2026-10-29）**
+
+- Release：<https://github.com/canyuexiyang/db-studio/releases/tag/v0.7.3>（tag `v0.7.3` → `bf80ba1`）
+- 资产（远程 `digest` 与本地 sha256 **逐一一致**；三个都要传，缺 `latest-mac.yml`
+  应用内检查更新只能如实报 failed）：
+  - `DB-Studio-0.7.3-arm64.dmg` 153,927,463 B · `db123d73…b84f6af3`
+  - `DB-Studio-0.7.3-arm64.dmg.blockmap` 160,999 B · `faee12f2…52a31cc`
+  - `latest-mac.yml` 347 B · `50a2d9ba…b3eb0e712`（`version: 0.7.3`；`sha512` 与本地 dmg
+    实测一致；`url` 与资产名同为连字符 —— EB 产物名带空格，上传前已改名）
+- 下载验证：`releases/download/v0.7.3/{latest-mac.yml,dmg}` 都是 302 → objects 后 **206**
+  （updater 增量更新路径通）
+- 本机安装：`ditto` 装 /Applications → 版本 **0.7.3**、`app-update.yml` 的 owner 已是
+  `canyuexiyang`；`verify:installed` **22/22**（该次跑的是 owner 修复前的**同代码**包）
+- ⚠️ 未完成：owner 修复后重装的那一版**没有再跑一次 `verify:installed`** —— 重装时屏幕已锁，
+  CDP 探活 20s 超时（已知限制：进程在、`DevTools listening` 已打印）。功能面已由同一份 dist
+  的 `e2e:app` 72/72 覆盖；**解锁后补跑 `npm run verify:installed` 即可**。
 
 ---
 
