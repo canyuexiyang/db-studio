@@ -48,6 +48,7 @@ import type { WindowManager } from './window-manager.js';
 import { getGlassState, setGlassEnabled, darwinMajor } from './window.js';
 import { buildColumnIndex } from '@dbstudio/core-schema-cache';
 import { checkReadOnly } from '@dbstudio/core-sql-guard';
+import { logger } from './logger.js';
 import { randomUUID } from 'node:crypto';
 import { getObjectDdl, getTableInfo } from './object-meta.js';
 // V21：更新检查（函数内部再动态 import electron-updater，避免拖进启动路径）
@@ -98,8 +99,10 @@ function wrap<T>(fn: () => Promise<T> | T): Promise<IpcResult<T>> {
     } catch (e: any) {
       const code = typeof e?.code === 'string' && e.code in ERROR_CODES ? e.code : ERROR_CODES.INTERNAL;
       const message = String(e?.message ?? e);
-      // 主进程侧留痕：渲染层只能拿到收敛后的 IpcResult，没有栈就没法排查
-      if (process.env.DB_STUDIO_E2E === '1') console.error('[ipc:error]', message, '\n', e?.stack);
+      // 🔴 0.8.0（P1-8）：生产环境也留痕。渲染层只能拿到收敛后的 IpcResult，
+      //    没有栈就没法排查 —— 旧实现只在 DB_STUDIO_E2E==='1' 时 console，
+      //    打包后线上故障无从查起。现在统一落 userData/logs/main.log。
+      logger.error(`[ipc:error] code=${code}`, e);
       return { ok: false, error: { code, message } };
     }
   })();
@@ -163,6 +166,9 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
           available: secrets.canPersist,
           reason: secrets.getState().reason,
         },
+        // 0.8.0（P1-8）：配置文件损坏/版本不符的告警。takeLoadProblem 读后清除，
+        // 配合启动时只调一次 connList，天然实现「只告知一次」。
+        loadProblem: connections.takeLoadProblem(),
       };
     }),
   );
@@ -445,16 +451,26 @@ export function registerIpcHandlers(deps: HandlerDeps): void {
         throw Object.assign(new Error('只读连接不允许写操作'), { code: ERROR_CODES.READ_ONLY });
       }
       const r = await sessions.applyMutation(req.connId, req.database, req.statements, req.mode);
-      // 写操作也进历史，便于回溯"我刚才到底改了什么"
+      // 写操作也进历史，便于回溯"我刚才到底改了什么"。
+      // 🔴 但「发了多少条语句」不等于「真的写进去了多少行」：冲突时整批
+      //    ROLLBACK（committed=false），此时每条语句都**没有生效**。旧实现
+      //    无条件 success:true / rowCount=r.affected，会把回滚的批次记成
+      //    「全部执行成功」，历史面板与数据库实际状态背离。
+      const committed = r.committed !== false;
+      const firstConflict = r.conflicts?.[0];
       for (const st of req.statements) {
         recordHistory({
           connectionId: req.connId,
           database: req.database ?? null,
           sql: st.sql,
-          success: true,
-          error: null,
+          success: committed,
+          error: committed
+            ? null
+            : firstConflict
+              ? `${firstConflict.outcome}：${firstConflict.reason}（整批已回滚）`
+              : '整批已回滚，未写入',
           durationMs: r.elapsedMs,
-          rowCount: r.affected,
+          rowCount: committed ? r.affected : 0,
           executedAt: Date.now(),
         });
       }

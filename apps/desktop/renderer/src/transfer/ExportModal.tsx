@@ -37,6 +37,7 @@ import {
 } from './exportScope';
 import type { GridSnapshotSource } from '../grid/exportSnapshot';
 import { IconCheck, IconGear, IconX } from '../ui/icons';
+import { useEscapeClose } from '../ui/useEscapeClose';
 
 
 export type ExportFormat = 'xlsx' | 'csv' | 'json' | 'sql' | 'markdown';
@@ -273,6 +274,9 @@ export function ExportModal({
   const cancel = useCallback(async () => {
     if (jobIdRef.current) await backend.exportCancel(jobIdRef.current);
   }, [backend]);
+
+  // Esc 关闭退路：与遮罩点击 /「取消」按钮共用 onClose；running 阶段遮罩都不关，Esc 同样不绕过。
+  useEscapeClose(onClose, phase !== 'running');
 
   const fmtBytes = (n: number) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n > 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
 

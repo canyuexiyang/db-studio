@@ -44,6 +44,7 @@ import {
   type ValidationIssue,
 } from '@dbstudio/core-connection';
 import { duplicateSaveConfig, hasStoredSecret } from './duplicate';
+import { useEscapeClose } from '../ui/useEscapeClose';
 
 export interface ConnectionEditorProps {
   /** null = 新建；否则预填这条已有连接（创建副本时传的是源连接） */
@@ -303,6 +304,9 @@ export function ConnectionEditor({
     if (touched && !window.confirm('表单有未保存的修改，确定关闭吗？')) return;
     onCancel();
   }, [touched, onCancel]);
+
+  // Esc 关闭退路：与遮罩点击 /「取消」按钮共用 requestClose，未保存确认守卫原样继承。
+  useEscapeClose(requestClose);
 
   const doSave = useCallback(
     async (connectAfterSave = false) => {

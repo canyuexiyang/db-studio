@@ -4,6 +4,7 @@
  * 同 DataGrid.test.ts：没有 jsdom，用 renderToStaticMarkup 做结构断言。
  * 菜单是纯展示 + 回调，静态渲染足以守住勾选态、文案与禁用态 ——
  * 这三条正是「开关型菜单项」最容易写错的地方（用户看到勾却没生效 / 禁用了却看不出原因）。
+ * 勾选态断言改查 <svg：勾选图标已从字符勾换成 icons.tsx 的 IconCheck SVG。
  */
 
 import { createElement as h } from 'react';
@@ -43,14 +44,14 @@ describe('V14 菜单项「显示列类型」', () => {
     const html = render({ showColumnTypes: false });
     expect(html).toContain('data-testid="ctx-show-types"');
     expect(html).toContain('aria-checked="false"');
-    expect(html).not.toContain('✓');
+    expect(html).not.toContain('<svg'); // 关态不渲染勾选图标（IconCheck SVG）
     expect(html).toContain('显示列类型');
   });
 
   it('开：勾选标记出现、aria-checked=true', () => {
     const html = render({ showColumnTypes: true });
     expect(html).toContain('aria-checked="true"');
-    expect(html).toContain('✓');
+    expect(html).toContain('<svg'); // 勾选图标出现（IconCheck SVG）
   });
 });
 
@@ -67,7 +68,7 @@ describe('V19 菜单项「按此列分组着色」', () => {
     const html = render({ groupStripeColumn: 'status', onToggleGroupStripe: () => undefined });
     expect(html).toContain('取消分组着色');
     expect(html).toContain('aria-checked="true"');
-    expect(html).toContain('✓');
+    expect(html).toContain('<svg'); // 勾选图标出现（IconCheck SVG）
   });
 
   it('着色的是**别的列**时本项不勾（口径按列名比较）', () => {

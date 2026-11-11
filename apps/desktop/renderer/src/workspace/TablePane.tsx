@@ -18,7 +18,7 @@ import type { GridDataSource } from '../grid/useGridData';
 import { FilterBar } from '../grid/FilterBar';
 import { HeaderFilterContext, type HeaderFilterBridge, type ColumnFilterMode } from '../grid/headerFilterBridge';
 import { columnFilterCapability, removeConditionFromModel } from '../grid/filterBarModel';
-import { blankFilter, type FilterModel } from '@dbstudio/core-filter';
+import { blankFilter, effectiveConditionCount, type FilterModel } from '@dbstudio/core-filter';
 import { openTableSqlPreview } from '../filter/preview';
 import {
   locateColumns as mutationLocateColumns,
@@ -378,12 +378,18 @@ export function TablePane({
    * 只有 ready 才把整块区域交回网格；其余五态各自渲染独立占位块，
    * 不再共用一块空白。
    */
+  // 0.7.5：零行文案要区分「筛选无结果」与「空表」。与 App 的筛选徽标同源，
+  // 用既存纯函数 effectiveConditionCount 从 tab.filter 派生，不自己数条件。
+  const hasFilter = tab.filter ? effectiveConditionCount(tab.filter) > 0 : false;
   const gridState = resolveGridState({
     disconnected: disconnected === true,
     loading: tab.loading,
     error: tab.loadError ?? null,
     hasPayload: !!tab.payload,
     rowCount: tab.payload?.rowCount ?? 0,
+    // 空表下点了「新增空白行」后要让网格出现，否则草稿行看不见（P0-4）
+    extraRows: source?.extraRows ?? 0,
+    hasFilter,
   });
   const showStateBlock = needsStateBlock(gridState);
   const handleReload = useCallback(() => {
@@ -534,7 +540,27 @@ export function TablePane({
       ) : null}
 
       {showStateBlock ? (
-        <GridStateBlock state={gridState} onRetry={onReload ? handleReload : null} />
+        <GridStateBlock
+          state={gridState}
+          onRetry={onReload ? handleReload : null}
+          onAddBlankRow={writable && source && handlers.onAddBlankRow ? handleAddBlankRow : null}
+        />
+      ) : null}
+
+      {/*
+        0.7.5：有载荷（ready）却拿不到列定义时，旧实现是「状态块不渲染 + 网格也不渲染」
+        = 一片纯空白。复用既有的 gs-* 占位样式给明确文案与刷新入口，不新增组件文件。
+      */}
+      {!showStateBlock && columns.length === 0 ? (
+        <div className="gs-block gs-empty" data-testid="tp-no-columns" data-tone="muted">
+          <div className="gs-title">没有可显示的列</div>
+          <div className="gs-hint">数据已载入，但没有拿到列定义；点「刷新数据」重试。</div>
+          {onReload ? (
+            <button type="button" className="gs-retry" onClick={handleReload}>
+              刷新数据
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {showStateBlock ? null : source && columns.length > 0 ? (

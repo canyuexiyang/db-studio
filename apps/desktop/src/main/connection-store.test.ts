@@ -175,6 +175,66 @@ describe('连接配置持久化', () => {
     expect(s.listConnections()).toEqual([]);
   });
 
+  // ---------- 0.8.0（P1-8）：损坏/版本不符不再静默清空 ----------
+
+  it('🔴 配置文件损坏时：原文件被备份、留痕，且不覆盖原文件', () => {
+    const { writeFileSync, readdirSync } = require('node:fs') as typeof import('node:fs');
+    const corrupt = '{ 这不是合法 JSON';
+    writeFileSync(join(dir, 'connections.json'), corrupt, 'utf8');
+    const s = new ConnectionStore(dir, secrets);
+
+    // 降级为空（应用仍能起）
+    expect(s.listConnections()).toEqual([]);
+    // 留痕：kind=corrupt，带备份路径
+    const problem = s.takeLoadProblem();
+    expect(problem).not.toBeNull();
+    expect(problem?.kind).toBe('corrupt');
+    expect(problem?.backupPath).toBeTruthy();
+    // 原文件仍在、内容一字未改（备份是 copy 不是 rename）
+    expect(readFileSync(join(dir, 'connections.json'), 'utf8')).toBe(corrupt);
+    // 备份文件确实生成了（connections.json.bak.<时间戳>）
+    const baks = readdirSync(dir).filter((f: string) => f.startsWith('connections.json.bak.'));
+    expect(baks.length).toBe(1);
+    expect(readFileSync(join(dir, baks[0]), 'utf8')).toBe(corrupt);
+  });
+
+  it('takeLoadProblem 读后清除：只告知一次，不反复打扰', () => {
+    const { writeFileSync } = require('node:fs') as typeof import('node:fs');
+    writeFileSync(join(dir, 'connections.json'), '坏文件', 'utf8');
+    const s = new ConnectionStore(dir, secrets);
+    expect(s.takeLoadProblem()).not.toBeNull();
+    // 第二次读取应为 null（已经告知过，不再重复）
+    expect(s.takeLoadProblem()).toBeNull();
+  });
+
+  it('🔴 版本不兼容：留痕 kind=version，不做猜测性迁移', () => {
+    const { writeFileSync } = require('node:fs') as typeof import('node:fs');
+    writeFileSync(
+      join(dir, 'connections.json'),
+      JSON.stringify({ version: 999, connections: [{ id: 'old' }] }),
+      'utf8',
+    );
+    const s = new ConnectionStore(dir, secrets);
+    expect(s.listConnections()).toEqual([]);
+    const problem = s.takeLoadProblem();
+    expect(problem?.kind).toBe('version');
+    expect(problem?.backupPath).toBeTruthy();
+  });
+
+  it('对照：正常文件不留痕（否则每次启动都弹假告警）', async () => {
+    await store.save({ config: baseCfg(), password: 'ok' });
+    const reopened = new ConnectionStore(dir, secrets);
+    expect(reopened.listConnections()).toHaveLength(1);
+    expect(reopened.takeLoadProblem()).toBeNull();
+  });
+
+  it('对照：全新目录（无配置文件）不留痕、也不备份', () => {
+    const s = new ConnectionStore(dir, secrets);
+    expect(s.takeLoadProblem()).toBeNull();
+    const { readdirSync } = require('node:fs') as typeof import('node:fs');
+    expect(readdirSync(dir).filter((f: string) => f.includes('.bak.')).length).toBe(0);
+  });
+
   it('版本不兼容的旧文件当作空列表，不做猜测性迁移', () => {
     const { writeFileSync } = require('node:fs') as typeof import('node:fs');
     writeFileSync(

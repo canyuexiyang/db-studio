@@ -20,6 +20,7 @@ import type { Backend } from '../backend';
 import type { TableMeta, ColumnMeta } from '@dbstudio/core-schema-cache';
 import { guessMapping, issuesToCsv, validatePreview, type ImportRowIssue } from '@dbstudio/core-import';
 import { IconAlert, IconCheck, IconExport, IconX } from '../ui/icons';
+import { useEscapeClose } from '../ui/useEscapeClose';
 
 
 export interface ImportWizardProps {
@@ -271,6 +272,9 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
   const cancelImport = useCallback(async () => {
     if (jobIdRef.current) await backend.importCancel(jobIdRef.current);
   }, [backend]);
+
+  // Esc 关闭退路：与遮罩点击 /「取消」按钮共用 onClose；running 阶段遮罩都不关，Esc 同样不绕过。
+  useEscapeClose(onClose, phase !== 'running');
 
   /**
    * P1-10：把失败明细存成 CSV。

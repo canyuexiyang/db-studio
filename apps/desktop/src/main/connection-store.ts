@@ -11,7 +11,7 @@
  * 于是它可以在单测里用替身驱动，不必起 Electron 进程。
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, copyFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   defaultConnectionConfig,
@@ -68,6 +68,15 @@ export class PlaintextSecretError extends Error {
 export class ConnectionStore {
   private readonly file: string;
   private list: ConnectionConfig[] = [];
+  /**
+   * 0.8.0（P1-8）：上一次从磁盘加载时遇到的问题（损坏 / 版本不兼容）。
+   *
+   * 🔴 为什么要留痕：旧实现在解析失败时静默 `return []` —— 用户的连接「全部消失」，
+   *    却没有任何提示，会以为数据被清空而反复重配，也不知道原文件其实还在。
+   *    现在：损坏时先把原文件备份成 `.bak.<时间戳>` 再降级为空，并把这件事记下来，
+   *    由 UI 在启动时如实告知（含备份路径）。null = 一切正常。
+   */
+  private lastLoadProblem: { kind: 'corrupt' | 'version'; backupPath: string | null; message: string } | null = null;
 
   constructor(
     userDataDir: string,
@@ -80,17 +89,72 @@ export class ConnectionStore {
 
   // ---------- 读 ----------
 
+  /**
+   * 把当前配置文件备份成 `connections.json.bak.<时间戳>`，返回备份路径（失败返回 null）。
+   * 🔴 用 copyFileSync 而不是 rename：原文件保持不动（用户可能想自己看），备份是副本。
+   */
+  private backupCorruptFile(): string | null {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const bak = `${this.file}.bak.${stamp}`;
+      copyFileSync(this.file, bak);
+      return bak;
+    } catch {
+      // 备份失败不阻断启动 —— 降级为空仍要让应用能起来，只是丢了取证副本
+      return null;
+    }
+  }
+
   private readFromDisk(): ConnectionConfig[] {
     if (!existsSync(this.file)) return [];
+    let raw: ConnectionsFile;
     try {
-      const raw = JSON.parse(readFileSync(this.file, 'utf8')) as ConnectionsFile;
-      if (raw.version !== CONNECTIONS_VERSION) return []; // 版本不兼容 → 当作空，不猜
-      if (!Array.isArray(raw.connections)) return [];
-      return raw.connections.map((c) => normalizeConfig(c));
-    } catch {
-      // 文件损坏：不要让应用起不来，当作没有连接
+      raw = JSON.parse(readFileSync(this.file, 'utf8')) as ConnectionsFile;
+    } catch (e) {
+      // 文件损坏：备份后当作没有连接，并留痕供 UI 告知（绝不静默清空）
+      const backupPath = this.backupCorruptFile();
+      this.lastLoadProblem = {
+        kind: 'corrupt',
+        backupPath,
+        message: `连接配置文件已损坏，无法解析（${e instanceof Error ? e.message : String(e)}）。` +
+          (backupPath ? `原文件已备份到 ${backupPath}` : '备份失败，原文件仍在原位。'),
+      };
       return [];
     }
+    if (raw.version !== CONNECTIONS_VERSION) {
+      // 版本不兼容：不猜格式，备份后降级为空并留痕
+      const backupPath = this.backupCorruptFile();
+      this.lastLoadProblem = {
+        kind: 'version',
+        backupPath,
+        message: `连接配置文件版本不兼容（文件 version=${raw.version}，本程序期望 ${CONNECTIONS_VERSION}）。` +
+          (backupPath ? `原文件已备份到 ${backupPath}` : '备份失败，原文件仍在原位。'),
+      };
+      return [];
+    }
+    if (!Array.isArray(raw.connections)) {
+      const backupPath = this.backupCorruptFile();
+      this.lastLoadProblem = {
+        kind: 'corrupt',
+        backupPath,
+        message: '连接配置文件结构异常（connections 不是数组）。' +
+          (backupPath ? `原文件已备份到 ${backupPath}` : '备份失败，原文件仍在原位。'),
+      };
+      return [];
+    }
+    return raw.connections.map((c) => normalizeConfig(c));
+  }
+
+  /** 0.8.0（P1-8）：供 UI 启动时读取「上次加载是否有问题」，读完即可清除（只告知一次） */
+  takeLoadProblem(): { kind: string; backupPath: string | null; message: string } | null {
+    const p = this.lastLoadProblem;
+    this.lastLoadProblem = null;
+    return p;
+  }
+
+  /** 配置文件路径（UI 的「在访达中显示」用） */
+  get filePath(): string {
+    return this.file;
   }
 
   listConnections(): ConnectionConfig[] {

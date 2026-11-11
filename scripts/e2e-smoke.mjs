@@ -35,6 +35,17 @@ function check(name, cond, detail = '') {
   console.log(`${mark} ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
+/**
+ * 「前提不成立」既不是通过、也不是失败，单独记 skipped。
+ * 断言全绿 ≠ 门禁跑完：把「本次根本没跑」混进通过数里，等于把不确定性伪装成绿灯。
+ * skipped 不进 results（故不计入通过/失败），但汇总必须显式报数，不能静默。
+ */
+const skipped = [];
+function skip(name, reason = '') {
+  skipped.push({ name, reason });
+  console.log(`⏭️ ${name}${reason ? ` — ${reason}` : ''}`);
+}
+
 const t0 = Date.now();
 const workDir = mkdtempSync(join(tmpdir(), 'dbstudio-e2e-'));
 const cache = new SchemaCache(workDir);
@@ -666,7 +677,8 @@ try {
       }
       check('篡改 CA 后连接被拒（校验生效）', rejected, '');
     } else {
-      check('⏭️ fixture 无 TLS 证书，跳过 SSL 真机断言', true, 'container 未就绪或无 docker CLI');
+      // 前提不成立：证书拿不到就没有可比对的 TLS 证据链，记 skipped 而非「一条通过」。
+      skip('fixture 无 TLS 证书，跳过 SSL 真机断言', 'container 未就绪或无 docker CLI');
     }
   } catch (e) {
     check('SSL 真机段未抛异常', false, String(e?.message ?? e));
@@ -685,10 +697,15 @@ try {
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${'='.repeat(60)}`);
-console.log(`端到端冒烟：${results.length - failed.length}/${results.length} 通过，耗时 ${Date.now() - t0}ms`);
+console.log(`端到端冒烟：${results.length - failed.length}/${results.length} 通过，${skipped.length} 跳过，耗时 ${Date.now() - t0}ms`);
+if (skipped.length > 0) {
+  console.log('\n跳过项（前提不成立，既不计通过也不计失败）：');
+  for (const s of skipped) console.log(`  ⏭️ ${s.name}${s.reason ? ` — ${s.reason}` : ''}`);
+}
+// 有失败仍必须非 0 退出；skipped 不参与退出码判定。
 if (failed.length > 0) {
   console.log('\n失败项：');
   for (const f of failed) console.log(`  ❌ ${f.name} ${f.detail}`);
   process.exit(1);
 }
-console.log('全部通过 ✅');
+console.log(skipped.length > 0 ? '已执行断言全部通过（有跳过项，非全绿）✅' : '全部通过 ✅');

@@ -14,7 +14,7 @@
  * 退出前必须 closeAll()，否则连接句柄泄漏会让进程退不干净。
  */
 
-import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, powerMonitor } from 'electron';
 import { join } from 'node:path';
 
 import { createMainWindow, getGlassState, installCloseGuard, registerCloseGuardIpc } from './window.js';
@@ -24,6 +24,8 @@ import { installAppMenu } from './menu.js';
 import { ConnectionStore } from './connection-store.js';
 import { SessionRegistry } from './session-registry.js';
 import { registerIpcHandlers, EVENT_CONN_STATE } from './ipc-handlers.js';
+import { initLogger, logger } from './logger.js';
+import { installPowerEvents } from './power-events.js';
 import { SshTunnelManager } from './tunnel-manager.js';
 import { TransferManager } from './transfer-manager.js';
 import { SchemaCache } from '@dbstudio/core-schema-cache';
@@ -77,11 +79,16 @@ if (singleLock && !app.requestSingleInstanceLock()) {
 async function boot(): Promise<void> {
   const dataDir = userDataDir();
 
+  // 0.8.0（P1-8）：主进程错误日志。必须在建 store 之前初始化 ——
+  // 这样 ConnectionStore 构造时若发现配置文件损坏，也能落一条盘。
+  initLogger(dataDir);
+  logger.info(`[dbstudio] 启动 v${app.getVersion()}`);
+
   // ---- 子系统（顺序无关，都不阻塞窗口）----
   const secrets = new SecretStore(safeStorage as any);
   // 刻意不 await：凭据探测不该挡住首屏。窗口先出来，探测完了自己更新状态。
   void secrets.init().then((s) => {
-    console.log(`[dbstudio] safeStorage: ${s.mode}${s.reason ? ' — ' + s.reason : ''}`);
+    logger.info(`[dbstudio] safeStorage: ${s.mode}${s.reason ? ' — ' + s.reason : ''}`);
   });
 
   const connections = new ConnectionStore(dataDir, secrets);
@@ -218,8 +225,23 @@ async function boot(): Promise<void> {
   // 转发给渲染层分派（见 menu.ts），不影响这里的 boot 顺序与退出清理语义。
   installAppMenu(() => mainWindow);
 
+  // 0.8.0（P1-8 / #78）：系统休眠时主动释放连接（含 SSH 隧道，杜绝孤儿进程）。
+  // powerMonitor 只能在 app ready 后访问 —— boot() 正是 whenReady().then(boot)。
+  // 决策与单测见 power-events.ts：suspend 释放、resume 不主动重连、锁屏不动。
+  const powerEvents = installPowerEvents({
+    source: powerMonitor,
+    releaseAll: () => sessions.releaseAllForSuspend(),
+    log: logger,
+  });
+
   // ---- 退出清理 ----
   const shutdown = async (): Promise<void> => {
+    // 先摘电源监听，避免退出过程中 suspend 事件再触发一次释放
+    try {
+      powerEvents.dispose();
+    } catch {
+      // 退出路径上不再尝试恢复
+    }
     // 先杀导入导出 worker（它们握着独立 DB 连接）
     try {
       transfers.cancelAll();

@@ -33,6 +33,19 @@ export interface GridStateInput {
   /** 是否已经有载荷（null payload 且没在加载 = 尚未查询） */
   hasPayload: boolean;
   rowCount: number;
+  /**
+   * 草稿新增行数（source.extraRows）。
+   * 🔴 空表下用户点了「新增空白行」时 payload.rowCount 仍是 0，若继续判 empty
+   *    就整块不渲染 DataGrid —— 刚加的行看不见，界面像「点了没反应」。
+   *    有草稿行时按 ready 处理，把网格交回去显示草稿。
+   */
+  extraRows?: number;
+  /**
+   * 当前是否应用了有效筛选条件（由宿主用 effectiveConditionCount 之类的既存纯函数
+   * 从 tab.filter 派生）。零行时用来区分「筛选把数据筛没了」与「表里本来就没数据」：
+   * 两者的下一步动作完全不同（放宽/清空条件 vs 新增行），不能共用一句文案。
+   */
+  hasFilter?: boolean;
 }
 
 export interface GridState {
@@ -58,10 +71,18 @@ const IDLE: GridState = {
   hint: '点「刷新数据」加载这张表的内容。',
   tone: 'muted',
 };
-const EMPTY: GridState = {
+/** 有筛选但零行：数据被条件筛掉了，提示放宽/清空，别让用户以为表是空的 */
+const EMPTY_WITH_FILTER: GridState = {
   kind: 'empty',
-  title: '这个条件下没有数据',
-  hint: '如果加过筛选，试试放宽或清空条件；表为空时可「新增行」。',
+  title: '当前筛选条件下没有数据',
+  hint: '放宽或清空筛选条件后再看；表里可能有数据，只是都被筛掉了。',
+  tone: 'muted',
+};
+/** 无筛选且零行：表里确实没有数据，提示新增行 */
+const EMPTY_NO_FILTER: GridState = {
+  kind: 'empty',
+  title: '这张表还没有数据',
+  hint: '点「新增空白行」加一行草稿，保存后写入这张表。',
   tone: 'muted',
 };
 
@@ -78,7 +99,12 @@ export function resolveGridState(input: GridStateInput): GridState {
   }
   if (input.disconnected) return DISCONNECTED;
   if (!input.hasPayload) return IDLE;
-  if (input.rowCount === 0) return EMPTY;
+  if (input.rowCount === 0) {
+    if ((input.extraRows ?? 0) > 0) {
+      return { kind: 'ready', title: '', hint: '', tone: 'normal' };
+    }
+    return input.hasFilter === true ? EMPTY_WITH_FILTER : EMPTY_NO_FILTER;
+  }
   return { kind: 'ready', title: '', hint: '', tone: 'normal' };
 }
 

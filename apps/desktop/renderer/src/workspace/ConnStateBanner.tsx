@@ -4,12 +4,14 @@
  * 信号源：组件内部自取后端（pickBackend()，契约 §一.1：demo 降级天然可用 ——
  * demo 后端的 onConnState 是空订阅，横幅永远不出现，不崩）。
  *
- * 显示条件（三条同时满足才显示）：
- *  1. 推送的 state ∈ {disconnected, failed, closed}（意外断开；手动断开的
- *     closed 不带 lastError，天然被第 2 条滤掉，不会"自己断开还报警"）
- *  2. lastError 非空（ipc-handlers 现有推送不带 lastError —— 那些是连接/
- *     断开动作的例行通知，不是事故；session-registry 补全的事故推送才带）
- *  3. 该连接当前不在 connected/busy（恢复后自动收起，不依赖再来一条推送）
+ * 显示条件（两类，且该连接当前不在 connected/busy —— 恢复后自动收起）：
+ *  A. 事故态：state ∈ {disconnected, failed, closed} 且 lastError 非空。
+ *     （ipc-handlers 现有推送不带 lastError —— 那些是连接/断开动作的例行通知；
+ *      session-registry 补全的事故推送才带）
+ *  B. 0.7.5 空闲自动断开：state === 'closed' 且 lastError 为空 —— 不是事故，
+ *     但同样给一条「因空闲自动断开」的可操作提示，沿用「重连」按钮。
+ *     手动断开最终态是 idle（runtime.disconnect 同步 closed→idle 只推最终态），
+ *     不会落进这一类，不会"自己断开还报警"。
  *
  * 只显示【最近一个】出问题的连接：多连接同时断时后到的覆盖先到的，
  * 重连成功或手动 × 后收起。红/黄用既有 token（--error-bar / --warn），禁紫色。
@@ -37,6 +39,12 @@ interface BadConn {
   id: string;
   state: string;
   lastError: string;
+  /**
+   * 0.7.5：空闲超时自动断开（connected → closed，不带 lastError）。
+   * 它不是事故，但同样需要一条可操作提示 —— 否则用户只看到状态栏「已断开」，
+   * 不知道发生了什么、也不知道下一步该点哪里。
+   */
+  idle?: boolean;
 }
 
 /** 原因摘要：横幅一行放不下长错误，全文进 title 悬浮 */
@@ -64,6 +72,12 @@ export function ConnStateBanner({ connections, connStates, onReconnect, onDismis
       if (BAD_STATES.has(ev.state) && err) {
         setBad({ id: ev.id, state: ev.state, lastError: err });
         setDismissed(false);
+      } else if (ev.state === 'closed' && !err) {
+        // 0.7.5：空闲自动断开是 closed 且 lastError 为空；手动断开最终态是 idle
+        // （runtime.disconnect 同步 closed→idle 只推最终态），不会落进这条分支。
+        // 沿用既有的「重连」按钮与 × ，不新增入口。
+        setBad({ id: ev.id, state: ev.state, lastError: '', idle: true });
+        setDismissed(false);
       }
       // 没带 lastError 的例行推送（连接中/已连上等）不动横幅
     });
@@ -87,6 +101,7 @@ export function ConnStateBanner({ connections, connStates, onReconnect, onDismis
   const name = cfg.name || bad.id;
   const summary = summarize(bad.lastError);
   const isError = bad.state === 'failed';
+  const isIdle = bad.idle === true;
 
   return (
     <div
@@ -97,8 +112,10 @@ export function ConnStateBanner({ connections, connStates, onReconnect, onDismis
       <span className="cb-icon">
         <IconAlert size={13} />
       </span>
-      <span className="cb-text" title={bad.lastError}>
-        {isError ? `连接 ${name} 失败` : `连接 ${name} 已断开`}（{summary}）
+      <span className="cb-text" title={isIdle ? undefined : bad.lastError}>
+        {isIdle
+          ? `连接 ${name} 因空闲自动断开（重新连接或刷新数据后即可继续）`
+          : `${isError ? `连接 ${name} 失败` : `连接 ${name} 已断开`}（${summary}）`}
         {reconnecting ? ' — 正在重连…' : ''}
       </span>
       <span className="cb-spacer" />

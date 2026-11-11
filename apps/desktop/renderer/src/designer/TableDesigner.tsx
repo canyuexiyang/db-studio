@@ -520,7 +520,7 @@ export function TableDesigner({
                         />
                       </td>
                       <td className="w-order">
-                        <button title="删除字段" disabled={saving} onClick={() => removeColumn(c.key)}>✕</button>
+                        <button title="删除字段" disabled={saving} onClick={() => removeColumn(c.key)}><IconX /></button>
                       </td>
                     </tr>
                   ))}
@@ -595,7 +595,7 @@ export function TableDesigner({
                           disabled={saving}
                           onClick={() => updateIndex(idx.key, { columns: idx.columns.filter((_, j) => j !== ci) })}
                         >
-                          ✕
+                          <IconX />
                         </button>
                       </div>
                     ))}

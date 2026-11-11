@@ -196,6 +196,11 @@ export interface ConnListResult {
   /** 快照是否过期（UI 提示"可能过期，建议刷新"） */
   stale: Record<string, boolean>;
   secret: { available: boolean; reason: string | null };
+  /**
+   * 0.8.0（P1-8）：连接配置文件损坏 / 版本不兼容的告警（启动时读一次，读后清除）。
+   * 非 null 时 UI 必须如实告知用户「连接没丢、原文件已备份到 X」，不能静默清空。
+   */
+  loadProblem?: { kind: string; backupPath: string | null; message: string } | null;
 }
 
 export interface ConnectResult {

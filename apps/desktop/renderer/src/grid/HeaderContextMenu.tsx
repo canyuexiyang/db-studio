@@ -8,7 +8,7 @@
  * 复制列名 / 自适应列宽 / 隐藏此列都是 DataGrid 内部能力，直接回调。
  *
  * 本轮追加两个「开关型」条目（V14 列头显示类型 / V19 按此列分组着色）：
- * 开关态用图标位里的 ✓ 表示（勾 = 开，空 = 关），与菜单里其它条目的图标位对齐。
+ * 开关态用图标位里的 IconCheck SVG 表示（勾 = 开，空 = 关），与菜单里其它条目的图标位对齐。
  *
  * ---- T24：本轮再追加两个「筛选型」条目（按此列筛选 / 此列多值 IN）----
  *
@@ -21,6 +21,7 @@
 import { useRef } from 'react';
 import type { SortDirection } from '@dbstudio/core-grid-view';
 import { useMenuBehavior } from '../ui/useMenuBehavior';
+import { IconCheck } from '../ui/icons';
 import { NO_BRIDGE_CAPABILITY, useHeaderFilterBridge } from './headerFilterBridge';
 
 export interface HeaderContextMenuState {
@@ -175,7 +176,7 @@ export function HeaderContextMenu({
         title="列头在列名下方显示数据类型文本（开关持久化在本地）"
         onClick={onToggleShowTypes}
       >
-        <span className={`gd-ctx-ico${showColumnTypes ? ' gd-on' : ''}`}>{showColumnTypes ? '✓' : ''}</span>
+        <span className={`gd-ctx-ico${showColumnTypes ? ' gd-on' : ''}`}>{showColumnTypes ? <IconCheck /> : null}</span>
         <span className="gd-ctx-label">显示列类型</span>
       </button>
 
@@ -190,7 +191,7 @@ export function HeaderContextMenu({
         title={onToggleGroupStripe ? '相邻同值行交替着色，便于看清分组边界' : '宿主未接线，分组着色不可用'}
         onClick={onToggleGroupStripe}
       >
-        <span className={`gd-ctx-ico${stripeOn ? ' gd-on' : ''}`}>{stripeOn ? '✓' : ''}</span>
+        <span className={`gd-ctx-ico${stripeOn ? ' gd-on' : ''}`}>{stripeOn ? <IconCheck /> : null}</span>
         <span className="gd-ctx-label">{stripeOn ? '取消分组着色' : '按此列分组着色'}</span>
       </button>
 

@@ -34,6 +34,12 @@ import {
   planConnectionImport,
 } from './connection/connectionBundle';
 import { useWorkspaceTabs, type TableTabState, type WorkspaceTab } from './workspace/useWorkspaceTabs';
+// 0.8.0（#46）：表数据拉取的并发闸门（同一 tab 只有最新请求的结果能写入）
+import { RequestGate } from './workspace/requestGate';
+// 0.8.0（#68）：SQL 执行前置流程期间的可中止闸门
+import { QueryCancelGate } from './editor/queryCancelGate';
+// 0.8.0（#79）：单槽位模态（脏改动守卫）的并发收口
+import { SingleModalGate } from './workspace/singleModalGate';
 import { WorkspaceTabsBar } from './workspace/WorkspaceTabsBar';
 import { TablePane, type TablePaneHandlers } from './workspace/TablePane';
 import type { GridForeignKey } from './grid/DataGrid';
@@ -43,6 +49,16 @@ import type { GridSnapshotSource } from './grid/exportSnapshot';
 import { ColumnQuickFinder } from './grid/ColumnQuickFinder';
 // V7 目标库选择：组件很小，静态引入（避免弹窗加载间隙布局塌陷，不进 lazy）
 import { ScriptDbPicker } from './transfer/ScriptDbPicker';
+// 模态统一 Esc 退路（AGENTS §八）
+import { useEscapeClose } from './ui/useEscapeClose';
+// 0.8.0（P1-6）：三栏布局宽度约束（纯函数，单测钉住）
+import {
+  SIDEBAR_W,
+  DETAIL_W,
+  clampW,
+  clampLayoutJoint,
+  type LayoutState,
+} from './workspace/layoutClamp';
 // T27：expandAncestors 用于「标签右键 → 在树中定位」（组节点 key 含成员 id 集合，拼不出来，必须走真实树）
 import { buildTree, buildColumnIndex, expandAncestors, emptyMemory, saveExpansion, restoreExpansion, type TreeNode } from '@dbstudio/core-tree-view';
 import {
@@ -356,15 +372,34 @@ function snippetToCommand(s: Snippet, connName?: string): CommandDef {
   };
 }
 
-// ---------- 三栏布局：侧栏 / 详情面板宽度可拖拽（持久化到 localStorage） ----------
-const LAYOUT_KEY = 'dbstudio.layout.v1';
-interface LayoutState {
-  sidebarW: number;
-  detailW: number;
+/**
+ * 0.7.5：焦点是否落在可编辑控件内（input / textarea / contenteditable）。
+ *
+ * 🔴 **不得出现 `.cm-editor` 等 CodeMirror 特征串**：本函数在首屏 App.tsx 里，
+ *    任何 `cm-*` 字面量都会被打进首屏 bundle，触发 check:bundle 的 E2 红线
+ *    （「CodeMirror 0 字节进首屏」）。CodeMirror 的 `.cm-content` 本身就是
+ *    contenteditable，用 `isContentEditable` 即可覆盖它，无需按类名匹配。
+ *
+ * 用途分两档（见全局 keydown）：
+ *  - F12 列定位浮层：用本函数的**宽**判定（含 contenteditable → SQL 编辑器里
+ *    打字也不弹浮层）。
+ *  - ⌘W/⌘T 门禁：用**窄**判定（仅 input/textarea，不含 contenteditable）——
+ *    这样 SQL 编辑器主体（contenteditable 的 DIV）落在门禁之外，⌘W 仍能关标签
+ *    （e2e:ui 的「Meta+w 关查询 tab」依赖它）。
+ */
+function isTextEditingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.isContentEditable
+  );
 }
-const SIDEBAR_W = { min: 180, max: 520, def: 240 };
-const DETAIL_W = { min: 220, max: 600, def: 280 };
-const clampW = (w: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(w)));
+
+// ---------- 三栏布局：侧栏 / 详情面板宽度可拖拽（持久化到 localStorage） ----------
+// 宽度约束纯函数（SIDEBAR_W/DETAIL_W/clampW/clampLayoutJoint/LayoutState）已抽到
+// `workspace/layoutClamp.ts`（0.8.0 P1-6，可单测）。这里只留持久化相关的部分。
+const LAYOUT_KEY = 'dbstudio.layout.v1';
 
 function readLayout(): LayoutState {
   try {
@@ -502,6 +537,16 @@ export function App() {
   connStatesRef.current = connStates;
   const [bootError, setBootError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
+  /**
+   * 0.8.0（P1-8）：连接配置文件损坏/版本不兼容的告警（启动读一次，主进程读后清除）。
+   * 非 null 时必须在空态里如实告知用户「连接没丢、原文件已备份到 X」，
+   * 不能只显示「还没有连接」让人以为数据被清空。
+   */
+  const [loadProblem, setLoadProblem] = useState<{
+    kind: string;
+    backupPath: string | null;
+    message: string;
+  } | null>(null);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /**
@@ -616,7 +661,10 @@ export function App() {
    * 「await 用户点哪个按钮」。同一时刻最多一个守卫（重载是串行的）。
    */
   const [dirtyGuard, setDirtyGuard] = useState<{ tabId: string; title: string; count: number } | null>(null);
-  const dirtyGuardResolveRef = useRef<((d: DirtyGuardDecision) => void) | null>(null);
+  /**
+   * ⚠️ 0.8.0（#79）：resolver 不再用单个裸 ref —— 见下方 `dirtyGuardGateRef`
+   * 与 `requestDirtyDecision` 的说明。裸 ref 会被「truncate 后批量重载」覆盖。
+   */
   /**
    * 乐观写入的回滚闭包。
    *
@@ -757,6 +805,11 @@ export function App() {
 
   // ---- promptEveryTime 连接的密码弹窗（§6.1.1：每次手动输入密码） ----
   const [pwdPrompt, setPwdPrompt] = useState<ConnectionConfig | null>(null);
+  /** SQL 执行路径的「等待密码」续跑 resolver：拿到密码后原地继续执行，
+   *  让真实结果回到结果 Tab，而不是像旧实现那样 Void 重放、结果无人接收 */
+  const pwdPromptResolverRef = useRef<((pwd: string | null) => void) | null>(null);
+  /** 剪贴板不可用时给用户一个可全选复制的退路 */
+  const [manualCopy, setManualCopy] = useState<string | null>(null);
 
   // ---- 树右键菜单（Navicat 式各级别操作） ----
   const [ctxMenu, setCtxMenu] = useState<TreeContextMenuState | null>(null);
@@ -765,6 +818,22 @@ export function App() {
   const [layout, setLayout] = useState<LayoutState>(readLayout);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  /**
+   * 0.8.0（P1-6）：窗口宽，用于面板宽度的联合约束。初始值在挂载后的 effect 里
+   * 用真实 innerWidth 校准（此处给个保守默认，避免首帧用 0 把两栏压没）。
+   */
+  const [winW, setWinW] = useState<number>(() =>
+    typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1280,
+  );
+  useEffect(() => {
+    const apply = () => {
+      const w = window.innerWidth;
+      if (w > 0) setWinW(w);
+    };
+    apply();
+    window.addEventListener('resize', apply);
+    return () => window.removeEventListener('resize', apply);
+  }, []);
   const persistLayout = useCallback(() => {
     try {
       localStorage.setItem(LAYOUT_KEY, JSON.stringify(layoutRef.current));
@@ -772,6 +841,16 @@ export function App() {
       // 写不进去只影响下次启动的默认宽度，不值得打扰用户
     }
   }, []);
+  /**
+   * 0.8.0（P1-6）：窗口变窄到装不下当前两栏时，就地收口（不改持久化值 ——
+   * 用户把窗口拖回来时两栏应恢复原宽，只有真的放不下才临时让位）。
+   */
+  useEffect(() => {
+    setLayout((l) => {
+      const next = clampLayoutJoint(l, winW);
+      return next.sidebarW === l.sidebarW && next.detailW === l.detailW ? l : next;
+    });
+  }, [winW]);
 
   // ---- 导出/导入弹窗（§6.6 / D3） ----
   // 泛化为显式目标：工具栏按钮用当前表 tab，树右键可直接对任意表导出/导入。
@@ -980,6 +1059,8 @@ export function App() {
         setConnections(r.connections);
         setConnStates(r.states);
         setSchemas(r.schemas);
+        // 0.8.0（P1-8）：配置文件损坏/版本不符 → 如实告知（含备份路径），不静默清空
+        if (r.loadProblem) setLoadProblem(r.loadProblem);
       } catch (e) {
         if (alive) setBootError(String(e instanceof Error ? e.message : e));
       } finally {
@@ -1145,19 +1226,37 @@ export function App() {
    * 放在 loadTable 之前：守卫要长在 loadTable 内部（唯一数据拉取通道），
    * 这样排序/筛选/刷新/加载更多/外键跳转以及**将来新增**的入口都自动被覆盖，
    * 不必逐个改调用点（逐个守卫是漏一处的经典来源）。
+   *
+   * 🔴 0.8.0（P1-4 / #79）：**并发收口**。原注释假定「同一时刻最多一个守卫」，
+   *    但「清空表成功后遍历所有同表标签页重载」会并发进入这里（见 onTableDestructive）。
+   *    旧实现第二个请求直接覆盖 `dirtyGuardResolveRef` → 第一个 promise 永不落定，
+   *    那个标签页的重载**静默消失**（不重载、不报错、连 loading 都不亮）。
+   *    现在用 SingleModalGate：已被占用时**不排队**，后来者立即以 'cancel' 落定
+   *    —— 不重载、不丢用户已输入的脏值、且不会有 promise 泄漏。
    */
+  const dirtyGuardGateRef = useRef(new SingleModalGate<DirtyGuardDecision>());
+
   const requestDirtyDecision = useCallback(
     (tabId: string, count: number) =>
       new Promise<DirtyGuardDecision>((resolve) => {
-        dirtyGuardResolveRef.current = resolve;
+        const acquired = dirtyGuardGateRef.current.tryAcquire(resolve);
+        if (!acquired) {
+          /**
+           * 已有守卫占着弹窗（另一个标签页正在问）。这里**必须立即落定**，
+           * 否则本次 loadTable 会永久挂起。用 'cancel' = 本次不重载：
+           * 用户的改动原样保留，等前一个守卫处理完再操作即可（安全侧）。
+           */
+          resolve('cancel');
+          return;
+        }
         setDirtyGuard({ tabId, title: ws.getTable(tabId)?.title ?? tabId, count });
       }),
     [ws],
   );
 
   const onDirtyGuardResolve = useCallback((d: DirtyGuardDecision) => {
-    const resolve = dirtyGuardResolveRef.current;
-    dirtyGuardResolveRef.current = null;
+    // 0.8.0（#79）：从 gate 交还并清空占用（幂等；无占用时为 null）
+    const resolve = dirtyGuardGateRef.current.release();
     setDirtyGuard(null);
     if (d === 'cancel') {
       // 取消：把这次入口做的乐观写入撤回（列头箭头 / 筛选徽标 / 行上限）
@@ -1173,6 +1272,26 @@ export function App() {
 
   /** onRequestSave 的 ref 桥：它定义在 loadTable 之后，直接引用会踩 TDZ */
   const onRequestSaveRef = useRef<((tabId: string, source: GridDataSource) => void) | null>(null);
+
+  /**
+   * 0.8.0（P1-2 / #46）：表数据拉取的并发闸门（tabId 维度请求序号）。
+   * loadTable 是表的唯一拉取通道，排序/筛选/刷新/加载更多可能对同一 tab 并发触发；
+   * 慢的旧响应若后到，会用旧条件结果覆盖新条件结果。闸门保证「只有最新序号的响应能写入」。
+   * 用 ref：不参与渲染，只在 loadTable 调用时读写。
+   */
+  const loadGateRef = useRef(new RequestGate());
+
+  /**
+   * 0.8.0（#68）：SQL 执行前置流程的取消闸门。
+   *
+   * 点「执行」到查询真正落到主进程之间有一段前置流程（ensureConnection 可能建
+   * SSH 隧道 ~1.5s → 动态 import 危险分级器 → 危险确认）。这期间取消按钮可点，
+   * 但主进程还没有这个 queryId 的句柄，`cancelQuery` 只会返回 false —— 旧行为是
+   * 如实提示「取消未生效」（#39），可查询照跑。现在在渲染层拦：前置流程中被取消
+   * 就在发给主进程**之前**返回 cancelled。零新 IPC、不动主进程与通道契约。
+   * 详见 `editor/queryCancelGate.ts`。
+   */
+  const queryCancelGateRef = useRef(new QueryCancelGate());
 
   const loadTable = useCallback(
     async (
@@ -1244,6 +1363,10 @@ export function App() {
       }
 
       ws.patchTable(tabId, { loading: true });
+      // 0.8.0（#46）：为本次拉取领一个序号。await 回来后只有仍是最新序号才写入，
+      // 否则（用户已再次排序/筛选/刷新）丢弃本次结果，让最新那次负责收尾。
+      const gate = loadGateRef.current;
+      const seq = gate.begin(tabId);
       try {
         /**
          * 🔴 参数顺序是 `[...whereParams, ...limitParams]` —— 反了报的错
@@ -1267,6 +1390,10 @@ export function App() {
           where: built?.where ?? null,
           whereParams: built?.params ?? [],
         });
+        // 🔴 #46：过期响应直接丢弃 —— 不 patchTable（否则旧条件结果会覆盖新条件、
+        //    还会替最新那次把 loading 关掉），不写视图记忆，静默返回。
+        //    收尾（loading:false / loadError）由最新序号的那次拉取负责。
+        if (!gate.isCurrent(tabId, seq)) return null;
         ws.patchTable(tabId, {
           table: ctx.table,
           payload: out.payload,
@@ -1298,6 +1425,10 @@ export function App() {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setToast(`打开表失败：${msg}`);
+        // 🔴 #46：过期请求的失败也不写入 tab 状态 —— 否则慢的旧请求报错会把最新
+        //    请求已写入的正常结果覆盖成红块。toast 仍照报（用户该知道有请求失败），
+        //    但 loading/loadError 的收尾交给最新序号那次。
+        if (!gate.isCurrent(tabId, seq)) return null;
         // T47：错误同时落进 tab 状态 —— 空白区要能说出「查挂了」而不是只说零行
         ws.patchTable(tabId, { loading: false, loadError: msg });
         return null;
@@ -1424,15 +1555,27 @@ export function App() {
       const r = await backend.connConnect(cfg.id, password ?? undefined);
       setConnStates((s) => ({ ...s, [cfg.id]: { state: r.state, lastError: null } }));
       setToast(`已连接 ${cfg.name}：${r.serverVersion ?? ''}（${r.elapsedMs}ms）`);
-      const dbs = await backend.schemaGet(cfg.id);
-      setSchemas((prev) => ({ ...prev, [cfg.id]: dbs }));
-      setExpanded((prev) => {
-        const key = `conn:${cfg.id}`;
-        if (prev.has(key)) return prev;
-        const next = new Set(prev);
-        next.add(key);
-        return next;
-      });
+      /**
+       * 🔴 握手与读结构是两件事，不能共用一个 catch。
+       *    schemaGet 失败（权限不足 / 默认库不存在 / 快照损坏）时 TCP 认证
+       *    其实已经成功了，旧实现却把整条连接标成 failed 并触发重连，
+       *    用户连一条能跑 SQL 的连接都用不了。这里只提示 + 保留 connected，
+       *    树结构可在节点右键「刷新」重试。
+       */
+      try {
+        const dbs = await backend.schemaGet(cfg.id);
+        setSchemas((prev) => ({ ...prev, [cfg.id]: dbs }));
+        setExpanded((prev) => {
+          const key = `conn:${cfg.id}`;
+          if (prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
+      } catch (schemaErr) {
+        const msg = schemaErr instanceof Error ? schemaErr.message : String(schemaErr);
+        setToast(`已连接 ${cfg.name}，但读取表结构失败：${msg}（可在连接节点右键「刷新」重试）`);
+      }
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -2105,6 +2248,14 @@ export function App() {
   onRequestSaveRef.current = onRequestSave;
 
   /**
+   * 0.8.0（P1-5）：保存提交在飞标记。onConfirmSave 期间草稿尚未清，⌘S/点保存会
+   * 重开预演并二次提交，撞主进程 BUSY，用户看到误导性的「连接忙」。用 ref 同步守卫
+   * （不用 state：ref 立即生效，不等重渲染，防连点两次在同一 tick 内穿过）。
+   * 声明在 requestSaveActive 之前，两条入口共用。
+   */
+  const savingRef = useRef(false);
+
+  /**
    * T12 / I04：「保存」这一刻的分流（原生菜单 ⌘S 与页面 keydown 共用同一口径）。
    *
    * 为什么要抽出来：菜单命令与 window keydown 是两条独立入口，各自写一遍必然漂移
@@ -2112,6 +2263,12 @@ export function App() {
    * 其余明确提示，**任何情况下都不静默**。
    */
   const requestSaveActive = useCallback(() => {
+    // 0.8.0（P1-5）：上一次提交在飞时不再重开预演 —— 否则 ⌘S 会在提交窗口内
+    // 弹出新的预演框，用户二次确认触发第二次 mutationApply 撞主进程 BUSY。
+    if (savingRef.current) {
+      setToast('上一次保存正在进行，请稍候…');
+      return;
+    }
     if (openTab) {
       const s = sources.get(openTab.id);
       if (s) onRequestSave(openTab.id, s);
@@ -2129,10 +2286,15 @@ export function App() {
   /** 预演确认 → 真写库 */
   const onConfirmSave = useCallback(async () => {
     if (!preview) return;
+    if (savingRef.current) {
+      setToast('上一次保存正在进行，请稍候…');
+      return;
+    }
     const { tabId, source, statements } = preview;
     const tab = ws.getTable(tabId);
     if (!tab) return;
     setPreview(null);
+    savingRef.current = true;
     try {
       const r = await backend.mutationApply({
         connId: tab.connId,
@@ -2189,6 +2351,9 @@ export function App() {
       );
     } catch (e) {
       setToast(`提交失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      // 三条出口（冲突 return / 成功 / catch）都要复位，否则冲突返回后永久卡「保存中」
+      savingRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview, ws, loadTable]);
@@ -2973,16 +3138,31 @@ export function App() {
     }
   }, [connections, connStates]);
 
-  /** 单连接 schema 刷新（树右键「刷新」） */
-  const onRefreshConnSchema = useCallback(async (connId: string) => {
+  /** 单连接 schema 刷新（树右键「刷新」）。返回是否真的刷新成功 —— DDL 调用方据此分文案 */
+  const pendingRevealRef = useRef<string | null>(null);
+  const onRefreshConnSchema = useCallback(async (connId: string): Promise<boolean> => {
     try {
       const dbs = await backend.schemaRefresh(connId);
       setSchemas((prev) => ({ ...prev, [connId]: dbs }));
       setToast('已刷新表结构');
+      return true;
     } catch (e) {
+      /**
+       * 🔴 不能再「吞」这个异常：DDL 调用方必须能区分
+       *    「DDL 失败」与「DDL 已执行、只是刷新失败」。
+       *    旧实现在 catch 里仅 toast 且正常 resolve，于是建库/改名/维护在
+       *    刷新失败时照样报「已创建」，树还是旧的；pendingRevealRef 也永远
+       *    留着，等下一次树变化时把用户莫名其妙定位到别处。
+       */
+      pendingRevealRef.current = null;
       setToast(`刷新失败：${e instanceof Error ? e.message : String(e)}`);
+      return false;
     }
   }, []);
+
+  /** DDL 回执统一口径：DDL 已执行但刷新失败时如实说明，不冒充全成功 */
+  const withRefreshNote = (text: string, refreshed: boolean) =>
+    refreshed ? text : `${text}（表结构刷新失败，请在连接节点右键「刷新」重试）`;
 
   /**
    * 0.7.3（P0-19）：DDL 完成后「展开并定位」到目标节点。
@@ -2991,8 +3171,8 @@ export function App() {
    *    `treeRoots` 要到下一次渲染才包含新库。此刻拿旧树去 `expandAncestors` 找不到节点，
    *    等于什么都没展开（用户看到「创建成功」但树上没反应）。
    *    所以这里只登记意图，由下面的 effect 在树跟上之后执行一次。
+   *    ref 声明已上移到 onRefreshConnSchema 之前 —— 刷新失败时要就地清掉它。
    */
-  const pendingRevealRef = useRef<string | null>(null);
   useEffect(() => {
     const key = pendingRevealRef.current;
     if (!key) return;
@@ -3098,8 +3278,8 @@ export function App() {
          *     「已刷新表结构」，先报结果会被它盖掉（用户只看到"刷新了"，不知道库建成了）。
          */
         pendingRevealRef.current = `db:${connId}:${v.name}`;
-        await onRefreshConnSchema(connId);
-        setToast(`已创建数据库 ${v.name}`);
+        const refreshed = await onRefreshConnSchema(connId);
+        setToast(withRefreshNote(`已创建数据库 ${v.name}`, refreshed));
       } catch (e) {
         // 失败不关弹窗：用户填的字符集/名字要留着，服务端原文贴在框里
         setDbCreateError(e instanceof Error ? e.message : String(e));
@@ -3153,8 +3333,8 @@ export function App() {
          * 表结构')`，先报「已删除数据库 X」会被它当场盖掉（真机 e2e 抓到，用户看到
          * 的是一条与操作无关的刷新提示）。
          */
-        await onRefreshConnSchema(connId);
-        setToast(`已删除数据库 ${database}`);
+        const refreshed = await onRefreshConnSchema(connId);
+        setToast(withRefreshNote(`已删除数据库 ${database}`, refreshed));
         // 该库上的标签全部关闭 —— 它们指向的对象已经不存在，留着只会每点必报错
         for (const t of ws.tabs) {
           if (t.connId === connId && t.database === database) ws.closeTab(t.id);
@@ -3207,8 +3387,8 @@ export function App() {
         setRenameTable(null);
         // 登记在刷新之前（同 submitCreateDb 的说明）；回执在刷新之后再说，否则被"已刷新"盖掉
         pendingRevealRef.current = `obj:${connId}:${database}:${newName}`;
-        await onRefreshConnSchema(connId);
-        setToast(`已把 ${database}.${table.name} 重命名为 ${newName}`);
+        const refreshed = await onRefreshConnSchema(connId);
+        setToast(withRefreshNote(`已把 ${database}.${table.name} 重命名为 ${newName}`, refreshed));
         for (const t of ws.tabs) {
           if (t.kind === 'table' && t.connId === connId && t.database === database && t.tableName === table.name) {
             ws.closeTab(t.id);
@@ -3257,8 +3437,8 @@ export function App() {
          *    `setToast('已刷新表结构')`，后发就把「优化表完成：…（回执 N 条 / X ms）」
          *    盖掉，用户看不到维护结果（真机 e2e 抓到）。
          */
-        await onRefreshConnSchema(connId);
-        setToast(`${label}完成：${database}.${tableName}（服务端回执 ${r.affected} 条结果，${r.elapsedMs} ms）`);
+        const refreshed = await onRefreshConnSchema(connId);
+        setToast(withRefreshNote(`${label}完成：${database}.${tableName}（服务端回执 ${r.affected} 条结果，${r.elapsedMs} ms）`, refreshed));
       } catch (e) {
         setToast(`${label}失败：${e instanceof Error ? e.message : String(e)}`);
       }
@@ -3328,7 +3508,7 @@ export function App() {
           setCopyError(`表结构已复制成功，但数据没进来：${msg}`);
           setCopyBusy(false);
           pendingRevealRef.current = `obj:${connId}:${v.targetDatabase}:${v.name}`;
-          void onRefreshConnSchema(connId);
+          await onRefreshConnSchema(connId);
           return;
         }
       }
@@ -3336,9 +3516,12 @@ export function App() {
       setCopyTable(null);
       // 登记在刷新之前、回执在刷新之后（同 submitCreateDb 的说明）
       pendingRevealRef.current = `obj:${connId}:${v.targetDatabase}:${v.name}`;
-      await onRefreshConnSchema(connId);
+      const refreshed = await onRefreshConnSchema(connId);
       setToast(
-        `已复制 ${database}.${table.name} → ${v.targetDatabase}.${v.name}${v.withData ? '（含数据）' : '（仅结构）'}`,
+        withRefreshNote(
+          `已复制 ${database}.${table.name} → ${v.targetDatabase}.${v.name}${v.withData ? '（含数据）' : '（仅结构）'}`,
+          refreshed,
+        ),
       );
     },
     [copyTable, connections, onRefreshConnSchema],
@@ -3449,8 +3632,15 @@ export function App() {
         // T08：DDL 入口 —— 走 DDL 白名单，不走网格写语句的表达式白名单
         // （否则 DROP TABLE 会被「只允许 insert/update/delete」误拒）
         await backend.mutationApply({ connId, database, statements: [{ sql, params: [] }], mode: 'ddl' });
-        setToast(action === 'drop' ? `已删除表 ${database}.${table.name}` : `已清空表 ${database}.${table.name}`);
-        void onRefreshConnSchema(connId);
+        // 🔴 回执必须在 await 刷新「之后」：onRefreshConnSchema 自带「已刷新表结构」，
+        //    旧的 setToast → void 刷新顺序会让删除结果被刷新提示盖掉（P0-3）。
+        const refreshed = await onRefreshConnSchema(connId);
+        setToast(
+          withRefreshNote(
+            action === 'drop' ? `已删除表 ${database}.${table.name}` : `已清空表 ${database}.${table.name}`,
+            refreshed,
+          ),
+        );
         for (const t of ws.tabs) {
           if (t.kind === 'table' && t.connId === connId && t.database === database && t.tableName === table.name) {
             if (action === 'drop') ws.closeTab(t.id);
@@ -3465,10 +3655,24 @@ export function App() {
   );
 
   /** 复制文本到剪贴板 + toast（树右键「复制库名/表名」） */
-  const copyText = useCallback((text: string) => {
- void navigator.clipboard?.writeText(text).catch(() => undefined);
-    setToast(`已复制 ${text}`);
+  const copyText = useCallback(async (text: string) => {
+    // 🔴 旧实现 `.catch(() => undefined)` 之后无条件报「已复制」：权限被拒、
+    //    内容过大、无头环境没有 clipboard 时，用户粘贴到的是旧内容却毫不知情。
+    //    失败必须如实说，并给一个能全选复制的退路。
+    if (!navigator.clipboard?.writeText) {
+      setManualCopy(text);
+      setToast('复制失败：当前环境不支持剪贴板，请在弹窗中手动复制');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast(`已复制 ${text}`);
+    } catch (e) {
+      setManualCopy(text);
+      setToast(`复制失败：${e instanceof Error ? e.message : String(e)}；请在弹窗中手动复制`);
+    }
   }, []);
+  useEscapeClose(() => setManualCopy(null), manualCopy !== null);
 
   /**
    * 0.7.3（P1-21）：新建视图/过程/函数/触发器/事件 —— **模板方案**。
@@ -3619,6 +3823,7 @@ export function App() {
       let okCount = 0;
       const failures: string[] = [];
       const deleted = new Set<string>();
+      const refreshedIds = new Set<string>();
       for (const g of groups.values()) {
         for (const t of g.tables) {
           const sql = `DROP TABLE ${quoteQualified([g.database, t.name])}`;
@@ -3636,15 +3841,18 @@ export function App() {
             failures.push(`${g.database}.${t.name}：${e instanceof Error ? e.message : String(e)}`);
           }
         }
-        // 每组结束回源刷新：核实树的真实状态（成功/失败/响应丢失都以此为准）
-        void onRefreshConnSchema(g.connId);
+        // 每组结束回源刷新：核实树的真实状态（成功/失败/响应丢失都以此为准）。
+        // 收集 id，统一在回执之前 await —— 避免「已刷新表结构」盖掉删除结果。
+        refreshedIds.add(g.connId);
       }
+      const refreshResults = await Promise.all([...refreshedIds].map((id) => onRefreshConnSchema(id)));
+      const allRefreshed = refreshResults.every(Boolean);
 
-      if (failures.length > 0) {
-        setToast(`已删除 ${okCount} 张，失败 ${failures.length} 张（${failures.join('；')}）`);
-      } else {
-        setToast(`已删除 ${okCount} 张表`);
-      }
+      const receipt =
+        failures.length > 0
+          ? `已删除 ${okCount} 张，失败 ${failures.length} 张（${failures.join('；')}）`
+          : `已删除 ${okCount} 张表`;
+      setToast(withRefreshNote(receipt, allRefreshed));
 
       // 只关闭「确认已删除」的标签 —— 失败的标签必须留着（重试入口 / 排查现场）
       for (const t of ws.tabs) {
@@ -4211,53 +4419,82 @@ if (table.kind === 'table') {
   // ---- 编辑器执行 SQL：危险语句先过确认（P0-3） ----
   const onRunSql = useCallback(
     async (req: { connId: string; sql: string; database?: string | null; queryId?: string }) => {
-      // 🔴 执行前确保会话可用：查询标签可能建立在磁盘快照上（右键新建查询
-      //    而没点过连接节点），直接执行会「连接未建立」。这里自动握手。
-      const ensure = await ensureConnection(req.connId);
-      if (ensure === 'need-password') {
-        const cfg = connections.find((c) => c.id === req.connId);
-        if (cfg) setPwdPrompt(cfg);
-        pendingAfterConnectRef.current = () => void onRunSql(req);
-        setToast('该连接要求手动输入密码，输入后自动继续执行');
-        return {
-          payload: { rowCount: 0, columns: [], buffers: [], bufferCounts: [] },
-          elapsedMs: 0,
-          rowCount: 0,
-          cancelled: true,
-          truncated: false,
-          queryId: null,
-        };
-      }
-      if (ensure === 'failed') {
-        // 握手失败的真实原因已由连接路径 toast；结果页给出明确结论
-        throw new Error('自动连接失败（原因见提示；也可在左树单击连接节点重试）');
-      }
-      // 动态加载守卫：node-sql-parser 太大（~500KB gzip），绝不进首屏 bundle
-      const { classifyDanger } = await import('@dbstudio/core-sql-guard');
-      const danger = classifyDanger(req.sql);
-      if (danger.level !== 'none') {
-        const connId = req.connId || sqlConnId;
-        const isProduction = connections.find((c) => c.id === connId)?.colorTag === 'red';
-        const confirmed = await confirmDanger(connId, {
-          title: isProduction ? '生产环境危险操作' : '危险操作确认',
-          statements: danger.statements.length > 0 ? danger.statements : [req.sql],
-          reason: danger.reason,
-          // 生产环境 / DROP DATABASE → 要求输入表名（第三层）
-          requireText: danger.requireName,
-        });
-        if (!confirmed) {
-          setToast('已取消执行');
-          return {
-            payload: { rowCount: 0, columns: [], buffers: [], bufferCounts: [] },
-            elapsedMs: 0,
-            rowCount: 0,
-            cancelled: true,
-            truncated: false,
-            queryId: null,
-          };
+      /**
+       * 0.8.0（#68）：登记进入「前置流程」。从这里到 backend.queryRun 之间
+       * （ensureConnection 建隧道 / 动态 import / 危险确认）主进程还没有该
+       * queryId 的句柄，KILL 无从下手 —— 用户点取消时由本地闸门中止，
+       * 让查询**根本不发出去**。finally 兜底注销（exitPreflight 幂等）。
+       */
+      const gate = queryCancelGateRef.current;
+      gate.enterPreflight(req.queryId);
+      /** 前置流程期间被取消 / 用户放弃时的统一返回值（与旧 cancelled 分支同形） */
+      const cancelledOutcome = () => ({
+        payload: { rowCount: 0, columns: [], buffers: [], bufferCounts: [] },
+        elapsedMs: 0,
+        rowCount: 0,
+        cancelled: true,
+        truncated: false,
+        queryId: null,
+      });
+      try {
+        // 🔴 执行前确保会话可用：查询标签可能建立在磁盘快照上（右键新建查询
+        //    而没点过连接节点），直接执行会「连接未建立」。这里自动握手。
+        const ensure = await ensureConnection(req.connId);
+        // 0.8.0（#68）：每段 await 之后都检查中止 —— SSH 隧道建立（~1.5s）
+        //    正是取消的主窗口，检查放在这里才能在「发给主进程之前」拦住。
+        if (gate.shouldAbort(req.queryId)) return cancelledOutcome();
+        if (ensure === 'need-password') {
+          const cfg = connections.find((c) => c.id === req.connId);
+          if (!cfg) throw new Error('连接配置不存在，无法输入密码');
+          setPwdPrompt(cfg);
+          setToast('该连接要求手动输入密码，输入后自动继续执行');
+          /**
+           * 🔴 旧实现在这里返回伪造的 cancelled:true，并登记
+           *    `pendingAfterConnectRef = () => void onRunSql(req)`：密码提交后
+           *    SQL 确实重新执行了，但那个 Promise 的结果**没有任何接收方** ——
+           *    结果 Tab 一直空着/停在取消态，而数据库其实已经被改了。
+           *    现在改为原地等待密码，拿到后继续走同一条执行链，真实 outcome
+           *    直接回送给调用方的结果 Tab；用户取消才按 cancelled 返回。
+           */
+          const pwd = await new Promise<string | null>((resolve) => {
+            pwdPromptResolverRef.current = resolve;
+          });
+          if (pwd === null) {
+            return cancelledOutcome();
+          }
+          if (gate.shouldAbort(req.queryId)) return cancelledOutcome();
+          const ok = await onConnectNode(cfg, pwd);
+          if (!ok) throw new Error('自动连接失败（原因见提示；也可在左树单击连接节点重试）');
+          if (gate.shouldAbort(req.queryId)) return cancelledOutcome();
         }
-      }
-      return backend.queryRun(req).then((out) => {
+        if (ensure === 'failed') {
+          // 握手失败的真实原因已由连接路径 toast；结果页给出明确结论
+          throw new Error('自动连接失败（原因见提示；也可在左树单击连接节点重试）');
+        }
+        // 动态加载守卫：node-sql-parser 太大（~500KB gzip），绝不进首屏 bundle
+        const { classifyDanger } = await import('@dbstudio/core-sql-guard');
+        if (gate.shouldAbort(req.queryId)) return cancelledOutcome();
+        const danger = classifyDanger(req.sql);
+        if (danger.level !== 'none') {
+          const connId = req.connId || sqlConnId;
+          const isProduction = connections.find((c) => c.id === connId)?.colorTag === 'red';
+          const confirmed = await confirmDanger(connId, {
+            title: isProduction ? '生产环境危险操作' : '危险操作确认',
+            statements: danger.statements.length > 0 ? danger.statements : [req.sql],
+            reason: danger.reason,
+            // 生产环境 / DROP DATABASE → 要求输入表名（第三层）
+            requireText: danger.requireName,
+          });
+          if (!confirmed) {
+            setToast('已取消执行');
+            return cancelledOutcome();
+          }
+          if (gate.shouldAbort(req.queryId)) return cancelledOutcome();
+        }
+        // 🔴 0.8.0（#68）：真正发给主进程**之前**注销 —— 此后的取消必须交给
+        //    主进程 KILL QUERY，不能再被本地闸门截住（否则执行期间的取消失效）。
+        gate.exitPreflight(req.queryId);
+        const out = await backend.queryRun(req);
         /**
          * 0.7.3（P1-21）：DDL 跑完自动刷新结构。
          *
@@ -4273,11 +4510,24 @@ if (table.kind === 'table') {
           void onRefreshConnSchema(req.connId);
         }
         return out;
-      });
+      } finally {
+        // 任何出口（含 throw）都不留残留登记 —— 否则同一 queryId 的后续取消
+        // 会被误判成「仍在前置流程」。exitPreflight 幂等，重复调用无害。
+        gate.exitPreflight(req.queryId);
+      }
     },
-    [ensureConnection, connections, confirmDanger, sqlConnId, onRefreshConnSchema],
+    [ensureConnection, connections, confirmDanger, sqlConnId, onRefreshConnSchema, onConnectNode],
   );
-  const onCancelSql = useCallback((queryId: string) => backend.queryCancel(queryId), []);
+  const onCancelSql = useCallback(async (queryId: string) => {
+    /**
+     * 0.8.0（#68）：先试本地闸门 —— 该 queryId 还在前置流程（主进程尚未注册）时，
+     * 由闸门标记中止并返回 true，onRunSql 会在发给主进程之前停下。
+     * 未命中（查询已在主进程执行 / 已结束）→ 交给 cancelQuery 走 KILL QUERY，
+     * 其返回值语义不变（false = 找不到句柄，#39 已让 UI 如实提示）。
+     */
+    if (queryCancelGateRef.current.requestCancel(queryId)) return true;
+    return backend.queryCancel(queryId);
+  }, []);
 
   // ---- 应用筛选（预览文本由 TablePane 自己显示，这里只管过滤动作的触发） ----
   /**
@@ -4332,6 +4582,19 @@ if (table.kind === 'table') {
       // T13：输入法组合期的按键整段放行（F12 兜底键也在内 —— 组合期不该开浮层）
       if (isImeComposing(e)) return;
       /**
+       * 0.7.5：焦点现场两档判定（都**不得含 `cm-*` 字面量**，见 isTextEditingTarget 注释）：
+       *  - `inEditable`（宽）：input / textarea / contenteditable —— 含 SQL 编辑器主体
+       *    （CodeMirror 的 .cm-content 本身就是 contenteditable），用来拦 F12 列定位浮层
+       *    （任何可编辑控件里打字都不该弹浮层）。
+       *  - `inFormField`（窄）：只认 input / textarea —— SQL 编辑器主体是 contenteditable
+       *    的 DIV，天然落在窄判定之外，⌘W/⌘T/⌘S 在里面仍是**有效全局命令**
+       *    （e2e:ui 的「Meta+w 关查询 tab」正依赖此点）。
+       */
+      const inEditable = isTextEditingTarget(e.target);
+      const inFormField =
+        e.target instanceof HTMLElement &&
+        (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
+      /**
        * T13：模态打开时，全局快捷键**不进背景**。
        *
        * 原实现在偏好设置面板开着时按 ⌘T，会在面板背后新建一个标签（真机 e2e
@@ -4356,6 +4619,9 @@ if (table.kind === 'table') {
        *    同名入口（真正收不到事件时的兜底路径）。
        */
       if (e.key === 'F12') {
+        // 0.7.5：焦点在任何可编辑控件里（含 SQL 编辑器）都不抢 F12（列定位浮层不该打断打字）；
+        // openColumnFinder 内部已有 openTab 判空，这里只补焦点约束。
+        if (inEditable) return;
         openColumnFinder();
         e.preventDefault();
         return;
@@ -4363,6 +4629,23 @@ if (table.kind === 'table') {
       const meta = e.metaKey || e.ctrlKey;
       if (!meta) return;
       const k = e.key.toLowerCase();
+      /**
+       * 0.7.5：焦点在**表单控件**内时，放行「会打断输入现场」的最小组合集合。
+       *
+       *  - ⌘W / ⌘T / ⌘S：关标签 / 开查询 / 保存会直接丢掉表单里正在输入的内容，
+       *    所以放行给表单自己（CodeMirror 不在此列，见 inFormField 注释）。
+       *
+       * ⌘K / ⌘, / ⌘⇧F / ⌘⇧[ / ⌘⇧] / ⌘1-9 一律保持全局 —— 命令面板、偏好、
+       * 筛选、跳标签从任何地方都应可用，不做一刀切。K1（树焦点 ⌘T/⌘W）、
+       * K2（网格 F12）、K5（模态 ⌘T 不进背景）的落点都不是表单控件，行为不变。
+       *
+       * 🔴 SQL 编辑器（.cm-editor）刻意**不在** inFormField 内：那里 ⌘W 关标签、
+       *    ⌘T 开查询、⌘S 存片段都是有效全局命令（e2e:ui 的 Meta+w 关查询 tab
+       *    正依赖它），放行会让这些键在编辑器里变哑。
+       */
+      if (inFormField && !e.shiftKey && (k === 'w' || k === 't' || k === 's')) {
+        return;
+      }
       if (k === 'k') {
         setPaletteOpen((v) => !v);
         e.preventDefault();
@@ -4562,7 +4845,32 @@ if (table.kind === 'table') {
   const paletteCommands: CommandDef[] = useMemo(
     () => {
       const nameOf = new Map(connections.map((c) => [c.id, c.name]));
-      return [...BUILTIN_COMMANDS, ...snippets.map((s) => snippetToCommand(s, nameOf.get(s.connectionId)))];
+      return [
+        ...BUILTIN_COMMANDS,
+        ...snippets.map((s) => snippetToCommand(s, nameOf.get(s.connectionId))),
+        /**
+         * 0.7.5：给两条「有契约、无 UI」的 IPC 各补一个最小入口。
+         * 这两条通道在 main/preload 都已注册，但 backend.ts（本轮禁改）没有
+         * 对应的包装方法，所以用 hasIpc() 守卫后直连 window.dbStudio。
+         * 其余四条不补，原因见本轮报告。
+         */
+        {
+          id: 'cmd.clearHistory',
+          action: 'clearHistory',
+          title: '清空查询历史',
+          subtitle: '删除全部已记录的 SQL 查询历史',
+          badge: '命令',
+          keywords: ['history', 'clear', '历史', '清空'],
+        },
+        {
+          id: 'cmd.showRunningQueries',
+          action: 'showRunningQueries',
+          title: '显示运行中的查询',
+          subtitle: '查看当前仍在执行的 SQL（query:running）',
+          badge: '命令',
+          keywords: ['running', 'query', '进程', '运行中'],
+        },
+      ];
     },
     [snippets, connections],
   );
@@ -4655,6 +4963,44 @@ if (table.kind === 'table') {
           return;
         }
         void openCreateDb(cid);
+      }
+      /**
+       * 0.7.5：两条最小 IPC 入口。契约与 handler 都在，但 backend.ts 没有包装方法
+       * （本轮禁改），因此用 hasIpc() 守卫后直连 window.dbStudio；demo 模式给明确
+       * 中文回执，绝不静默无反应（V4 口径）。失败也把 error.message 带出来。
+       */
+      else if (action === 'clearHistory') {
+        if (!hasIpc()) {
+          setToast('当前是 demo 模式，没有可清空的查询历史');
+          return;
+        }
+        void window.dbStudio
+          .historyClear()
+          .then((r) =>
+            setToast(r.ok ? `已清空 ${r.data} 条查询历史` : `清空历史失败：${r.error.message}`),
+          )
+          .catch((e) => setToast(`清空历史失败：${e instanceof Error ? e.message : String(e)}`));
+      }
+      else if (action === 'showRunningQueries') {
+        if (!hasIpc()) {
+          setToast('当前是 demo 模式，没有运行中的查询');
+          return;
+        }
+        void window.dbStudio
+          .queryRunning()
+          .then((r) => {
+            if (!r.ok) {
+              setToast(`查询运行中的查询失败：${r.error.message}`);
+              return;
+            }
+            const list = r.data;
+            setToast(
+              list.length === 0
+                ? '当前没有运行中的查询'
+                : `运行中的查询（${list.length}）：${list.map((q) => q.queryId).join('、')}`,
+            );
+          })
+          .catch((e) => setToast(`查询运行中的查询失败：${e instanceof Error ? e.message : String(e)}`));
       }
       else if (action.startsWith('snippet:')) {
         // T04/R06：按 (connectionId, database, name) 精确回查同名片段
@@ -4960,7 +5306,21 @@ if (table.kind === 'table') {
           <div className="tree-empty">加载连接…</div>
         ) : connections.length === 0 ? (
           <div className="tree-empty">
-            {bootError ? `连接列表加载失败：${bootError}` : '还没有连接。'}
+            {loadProblem ? (
+              <div className="conn-load-problem" data-testid="conn-load-problem">
+                <p>{loadProblem.message}</p>
+                {loadProblem.backupPath ? (
+                  <p className="conn-load-problem-path" data-testid="conn-load-problem-path">
+                    原文件仍在，未被清空；备份：{loadProblem.backupPath}
+                  </p>
+                ) : null}
+                <p className="conn-load-problem-hint">修好或删掉该文件后重启即可恢复；也可在此新建连接。</p>
+              </div>
+            ) : bootError ? (
+              `连接列表加载失败：${bootError}`
+            ) : (
+              '还没有连接。'
+            )}
             <button className="sidebar-btn wide" onClick={() => setEditorState('new')}>
               新建连接
             </button>
@@ -5018,7 +5378,7 @@ if (table.kind === 'table') {
         )}
       </aside>
 
-      <PanelResizer title="拖动调整侧栏宽度" onDrag={(dx) => setLayout((l) => ({ ...l, sidebarW: clampW(l.sidebarW + dx, SIDEBAR_W.min, SIDEBAR_W.max) }))} onDragEnd={persistLayout} />
+      <PanelResizer title="拖动调整侧栏宽度" onDrag={(dx) => setLayout((l) => clampLayoutJoint({ ...l, sidebarW: clampW(l.sidebarW + dx, SIDEBAR_W.min, SIDEBAR_W.max) }, winW))} onDragEnd={persistLayout} />
 
       <main className="workspace">
         <WorkspaceTabsBar
@@ -5390,12 +5750,8 @@ if (table.kind === 'table') {
               onNodeContextMenu={(node, x, y) => openNodeMenu(node, x, y)}
             />
           ) : (
-            <EmptyState
-              hasConnections={false}
-              onNewConnection={() => setEditorState('new')}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onNewQuery={newQueryTab}
-            />
+            // 0.7.5：三张快捷入口卡（死代码）已删；这里只保留「新建连接」引导。
+            <EmptyState onNewConnection={() => setEditorState('new')} />
           )
         ) : null}
 
@@ -5496,7 +5852,7 @@ if (table.kind === 'table') {
       {!detailCollapsed ? (
         <PanelResizer
           title="拖动调整详情面板宽度"
-          onDrag={(dx) => setLayout((l) => ({ ...l, detailW: clampW(l.detailW - dx, DETAIL_W.min, DETAIL_W.max) }))}
+          onDrag={(dx) => setLayout((l) => clampLayoutJoint({ ...l, detailW: clampW(l.detailW - dx, DETAIL_W.min, DETAIL_W.max) }, winW))}
           onDragEnd={persistLayout}
         />
       ) : null}
@@ -5530,9 +5886,24 @@ if (table.kind === 'table') {
           cfg={pwdPrompt}
           onCancel={() => {
             pendingAfterConnectRef.current = null;
+            // SQL 执行路径正在 await 这个 resolver，取消要让它收到 null 才能收尾
+            const resolver = pwdPromptResolverRef.current;
+            pwdPromptResolverRef.current = null;
+            if (resolver) resolver(null);
             setPwdPrompt(null);
           }}
           onSubmit={(pwd) => {
+            const resolver = pwdPromptResolverRef.current;
+            if (resolver) {
+              // 🔴 SQL 执行路径：onRunSql 会自己 await 密码、自己握手并回送结果。
+              //    这里绝不能再调 onConnectNode，否则重复握手且结果仍无人接收。
+              pwdPromptResolverRef.current = null;
+              pendingAfterConnectRef.current = null;
+              setPwdPrompt(null);
+              resolver(pwd);
+              return;
+            }
+            // 其余路径（开表 / 建库 / 脚本等）沿用原有的「连接后重放动作」
             const cfg = pwdPrompt;
             const after = pendingAfterConnectRef.current;
             pendingAfterConnectRef.current = null;
@@ -5543,6 +5914,31 @@ if (table.kind === 'table') {
             })();
           }}
         />
+      ) : null}
+
+      {manualCopy !== null ? (
+        <div className="modal-mask" data-testid="manual-copy-modal" onClick={() => setManualCopy(null)}>
+          <div className="modal" role="dialog" aria-label="手动复制" onClick={(e) => e.stopPropagation()}>
+            <header>手动复制</header>
+            <div className="body">
+              <p>系统剪贴板不可用，请选中下面的文本后按 ⌘C 复制。</p>
+              <textarea
+                className="manual-copy-text"
+                data-testid="manual-copy-text"
+                readOnly
+                value={manualCopy}
+                autoFocus
+                onFocus={(e) => e.currentTarget.select()}
+                style={{ width: '100%', minHeight: 120, resize: 'vertical' }}
+              />
+            </div>
+            <footer>
+              <button type="button" onClick={() => setManualCopy(null)}>
+                关闭
+              </button>
+            </footer>
+          </div>
+        </div>
       ) : null}
 
       {ctxMenu ? <TreeContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} /> : null}

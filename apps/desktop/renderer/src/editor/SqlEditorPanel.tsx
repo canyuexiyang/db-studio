@@ -38,7 +38,7 @@ import {
 import { DataGrid, type GridColumn } from '../grid/DataGrid';
 import type { GridSnapshotSource } from '../grid/exportSnapshot';
 import { useGridDataSource } from '../grid/useGridData';
-import { IconX, IconSave, IconExport, IconBraces, IconStarFilled, IconFolder, IconRun, IconStop, IconInfo } from '../ui/icons';
+import { IconX, IconSave, IconExport, IconBraces, IconStarFilled, IconFolder, IconRun, IconStop, IconInfo, IconAlert, IconPin } from '../ui/icons';
 // T33：值查看器**只调用不改**（detail/ 归别的并行任务）
 import { CellValueModal } from '../detail/CellValueModal';
 // T33：结果网格取值的纯逻辑（值与原字节一致 + 回调装配）
@@ -917,7 +917,22 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
       onToast?.('当前没有正在执行的查询');
       return;
     }
-    await onCancel(id).catch(() => false);
+    // 🔴 取消是「有返回值」的操作，不能丢掉结果后无条件报成功。
+    //    主进程 cancelQuery 找不到句柄会返回 false（查询已跑完，或前端
+    //    ensureConnection / 懒加载守卫 / 危险确认还没走完、queryId 尚未注册）。
+    //    旧写法 `await onCancel(id).catch(() => false); onToast('已发送取消')`
+    //    会把这两种情况都说成「已发送」，用户以为查询停了，其实还在跑。
+    let ok: boolean;
+    try {
+      ok = await onCancel(id);
+    } catch (e) {
+      onToast?.(`取消失败：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    if (ok === false) {
+      onToast?.('取消未生效：查询可能已结束，或尚未真正开始（句柄未注册）');
+      return;
+    }
     onToast?.('已发送取消（KILL QUERY）');
   }, [onCancel, onToast]);
 
@@ -1127,6 +1142,17 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
       onToast?.('未选中连接');
       return;
     }
+    /**
+     * 0.8.0（P1-4 / #48）：EXPLAIN 也是一次查询，执行中再点会并发发出第二条，
+     * 与主执行 `run`（`if (running)`）、续跑 `resumeBatch`（`if (!p || running)`）
+     * 统一口径补守卫 —— 三个执行入口都不允许并发。旧实现只有 run/resumeBatch 有，
+     * runExplain 漏了：执行中连点 EXPLAIN 会同时改 queryIdRef（后点覆盖先点，
+     * 取消时只能取消到后者）。
+     */
+    if (running) {
+      onToast?.('已有查询在执行');
+      return;
+    }
     const h = handleRef.current;
     if (!h) return;
     const docText = h.getDoc();
@@ -1193,7 +1219,8 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
       setRunStartedAt(null);
       queryIdRef.current = null;
     }
-  }, [connId, database, onRun, onToast]);
+    // 0.8.0（#48）：依赖必须含 running —— 守卫读它，漏了会捕获陈旧值使守卫失效
+  }, [connId, database, onRun, onToast, running]);
 
   /**
    * V17 文案：取消与正常返回要说不同的话（"耗时 xx ms · N 行" 对取消没有意义）。
@@ -1449,7 +1476,8 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
               : '未能从连接列表匹配到该连接，仅显示连接 id'
           }
         >
-          {`${connTarget.production ? '⚠ ' : ''}${connTarget.name}${connTarget.environment ? ` · ${connTarget.environment}` : ''}`}
+          {connTarget.production ? <IconAlert /> : null}
+          {`${connTarget.name}${connTarget.environment ? ` · ${connTarget.environment}` : ''}`}
         </span>
         <span className="spacer" />
         {running ? (
@@ -1856,7 +1884,7 @@ function ResultTabMenu({
         }}
       >
         <span className="ctx-label">{tab.pinned ? '取消固定' : '固定此结果'}</span>
-        <span className="ctx-shortcut">📌</span>
+        <span className="ctx-shortcut"><IconPin /></span>
       </button>
       <button
         className="ctx-item"

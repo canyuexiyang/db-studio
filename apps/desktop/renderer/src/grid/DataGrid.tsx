@@ -1592,7 +1592,9 @@ export function DataGrid(props: DataGridProps) {
         }
       }
 
-      if (meta && e.key.toLowerCase() === 'f') {
+      // 0.7.5：⌘⇧F 归全局「筛选」面板（见 App 全局 keydown 的 k === 'f' && shiftKey），
+      // 这里必须排除 shift，否则 ⌘⇧F 会同时打开网格查找条与全局筛选面板。
+      if (meta && !e.shiftKey && e.key.toLowerCase() === 'f') {
         // A1：⌘F 打开查找条（焦点不在输入框时才走到这里，不会抢输入框按键）
         openSearch();
         e.preventDefault();
@@ -1639,6 +1641,10 @@ export function DataGrid(props: DataGridProps) {
       if (meta && e.key.toLowerCase() === 's') {
         onSave();
         e.preventDefault();
+        // 0.7.5：本 handler 是挂在 .grid-viewport 上的 React 合成事件；stopPropagation
+        // 会同时调原生事件的方法，把事件截在 React 根节点之前 —— window 上的全局
+        // keydown（App.tsx）就收不到这次 ⌘S，不会再走一遍 requestSaveActive()。
+        e.stopPropagation();
         return;
       }
       if (meta && e.key === 'Backspace') {

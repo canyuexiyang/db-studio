@@ -92,6 +92,16 @@ function ok(name, pass, detail = '') {
 }
 
 /**
+ * 前提不成立的断言记 skipped：不混进通过数、也不伪装成失败，但汇总必须显式报数。
+ * headless 帧率就是典型 —— 恒定记 true 会让「门禁跑完」的绿灯失去意义。
+ */
+const skipped = [];
+function skip(name, reason = '') {
+  skipped.push({ name, reason });
+  console.log(`⏭️ ${name}${reason ? ' — ' + reason : ''}`);
+}
+
+/**
  * 用「命令面板 → 刷新当前对象 → 守卫 → 放弃改动」把当前表格的未保存改动清干净。
  *
  * 走刷新而不是点列头：列头会顺带改排序状态，而本脚本后面多处断言对排序有前提。
@@ -159,26 +169,47 @@ try {
      */
     const dragBy = async (x, y, dx, dy = 0) => {
       await page.mouse.move(x, y);
+      await page.waitForTimeout(50);
       await page.mouse.down();
+      await page.waitForTimeout(50);
       const segs = 8;
       for (let i = 1; i <= segs; i++) {
         await page.mouse.move(x + (dx * i) / segs, y + (dy * i) / segs);
-        await page.waitForTimeout(20);
+        await page.waitForTimeout(30);
       }
       await page.mouse.up();
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(250);
     };
 
-    const sbBefore = await page.evaluate(() => document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 0);
-    const r1 = await page.locator('.panel-resizer').first().boundingBox();
-    await dragBy(r1.x + r1.width / 2, r1.y + 300, 80);
-    const sbAfter = await page.evaluate(() => document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 0);
+    const readSidebar = () =>
+      page.evaluate(() => document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 0);
+    const readDetail = () =>
+      page.evaluate(() => document.querySelector('.detail-panel')?.getBoundingClientRect().width ?? 0);
+    /**
+     * 🔴 逐段小步 + 等帧仍不能 100% 躲开 Chromium 对 setPointerCapture 后同帧
+     *    pointermove 的合并（实测偶发只生效第一步：240 → 250）。
+     *    判据**不降级**（仍要求 >+60 / <-40），改为读真实布局做闭环重试：
+     *    没到位就按当前分隔条位置再拖一次，最多 3 次；3 次仍不到位就如实报红。
+     */
+    const dragUntil = async (index, dx, read, reached) => {
+      const before = await read();
+      let after = before;
+      for (let attempt = 0; attempt < 3 && !reached(before, after); attempt++) {
+        const r = await page.locator('.panel-resizer').nth(index).boundingBox();
+        await dragBy(r.x + r.width / 2, r.y + 300, dx);
+        after = await read();
+      }
+      return { before, after };
+    };
+
+    const sb = await dragUntil(0, 80, readSidebar, (b, a) => a > b + 60);
+    const sbBefore = sb.before;
+    const sbAfter = sb.after;
     ok('拖动左分隔条加宽侧栏', sbAfter > sbBefore + 60, `${sbBefore} → ${sbAfter}`);
 
-    const dpBefore = await page.evaluate(() => document.querySelector('.detail-panel')?.getBoundingClientRect().width ?? 0);
-    const r2 = await page.locator('.panel-resizer').nth(1).boundingBox();
-    await dragBy(r2.x + r2.width / 2, r2.y + 300, 60);
-    const dpAfter = await page.evaluate(() => document.querySelector('.detail-panel')?.getBoundingClientRect().width ?? 0);
+    const dp = await dragUntil(1, 60, readDetail, (b, a) => a < b - 40);
+    const dpBefore = dp.before;
+    const dpAfter = dp.after;
     ok('拖动右分隔条收窄详情面板', dpAfter < dpBefore - 40, `${dpBefore} → ${dpAfter}`);
 
     // 宽度持久化：写进 localStorage（下次启动恢复）
@@ -412,6 +443,22 @@ try {
      *    这样不依赖具体列名/值，也不会因虚拟滚动位置而假红。
      */
     {
+      /**
+       * 🔴 剪贴板写入是异步的，固定 waitForTimeout(250) 偶发读到上一次的内容
+       *    （表现为「含列名」拿到默认文本，逐字比较随机红）。
+       *    改成按真实内容闭环等待：先清空，再等到条件成立；判据本身不放宽。
+       */
+      const clipboardBefore = await page.evaluate(() => navigator.clipboard.readText());
+      const readClipboardWhen = async (predicate) => {
+        let last = '';
+        const deadline = Date.now() + 2500;
+        while (Date.now() < deadline) {
+          last = await page.evaluate(() => navigator.clipboard.readText());
+          if (predicate(last)) return last;
+          await page.waitForTimeout(80);
+        }
+        return last;
+      };
       // 先按行号勾选整行（行勾选优先于矩形选区参与复制 → 全部可见列）
       await page.locator('.grid-row').nth(0).locator('.gd-rowno').click();
       await page.waitForTimeout(200);
@@ -421,8 +468,7 @@ try {
       await page.locator('[data-testid="ctx-copy-open"]').click();
       await page.waitForTimeout(200);
       await page.locator('.gd-ctx-item', { hasText: 'TSV（粘进 Excel）' }).click();
-      await page.waitForTimeout(250);
-      const tsvDefault = await page.evaluate(() => navigator.clipboard.readText());
+      const tsvDefault = await readClipboardWhen((t) => t.length > 0 && t !== clipboardBefore);
       const defaultLines = tsvDefault.split('\n');
       ok('🔴 复制 TSV 默认不带列名表头（1 行选中 = 1 行输出）',
         defaultLines.length === 1 && defaultLines[0].length > 0,
@@ -437,14 +483,15 @@ try {
       await page.locator('[data-testid="ctx-copy-open"]').click();
       await page.waitForTimeout(200);
       await page.locator('.gd-ctx-item', { hasText: 'TSV（含列名）' }).click();
-      await page.waitForTimeout(250);
-      const tsvHeader = await page.evaluate(() => navigator.clipboard.readText());
+      const tsvHeader = await readClipboardWhen((t) => t.length > 0 && t !== tsvDefault);
       const headerLines = tsvHeader.split('\n');
       ok('右键「TSV（含列名）」恰好多一行表头，其余与默认一致',
         headerLines.length === defaultLines.length + 1 &&
           headerLines.slice(1).join('\n') === tsvDefault &&
           headerLines[0] !== defaultLines[0],
-        `默认 ${defaultLines.length} 行 / 含列名 ${headerLines.length} 行，表头=${headerLines[0]?.slice(0, 50)}`);
+        `默认 ${defaultLines.length} 行 / 含列名 ${headerLines.length} 行，表头=${headerLines[0]?.slice(0, 50)}` +
+          ` | 默认正文=${JSON.stringify(tsvDefault.slice(0, 160))}` +
+          ` | 含列名正文=${JSON.stringify(headerLines.slice(1).join('\n').slice(0, 160))}`);
       await page.keyboard.press('Escape');
       await page.waitForTimeout(150);
 
@@ -535,11 +582,15 @@ try {
     };
   });
   const fpsPass = fps.p50 < 20;
-  ok(
-    HEADLESS ? '滚动帧率（headless，仅供参考）' : '滚动帧率',
-    HEADLESS ? true : fpsPass,
-    `${fps.count} 帧, P50 ${fps.p50}ms (${(1000 / fps.p50).toFixed(1)} FPS), P95 ${fps.p95}ms, 掉帧率 ${fps.droppedPct}%`,
-  );
+  if (HEADLESS) {
+    // headless Chromium 走虚拟 vsync，测出来的数没有真机意义 —— 恒真记通过就是假绿。
+    // 记 skipped：既不占通过数，也不因「测不准」误报失败，但汇总里看得见。
+    skip('滚动帧率（headless，仅供参考）',
+      `${fps.count} 帧, P50 ${fps.p50}ms (${(1000 / fps.p50).toFixed(1)} FPS) — 虚拟 vsync 下数值无意义，未做真机判定`);
+  } else {
+    ok('滚动帧率', fpsPass,
+      `${fps.count} 帧, P50 ${fps.p50}ms (${(1000 / fps.p50).toFixed(1)} FPS), P95 ${fps.p95}ms, 掉帧率 ${fps.droppedPct}%`);
+  }
 
   // 8. 右侧详情面板（§6.7，2026-09-29 缺陷 3 + 5 改版）
   ok('详情面板已渲染', (await page.locator('.detail-panel').count()) === 1);
@@ -4104,7 +4155,82 @@ try {
     }
   }
 
-  // 15. 控制台干净
+  // 15. 最小窗口宽度（900×600 的宽维）布局冒烟 —— 独立于主视口 1440×900 的断言组
+  /**
+   * 为什么单开一组：产品默认窗口 1280×800、最小 900×600，而本脚本全程锁死 1440×900。
+   * 只在宽屏跑过的断言，对「窄到 900 时左右面板会不会把工作区挤没」一无所知。
+   * 这组只改视口、不动数据，测完立刻恢复 1440×900，不影响其它章节。
+   *
+   * 复用 verify-toolbar-fit.mjs 的口径：布局判定一律取布局引擎的答案
+   * （getBoundingClientRect / scrollWidth / scrollHeight），不读 CSS 声明，
+   * 也不写「永远为真」的断言 —— 每条都有能让它变红的错误输入（见下）。
+   */
+  {
+    await page.keyboard.press('Escape'); // 收掉可能残留的右键菜单 / 弹层
+    await page.setViewportSize({ width: 900, height: 600 });
+    await page.waitForTimeout(400); // 等一轮布局 + ResizeObserver（density 重算为 compact）
+
+    const m = await page.evaluate(() => {
+      const box = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? el.getBoundingClientRect() : null;
+      };
+      const app = document.querySelector('.app');
+      const toolbar = document.querySelector('.toolbar');
+      const tbBox = toolbar?.getBoundingClientRect() ?? null;
+      const btns = toolbar ? [...toolbar.querySelectorAll('button')] : [];
+      return {
+        innerWidth: window.innerWidth,
+        appScrollW: app?.scrollWidth ?? 0,
+        appClientW: app?.clientWidth ?? 0,
+        appRight: box('.app')?.right ?? -1,
+        sidebarW: box('.sidebar')?.width ?? 0,
+        workspaceW: box('.workspace')?.width ?? 0,
+        detailW: box('.detail-panel')?.width ?? 0,
+        toolbarW: tbBox?.width ?? 0,
+        toolbarRight: tbBox?.right ?? -1,
+        btnHeights: btns.map((b) => Math.round(b.getBoundingClientRect().height * 10) / 10),
+        btnWraps: btns.filter((b) => b.scrollHeight - b.clientHeight > 1).length,
+        btnCount: btns.length,
+      };
+    });
+
+    // ① 前提：三栏骨架与按钮真的可测（否则后面三条会在 0 个按钮上空转成恒真）
+    ok('900px：三栏骨架可测量（侧栏 / 工作区 / 详情面板都在）',
+      m.sidebarW > 0 && m.workspaceW > 0 && m.detailW > 0 && m.btnCount >= 3,
+      `侧栏 ${m.sidebarW} / 工作区 ${m.workspaceW} / 详情 ${m.detailW} / ${m.btnCount} 个按钮`);
+
+    // ② 主工具栏不横向溢出：app 内没有产生横滚，且工具栏矩形没被挤出可视区。
+    //    能证伪的错误输入：给任一面板加写死的 min-width（或让 .toolbar 定宽 > 容器），
+    //    flex 收缩失效 → appScrollW 超过 clientWidth / toolbarRight 越界 → 红。
+    ok('900px：主工具栏没有横向溢出（app 内无横滚、工具栏没被挤出视口）',
+      m.appScrollW <= m.appClientW + 1 && m.toolbarW > 0 && m.toolbarRight <= m.appRight + 1,
+      `app scrollWidth ${m.appScrollW} / clientWidth ${m.appClientW}，工具栏宽 ${m.toolbarW}、右边界 ${m.toolbarRight} vs app ${m.appRight}`);
+
+    // ③ 按钮不折行。verify-toolbar-fit.mjs 的教训：height:auto 的按钮会「长高」
+    //    去容纳折行文本，scrollHeight === clientHeight 照样通过，所以判据必须是高度本身。
+    //    能证伪的错误输入：去掉 white-space:nowrap 并给按钮限宽 → 文字折两行 →
+    //    按钮长高超过单行令牌带（~26px）→ maxH > 34 / 高度种类增多 → 红。
+    const heights = m.btnHeights;
+    const maxH = heights.length ? Math.max(...heights) : 0;
+    const minH = heights.length ? Math.min(...heights) : 0;
+    ok('900px：工具栏按钮单行不折行（高度落在单行令牌带内）',
+      heights.length >= 3 && maxH > 0 && maxH <= 34 && minH >= 12 && (maxH - minH) <= 2 && m.btnWraps === 0,
+      `${heights.length} 个按钮，高度 ${minH}–${maxH}px（${new Set(heights).size} 种），内容溢出 ${m.btnWraps} 个`);
+
+    // ④ 左右面板没有把工作区压成 0：中间仍有可用宽度，且三栏不靠「溢出窗口」假装。
+    //    能证伪的错误输入：把 .sidebar / .detail-panel 改成固定大宽度且去掉 min-width:0，
+    //    900 下 flex 无法收缩 → workspaceW 被压到 0 → 红；三栏合计也会超过视口 → 红。
+    ok('900px：左右面板没有把工作区压成 0（仍有可用宽度且三栏不靠溢出假装）',
+      m.workspaceW > 120 && m.sidebarW + m.workspaceW + m.detailW <= m.innerWidth + 12,
+      `工作区 ${m.workspaceW}px，三栏合计 ${m.sidebarW + m.workspaceW + m.detailW} / 视口 ${m.innerWidth}`);
+
+    // 恢复主视口：既有断言继续跑 1440×900，不受这一组影响。
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(300);
+  }
+
+  // 16. 控制台干净
   ok('无控制台错误', errors.length === 0, errors.slice(0, 2).join(' ; '));
 } finally {
   await browser.close();
@@ -4112,7 +4238,13 @@ try {
 }
 
 const failed = results.filter((r) => !r.pass);
-console.log(`\n通过 ${results.length - failed.length}/${results.length}`);
+const passed = results.length - failed.length;
+console.log(`\n通过 ${passed}/${results.length}，跳过 ${skipped.length}`);
+if (skipped.length) {
+  console.log('跳过项（前提不成立，既不计通过也不计失败）：');
+  for (const s of skipped) console.log('  ⏭️ ' + s.name + (s.reason ? '  ' + s.reason : ''));
+}
+// 有失败仍必须非 0 退出；skipped 不参与退出码判定。
 if (failed.length) {
   console.log('失败项：');
   for (const f of failed) console.log('  - ' + f.name + '  ' + f.detail);

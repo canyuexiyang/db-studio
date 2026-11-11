@@ -580,6 +580,10 @@ describe('写操作 handler', () => {
     });
     expect(r.ok).toBe(true);
     expect(r.data.affected).toBe(2);
+    // P0-1 对照组：真正提交的批次，历史仍须记成功 + 真实行数
+    const hist = history.listHistory('c1', 10);
+    expect(hist[0].success).toBe(true);
+    expect(hist[0].rowCount).toBe(2);
   });
 
   // ---------- T08 / R15：逐条预期行数契约 ----------
@@ -606,6 +610,13 @@ describe('写操作 handler', () => {
     expect(r.data.conflicts[0].index).toBe(0);
     // 必须真的回滚（只看返回值不足以区分「没执行」与「执行后回滚」）
     expect(driver.calls.some((c) => /ROLLBACK/i.test(c.sql))).toBe(true);
+    // 🔴 P0-1：整批已回滚，历史绝不能再写成「success / 影响 N 行」。
+    //    旧实现无条件 success:true，用户回看历史会以为改动已生效。
+    const hist = history.listHistory('c1', 10);
+    expect(hist).toHaveLength(1);
+    expect(hist[0].success).toBe(false);
+    expect(hist[0].rowCount).toBe(0);
+    expect(hist[0].error).toContain('回滚');
   });
 
   it('🔴 T08：命中多行 → ambiguous（定位缺陷，绝不能继续）', async () => {

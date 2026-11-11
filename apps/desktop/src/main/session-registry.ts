@@ -1111,8 +1111,12 @@ export class SessionRegistry {
       whereParams: o.whereParams ?? [],
     });
     const out = await this.runQuery(connId, built.sql, built.params, { columnTypes });
-    // 行数正好等于 limit → 很可能还有更多，UI 应提示截断
-    out.truncated = out.rowCount >= (o.limit ?? DEFAULT_PAGE_SIZE);
+    // 🔴 两个截断来源必须取并集，不能互相覆盖：
+    //   runQuery 里的 applyResultBudget 按 200k 行 / 64MiB 做过字节级截断，
+    //   openTable 这里再按「行数正好等于 limit」判断分页是否还有下一页。
+    // 旧写法 `out.truncated = ...` 会把预算截断静默抹掉 —— 结果已经被切了，
+    // UI 却不提示，用户会把截断数据当成全表（正是 T44 要防的那类误判）。
+    out.truncated = out.truncated || out.rowCount >= (o.limit ?? DEFAULT_PAGE_SIZE);
     return out;
   }
 
@@ -1400,6 +1404,41 @@ export class SessionRegistry {
     let n = 0;
     for (const s of this.sessions.values()) if (s.tunnel) n++;
     return n;
+  }
+
+  /**
+   * 0.8.0（P1-8 / #78）：系统休眠（合盖 / suspend）时主动释放所有活连接。
+   *
+   * 🔴 为什么需要它：休眠前若不释放，① 每条连接白占服务端一个连接名额，
+   *    ② SSH 隧道会在睡眠期间变成孤儿进程（AGENTS §四.7 红线）。既有兜底是
+   *    「唤醒后靠首次查询或心跳失败触发重连」（被动），但被动兜底要等到用户
+   *    下一次操作才生效，睡眠期间连接一直挂着。
+   *
+   * 与 closeAll 的区别：closeAll 是**退出**语义（停心跳扫描器、不再恢复）；
+   * 这里是**休眠**语义 —— 复用 disconnect（关驱动+隧道、推进状态机到 idle、
+   * 推送给渲染层显示「已断开」），但保留会话登记，唤醒后 ensureConnection
+   * 能在用户下次操作时温和重连，不做全量主动重连（避免连接风暴）。
+   *
+   * @returns 被释放的连接 id 列表（供日志 / UI 告知）
+   */
+  async releaseAllForSuspend(): Promise<string[]> {
+    // 先停心跳扫描器：休眠期间不该再往即将关闭的驱动发 SELECT 1（否则空转报错）
+    if (this.keepAliveTimer !== null) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    this.keepAliveFailures.clear();
+    const released: string[] = [];
+    for (const id of [...this.sessions.keys()]) {
+      if (!this.isLive(id)) continue;
+      try {
+        await this.disconnect(id);
+        released.push(id);
+      } catch {
+        // 单条释放失败不阻断其余：休眠窗口很短，尽力而为
+      }
+    }
+    return released;
   }
 }
 

@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Backend } from '../backend';
 import type { ScriptScanStats, ScriptErrorDetail } from '@dbstudio/shared-ipc';
 import { IconAlert, IconCheck, IconX } from '../ui/icons';
+import { useEscapeClose } from '../ui/useEscapeClose';
 import type { DangerConfirmRequest } from '../danger/DangerConfirmModal';
 
 export interface SqlScriptModalProps {
@@ -214,6 +215,10 @@ export function SqlScriptModal({
     }
     onClose();
   }, [onFinished, onClose]);
+
+  // Esc 关闭退路：与遮罩点击 /「取消」按钮共用 requestClose（含清 worker + 刷新 schema 守卫）；
+  // running 阶段遮罩都不关，Esc 同样不绕过。
+  useEscapeClose(requestClose, stage !== 'running');
 
   // ---------- 渲染 ----------
 

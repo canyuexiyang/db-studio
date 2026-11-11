@@ -61,6 +61,64 @@ describe('T47 resolveGridState', () => {
     // 对照组：空白态必须占位
     expect(needsStateBlock(state({ rowCount: 0 }))).toBe(true);
   });
+
+  // P0-4：空表点「新增空白行」后 payload.rowCount 仍是 0，
+  // 若继续判 empty 就整块不渲染 DataGrid —— 刚加的行看不见。
+  it('零行但有草稿新增行 → ready，网格必须交回 DataGrid 渲染', () => {
+    const s = state({ rowCount: 0, extraRows: 1 });
+    expect(s.kind).toBe('ready');
+    expect(needsStateBlock(s)).toBe(false);
+  });
+
+  it('对照：零行且没有草稿行仍是 empty（新增入口不会凭空消失）', () => {
+    const s = state({ rowCount: 0, extraRows: 0 });
+    expect(s.kind).toBe('empty');
+    expect(needsStateBlock(s)).toBe(true);
+  });
+
+  it('loading 优先于草稿行：重拉数据时不能把加载态误判成 ready', () => {
+    expect(state({ rowCount: 0, extraRows: 2, loading: true }).kind).toBe('loading');
+  });
+
+  // 0.7.5：零行的两种成因必须分开说（筛选无结果 vs 空表），且互作对照
+  it('零行 + hasFilter → 文案指向「筛选条件」，提示放宽/清空', () => {
+    const s = state({ rowCount: 0, hasFilter: true });
+    expect(s.kind).toBe('empty');
+    expect(s.title).toContain('筛选条件');
+    expect(s.hint).toMatch(/放宽|清空/);
+  });
+
+  it('对照：零行 + 无 hasFilter → 文案指向「还没有数据」，提示新增行', () => {
+    const s = state({ rowCount: 0 });
+    expect(s.kind).toBe('empty');
+    expect(s.title).toContain('还没有数据');
+    expect(s.title).not.toContain('筛选');
+    expect(s.hint).toContain('新增');
+  });
+
+  it('对照：两种零行文案的主文案与提示都不能共用一句话', () => {
+    const filtered = state({ rowCount: 0, hasFilter: true });
+    const empty = state({ rowCount: 0, hasFilter: false });
+    expect(filtered.title).not.toBe(empty.title);
+    expect(filtered.hint).not.toBe(empty.hint);
+    // 缺省（不传）与显式 false 同义 —— 宿主没接线时不能悄悄变成「筛选」口径
+    expect(state({ rowCount: 0 }).title).toBe(empty.title);
+  });
+
+  it('hasFilter 只改文案，不改优先级：仍是 empty 且需要占位', () => {
+    const s = state({ rowCount: 0, hasFilter: true });
+    expect(needsStateBlock(s)).toBe(true);
+    expect(state({ rowCount: 0, hasFilter: true, loading: true }).kind).toBe('loading');
+    expect(state({ rowCount: 0, hasFilter: true, error: 'boom' }).kind).toBe('error');
+    expect(state({ rowCount: 0, hasFilter: true, disconnected: true }).kind).toBe('disconnected');
+    expect(state({ rowCount: 0, hasFilter: true, hasPayload: false }).kind).toBe('idle');
+  });
+
+  it('对照：草稿新增行仍优先于筛选文案（零行 + hasFilter + extraRows → ready）', () => {
+    const s = state({ rowCount: 0, hasFilter: true, extraRows: 1 });
+    expect(s.kind).toBe('ready');
+    expect(needsStateBlock(s)).toBe(false);
+  });
 });
 
 describe('T47 rowCountBasis', () => {

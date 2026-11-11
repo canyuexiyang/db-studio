@@ -12,6 +12,7 @@
 import { useMemo, useState } from 'react';
 import type { ChangeSummary } from '@dbstudio/core-mutation';
 import { fillParams, countPlaceholders } from './fillParams';
+import { useEscapeClose } from '../ui/useEscapeClose';
 
 export interface SavePreviewModalProps {
   statements: {
@@ -72,6 +73,10 @@ export function SavePreviewModal({
    * 构造的语句）直接跳过，绝不显示空壳行。
    */
   const summaries = statements.map((s) => s.summary).filter((s): s is ChangeSummary => s !== undefined);
+
+  // Esc 关闭退路：与遮罩 /「取消」按钮共用 onCancel。
+  // 原来只有网关输入框聚焦时按 Esc 才取消，且与全局监听会重复触发；统一由此监听接管。
+  useEscapeClose(onCancel);
 
   return (
     <div className="modal-mask" onMouseDown={onCancel}>
@@ -224,7 +229,6 @@ export function SavePreviewModal({
               onChange={(e) => setGateInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && gateMatched && statements.length > 0) onConfirm();
-                if (e.key === 'Escape') onCancel();
               }}
             />
           ) : null}

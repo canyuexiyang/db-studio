@@ -45,6 +45,10 @@ import {
   type CompletionResult,
 } from '@codemirror/autocomplete';
 import { sql, MySQL } from '@codemirror/lang-sql';
+// 0.7.5：⌘F 查找面板。search() 提供状态字段/面板/匹配高亮，searchKeymap 提供
+// Mod-f 等按键；两者都走 CodeMirror 自己的 baseTheme（随 light/dark 走），
+// 不写死颜色，也不碰既有 hotkeys（⌘R / ⌘⏎ / ⌘. / ⌘/ / ⇧⌘X）。
+import { search, searchKeymap } from '@codemirror/search';
 import { tags as t } from '@lezer/highlight';
 import { buildCompletions, wordBefore, contextTableOf, statementAt } from '@dbstudio/core-sql-editor';
 //
@@ -1142,6 +1146,8 @@ export function createSqlEditor(opts: SqlEditorOptions): SqlEditorHandle {
         lineNumbers(),
         highlightSpecialChars(),
         history(),
+        // 0.7.5：查找面板的状态字段与匹配高亮（面板由 searchKeymap 的 Mod-f 打开）
+        search(),
         drawSelection(),
         dropCursor(),
         indentOnInput(),
@@ -1158,7 +1164,10 @@ export function createSqlEditor(opts: SqlEditorOptions): SqlEditorHandle {
         sqlHover,
         EditorView.lineWrapping,
         hotkeys,
-        keymap.of([...closeBracketsKeymap, ...completionKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+        // 0.7.5：searchKeymap 放最前 —— 面板打开时它的 Escape（scope=search-panel）
+        // 要先于 defaultKeymap 的 Escape 命中，才能正常关掉查找面板；
+        // Mod-f / Mod-g 等不与 hotkeys 的任何一条同键。
+        keymap.of([...searchKeymap, ...closeBracketsKeymap, ...completionKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
         // 右键菜单：内核只负责拦下原生菜单并上报坐标，UI 由 React 宿主渲染
         EditorView.domEventHandlers({
           contextmenu(event) {
