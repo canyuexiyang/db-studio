@@ -10,6 +10,9 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 
 | 版本 | 日期 | 主题 | 门禁 | 分发 |
 |---|---|---|---|---|
+| **0.8.0** | 2026-11-11 | **验收可信度与规模（P1 八项 + 新功能）**：① **12 个对象生命周期入口的真库回放**（新建 `e2e-ddl-real.mjs`，复用生产同款构造器 + `information_schema` 回读，取代此前 demo「恒 `committed:true`」的假绿）；② `loadTable` 并发闸门（`RequestGate` 按 tabId 请求序号，防慢的旧响应覆盖新条件结果）；③ 结果预算改**全量真实累计**（修「前 200 行采样在「前窄后宽」时低估 → 64MiB 预算形同虚设」）；④ EXPLAIN 补 `running` 守卫（三个执行入口统一并发口径）；⑤ 保存提交在飞标记（防二次提交撞 BUSY 报假「连接忙」）；⑥ 面板宽度**联合**约束（sidebar+detail ≤ 窗口宽−320，修「最小窗口下工作区被压成 0 且宽度已持久化」）；⑦ 门禁假绿修复（补**幽灵 token** 门禁：无 fallback 引用未定义变量=0、带 fallback 棘轮基线 3，证伪验证通过）；⑧ 配置损坏不再静默清空（备份 `.bak.<时间戳>` + 留痕 + UI 如实告知）+ 主进程生产环境落盘日志；⑨ **powerMonitor 休眠释放连接**（suspend 释放含 SSH 隧道 / resume 不主动重连 / 锁屏不动）；⑩ 脏改动守卫**单槽位并发收口**（修「truncate 后批量重载时前一个标签页重载静默消失 + Promise 泄漏」） | **2537 单测（99 文件）** / verify **exit 0（20 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / **ddl:real 22** / script:ui 18 / 首屏 597.2 KB | ✅ GitHub Release + 本机安装 |
+| **0.7.5** | 2026-11-10 | **一致性与上手（P2 八类收口）**：focus ring 两处失效修复 + `--sql-*` 三处一致性门禁 + `font:` 简写字号收敛、6 处字符图标换 SVG、⌘⇧F/⌘S/F12 键位冲突收口 + 全局键 `e.target` 放行、SQL 编辑器 ⌘F 查找面板、空态区分「筛选无结果/空表」+ 无列占位、idle 断开横幅、删除死引导卡、命令面板补 2 条不可达 IPC 入口、README 4 处事实偏差校正 | **2487 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ GitHub Release + 本机安装 |
+| **0.7.4** | 2026-11-10 | **缺陷清零（审计 P0 十项全量落地）**：冲突整批回滚仍记历史「成功」、schemaRefresh 吞异常致 DDL 假成功、删表/批量删表回执被刷新提示盖掉、空表无法录入第一行、取消查询假成功、手输密码重放丢结果、字节预算截断被静默、schemaGet 失败把已握手连接标 failed、五个模态无 Esc、剪贴板失败仍报「已复制」；顺带修门禁可信度最小子集（skipped 显式计数 / headless 帧率不恒真 / 900px 视口断言）与两处 e2e flaky | **2480 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ GitHub Release + 本机安装 |
 | **0.7.3** | 2026-10-29 | **交互完备性缺口全量落地（12 项 / 11 子任务）**：库生命周期闭环（新建/删除数据库）、视图等 5 类对象新建模板 + 视图改定义、重命名表 + F2 语义修正（⇧F2 进设计器等）、清单右键与 ↑↓ 巡行、整库导出、测试连接、标签关闭左侧/全部、表维护（优化/分析/检查）、复制表（结构 / 结构+数据）、分组管理（空分组可见可删）；顺带修 **5 个真缺陷**（4 个门禁抓出：删库/维护回执被刷新 toast 盖掉、设计器是唯一退不出的模态、DDL 后树不定位、demo 后端恒返回同一份结构导致假绿；1 个发版准备时抓出：**`publish.owner` 拼错 → 应用内检查更新永远 404**） | **2473 单测（92 文件）** / verify exit 0（**19 道**）/ e2e:ui **476** / e2e:app **72** / e2e:keys 47 / e2e 74 / e2e:transfer 36 / e2e:ssh 18 / e2e:idle 16 / e2e:keepalive 17 / e2e:idle:ui 4 / verify:toolbar-fit 22 / e2e:script:data 10 / e2e:affected 21 / e2e:conflict 17 / e2e:script:ui 18 | ✅ GitHub Release + 本机安装 |
 | **0.7.2** | 2026-10-28 | **审计改进清单全量落地（22 项 / 27 子任务）**：P0 六项收口（导出范围 / 全树搜索 / 标签滚进视野+固定加 / confirmDanger 目标连接 / 生产库第三层保护 / BLOB-Date 口径）、键盘与标签三件套、筛选器 ⌘⇧F+去 window.prompt+条件停用、设计器失败重拉 diff、多语句续跑、**连接配置导入/导出（白名单剥密文）**、字号/间距 token 收敛 | **2391 单测（89 文件）** / verify exit 0（**19 道**）/ e2e:ui **434** / e2e:app **72** / e2e:keys 47 / e2e 74 / e2e:transfer 36 / e2e:affected 22 / e2e:keepalive 18 / e2e:conflict 18 / e2e:ssh 18 / e2e:idle 17 / verify:toolbar-fit 23 / e2e:idle:ui 5 | ✅ GitHub Release + 本机安装 |
 | **0.7.1** | 2026-10-28 | **真机反馈 4 项修复**：非 SELECT 执行结果显示影响行数 / 工具栏任何宽度按钮尺寸一致 / 中间清单单击选中·双击打开 / 连接有效期 10→120 分钟 + 心跳保活 | 2273 单测（81 文件）/ verify exit 0（**19 道**）/ e2e:ui 377 / e2e:app 60 / e2e:keys 47 / e2e:affected 21 / e2e:keepalive 17 / verify:toolbar-fit 22 | ✅ GitHub Release + 本机安装 |
@@ -24,6 +27,151 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 
 > 0.1.0~0.3.0 只在本地打了 dmg、未发 GitHub Release，也没有留下门禁数字；
 > 主题按同期 `devlog/` 与 dmg 产物时间对应，未做追溯补录。
+
+---
+
+## v0.8.0（2026-11-11）—— 验收可信度与规模
+
+范围依据：审计报告 P1 八项（`docs/product/PLAN-版本迭代任务清单-2026-11-10.md`）+ 0.8.0 既有登记清点（#59）。本版主线是**让门禁真正具备证伪能力**，并补掉几个「看起来在工作、实际会静默失败」的缺陷。
+
+**核心改动**
+
+1. **12 个对象生命周期入口的真库回放（#45，本版最大价值）**
+   此前 0.7.3 那 12 个入口唯一的验收是 `e2e-ui.mjs` 对 **demo 后端**的 SQL 预览文本断言 —— 而 demo 的 `mutationApply` 恒返回 `{ok:true, committed:true, conflicts:[]}`，**永远为真、无法证伪**：SQL 拼错、执行必失败时断言照样全绿。
+   新增 `scripts/e2e-ddl-real.mjs`（已纳链为第 16 道），口径三条：
+   - **复用生产同款构造器**（`import` 自 `renderer/src/database/ddlTemplates.ts`，经 tsx 解析 `@dbstudio/*` 别名实测可用）—— 绝不另写一套 SQL，否则测的不是产品真实发出的语句；
+   - 在 **fixture 真库**（MySQL 8.0.46 @13306）真实执行，回读 `information_schema.TABLES/VIEWS/ROUTINES/TRIGGERS/EVENTS` 与 `SHOW CREATE`，证明结构**真的变了**；
+   - 每个入口配**反例断言**（非法库名 / 改名到已存在 / 对不存在表维护 / 重复建对象），证明断言不是恒真。
+   覆盖 13 组 / 22 条：建库、删库、改名表、复制表（仅结构 / 结构+数据）、维护三件套（optimize/analyze/check）、五类对象模板（视图/过程/函数/触发器/事件）、视图改定义（`toCreateOrReplaceView` 可重复执行）。
+   **证伪验证**：把 `buildCopyTableSql` 的 `withData` 分支短路后，「含数据复制」两条断言精确报红（20/22），恢复后 22/22。
+
+2. **`loadTable` 并发闸门（#46）**
+   `loadTable` 是表的**唯一**拉取通道（首开/排序/筛选/刷新/加载更多/外键跳转/会话恢复全经它）。快速改筛选或连点刷新时同一 tab 会并发多次拉取，**慢的旧响应后到会用旧条件结果覆盖新条件结果** —— 网格与当前筛选不符且无任何报错。
+   新增 `workspace/requestGate.ts`（tabId 维度单调序号）：`begin` 领号 → `await` 回来 `isCurrent` 比对 → 过期响应**不 patchTable、不写视图记忆、不碰 loading**（收尾交给最新那次）。成功与失败**两条路径**都守卫（否则慢的旧请求报错会把新结果覆盖成红块）。
+   6 单测含竞态靶子（「旧慢新快 → 旧响应必须被丢弃」）；证伪：`isCurrent` 恒 true 时 5 条红。
+
+3. **结果预算改全量真实累计（#47）**
+   旧实现 `estimateResultBytes` 只采样**前 200 行**估平均行宽再外推总字节。当大 TEXT/BLOB 集中在**后段**（前 200 行是窄行）时严重低估 → 64MiB 字节预算**形同虚设**，最坏情况（正是预算要防的 OOM）被整个放过。
+   改为单次前向遍历**逐行真实累计**，并记录「首次压垮预算」的行号作为切点（切点由真实累计决定，不再按平均行宽折算）。`estimatedBytes` 语义从「采样外推」升级为「全量真实」。
+   **证伪靶子**：200 窄行（各 84B）+ 第 201 行 50k 字符大 TEXT（100008B），预算 100000 —— 旧采样估 ≈16884 判「不超」漏掉，新累计 116808 必截断。旧实现下该断言实测报红。单行即超预算（巨型 BLOB）时至少留 1 行但如实标 `truncated`，不静默。
+
+4. **EXPLAIN 补 `running` 守卫（#48 前半）**
+   主执行 `run`（`if (running)`）与续跑 `resumeBatch`（`if (!p && !running)`）都有并发守卫，唯独 `runExplain` 漏了 —— 执行中连点 EXPLAIN 会并发发出第二条并同时改 `queryIdRef`（后点覆盖先点，取消只能取消到后者）。补齐并**把 `running` 加进依赖数组**（漏了会捕获陈旧值使守卫失效）。
+
+5. **保存提交在飞标记（#49）**
+   `onConfirmSave` 提交期间（`await mutationApply` + `loadTable`）草稿尚未清，⌘S/点保存会重开预演框 → 用户二次确认触发第二次 `mutationApply` 撞主进程 `BUSY`，看到误导性的「连接忙」。用 `savingRef`（同步生效，防同一 tick 内连点穿过）守卫 `requestSaveActive` 与 `onConfirmSave` 两条入口，`finally` 复位（冲突 return / 成功 / catch 三出口都覆盖）。
+
+6. **面板宽度联合约束（#50）**
+   两侧面板各自 clamp（sidebar ≤520 + detail ≤600 = 1120）而窗口最小宽只有 900（`window.ts`）—— 两栏都拖到最大再把窗口缩到最小时，中间工作区被压成 0 且**宽度已持久化、重开仍复现**。
+   新增 `workspace/layoutClamp.ts`（纯函数 `clampLayoutJoint` + `WORKSPACE_MIN_W=320`）：保证 sidebar+detail ≤ 窗口宽−320，优先收详情（辅助信息）再收侧栏（主战场），各自不低于自身 min；窗口变窄就地收口但**不改持久化值**（拖回来能恢复）。9 单测含反例靶子（最小窗口 + 两栏最大 → 工作区正好保住 320）。
+
+7. **门禁假绿修复：补幽灵 token 门禁（#51）**
+   做 #52 的告警样式时我写了 `border-radius: var(--radius-sm)`，而本仓库圆角 token 叫 `--r-sm` —— **CSS 引用未定义变量不报错，整条声明静默失效**（告警块就是没有圆角）。而既有死 token 门禁只查「定义了没人用」，查不出反方向。
+   补两条断言：① **无 fallback** 的幽灵 token 必须为 0（`var(--x)` 无兜底 = 真会坏样式）；② **带 fallback** 的设棘轮基线 3（`--font-mono/--overlay/--r-md` 历史遗留，渲染不坏，只许减不许增）；运行时注入的 `--sidebar-w/--detail-w` 白名单登记。**证伪**：注入 `--radius-sm` 后精确报红 `expected ['--radius-sm'] to deeply equal []`。
+
+8. **配置损坏不静默清空 + 主进程生产日志（#52）**
+   - `connection-store`：旧实现解析失败**静默 `return []`** —— 用户连接「全部消失」却无任何提示，会以为数据被清空而反复重配。现在先 `copyFileSync` 备份成 `connections.json.bak.<时间戳>`（**原文件不动**，用 copy 不用 rename），再降级为空，并把 `{kind, backupPath, message}` 留痕；`takeLoadProblem()` **读后清除**（只告知一次）。损坏 / 版本不兼容 / 结构异常三种形态分别留痕。
+   - 主进程新增 `logger.ts`（零依赖，`userData/logs/main.log`，1MB 滚动留一份 `.1`）：旧实现所有 IPC 错误只在 `DB_STUDIO_E2E==='1'` 时 `console.error`，**打包后线上零日志**，用户报「连不上/保存失败」时手里没有主进程栈。`wrap` 改为统一 `logger.error`（带 code）。
+   - 渲染层在空态如实告知「原文件仍在、未被清空；备份：<路径>」，配套 `.conn-load-problem*` 样式（复用 `--error-bg`/`--warn`/`--r-sm` token）。
+   5 单测钉住「写盘失败不抛」（日志不能成为新故障源）+ 5 单测钉住备份/留痕/读后清除/正常文件不留痕。
+
+9. **powerMonitor 休眠释放连接（#78，本版唯一新功能）**
+   承诺出处：`docs/RELEASES.md:177`、`REQ-0.7.1:357,377,536`。
+   `power-events.ts`（依赖注入，决策可单测）+ `SessionRegistry.releaseAllForSuspend()`（复用 `disconnect`：取消查询 → 关驱动+隧道 → 推进状态机 → 推送，先停心跳扫描器）。决策：**suspend 释放**（否则白占服务端连接名额 + SSH 隧道变孤儿进程，触 AGENTS §四.7 红线）、**resume 不主动重连**（避免唤醒瞬间连接风暴，靠既有 `ensureConnection` 按需温和恢复）、**锁屏不动**（锁屏≠休眠，激进断连体验差）。幂等：释放进行中来第二次 suspend 不叠加（部分机型连发 suspend/resume）。6 单测含幂等/失败不抛/dispose。
+
+10. **脏改动守卫单槽位并发收口（#79）**
+    发现的**真实可达缺陷**（非防御性重构）：`dirtyGuardResolveRef` 是单 ref，原注释假定「同一时刻最多一个守卫（重载是串行的）」。但 `truncate table` 成功后会遍历**所有打开同一张表的标签页** `void loadTable(...)` 重载 —— 若两个标签页都有未提交改动，第二次赋值**覆盖**第一次的 resolver，第一个 promise **永不落定**：该标签页这次重载**静默消失**（不重载、不报错、连 loading 都不亮），Promise 还泄漏。
+    新增 `workspace/singleModalGate.ts`：已被占用时**不排队**，后来者立即以 `'cancel'` 落定（不重载、用户脏值原样保留 = 安全侧）。
+    **证伪**：注入「无条件覆盖」后 3 条断言红，含 `expected [] to deeply equal ['save']`（正是「先来的被顶掉」的缺陷形态）。
+    ⚠️ **未做**全局 `per-tab/per-query Map` 重构：核实发现 `queryIdRef` 等**实为 per-tab**（`SqlEditorPanel` 是 `ws.tabs.map` 内的独立实例，非激活仅 CSS `hidden`），审计「单槽位 ref 跨 tab 覆盖」对该组 ref **前提不成立**；其余 ref（`pendingSortRef` 同步即消费、`pendingAfterConnectRef` 服务全局单例模态）无可复现并发。按「造不出前提的断言宁可不写」，不为此冒 v0.7.5 那次仓促改全局状态的回归风险。
+
+11. **查询取消的前置流程闸门（#68）**
+    时序窗口：「点执行」到查询真正落到主进程之间有一段前置流程（`ensureConnection` 可能建 SSH 隧道 ~1.5s → 动态 import 危险分级器 → 危险确认）。这期间取消按钮可点，但主进程还没有该 queryId 句柄，`cancelQuery` 返回 false、查询照跑（#39 已让 UI **如实**说「取消未生效」，但取消本身没生效；密码框/危险确认是模态、取消按钮被遮罩挡住，真窗口只有隧道/import 这段）。
+    主进程无法仅凭 queryId 字符串区分「即将注册」与「已结束」，故**在渲染层修**（前置流程状态本就在渲染层）：`QueryCancelGate` 纯类（8 单测），`onRunSql` 用 `try/finally` 登记 + **每段 await 后查中止**，**发给主进程前注销**（此后取消必须交给 KILL），`onCancelSql` 先试本地闸门再走 `queryCancel`。零新 IPC、不动主进程与通道契约。
+    **证伪**：`exitPreflight` no-op 时「执行期间取消应交给主进程 KILL」对照断言报红（否则本地闸门会把执行期间的取消误吞，KILL 永不发出）。
+
+**门禁实测（2026-11-11，fixture MySQL 8.0.46 @13306 healthy）**
+`npm run verify` **exit 0（20 道）**：typecheck 0 / `gen:actions --check` 一致 / 单测 **2537（99 文件）** / `check:bundle` **9/9**（首屏 **597.2 KB** / 1465 KB）/ e2e **74/74，0 跳过** / transfer **36** / ssh **18/18** / grid 性能 / idle **16/16** / keepalive **17/17** / idle:ui **4/4** / e2e:ui **480/480，跳过 0** / toolbar-fit **22/22** / script:data **10/10** / affected **21/21** / conflict **17/17** / **ddl:real 22/22（新增）** / script:ui **18/18** / e2e:app **72/72** / e2e:keys **47/47**（另 4 项人工终验未计入）。
+首屏 596.4 → **597.2 KB**（+0.8，三个纯逻辑模块 + 告警样式），仍远低于 1465 KB 预算。
+
+**本轮证伪验证汇总（6 处，全部确认断言在错误实现上会红）**
+`#45` 复制表丢数据（20/22）· `#47` 采样低估（truncated 假）· `#46` 无序号比对（5 红）· `#79` 无条件覆盖（3 红）· `#68` 不注销前置流程（1 红）· `#51` 幽灵 token（精确报出变量名）。
+
+**如实登记的取舍与遗留**
+- `#47` 的「驱动已把全量 rows 读进内存、峰值不受控」**未做** —— 需 mysql2 流式驱动改造（触碰驱动抽象层），本版只修了截断判据。峰值风险仍在。
+- `#51` 只补了幽灵 token 盲区；`e2e:perf` / `transfer:ui` 纳链属**覆盖度增强**（有 flaky 风险），未纳入；`verify:installed` / `verify:traffic-lights` 仍需已安装 .app，随打包单独跑。
+- `⌘C/⌘V/⌘A/⌘Z` 与系统 role 优先级、原生菜单 accelerator、真实 IME 组合期 —— 仍是 `e2e:keys` K7 段人工终验项。
+- **本版未发 GitHub Release**（打包与发布留待统一进行）；`verify:installed` 待已安装 .app 后补跑。
+- 连接数上限（与 powerMonitor 同单 #78 的另一半）**未做**：未确认产品口径（上限值/超限行为如何告知），不擅自定。
+
+---
+
+## v0.7.5（2026-11-10）—— 一致性与上手（P2 八类收口）
+
+范围依据：`docs/product/PLAN-版本迭代任务清单-2026-11-10.md` §3；工单 `#53`（P2 八类）、`#57`（里程碑）。本版只做低成本、用户可感知的一致性收口，不掺 P1、不动架构。
+
+**八类改动**
+- **样式**：修两处失效的 focus ring —— `styles.css:3900/5400` 旧写 `box-shadow: var(--focus-ring, …)`，而 `--focus-ring` 是**颜色 token**，把颜色当整条 `box-shadow` 值 → 声明非法被丢弃、焦点环不可见（`:5400` 还带 `outline:none`，等于零反馈）。改为全仓统一的 `0 0 0 3px var(--focus-ring)`。
+- **token 门禁**：`designTokens.test.ts` 补两条 —— ① `--sql-*` 九键在 `:root`/`[data-theme=dark]`/`@media` 三处声明的键集合与取值一致（不写死数量，防空对空通过）；② `font:` 简写不得再出现已收敛的六档字号字面量（棘轮原来只查 `font-size:`，`font:` 简写是盲区）。顺带把 35 处 `font:` 简写字号迁到 `var(--fs-*)`（靠迁移代码让新断言变绿，不弱化断言）。
+- **图标**：6 处字符图标 ⚠/📌/✕/✓ → `ui/icons.tsx` 既有 SVG（`SqlEditorPanel`×2、`TableDesigner`×2、`HeaderContextMenu`×2），保留全部 `data-testid` 与文案。
+- **快捷键冲突**：`DataGrid` ⌘⇧F 加 `!shiftKey`（不再与全局筛选面板双触发）、⌘S 加 `stopPropagation`（不再与全局 ⌘S 双跑）；`App` 全局 keydown 补焦点判定（见下「踩坑」）；F12 加「不在可编辑控件内」约束。
+- **SQL 编辑器**：接入 `@codemirror/search` 的 `search()` + `searchKeymap`，⌘F 查找面板可用（走 CM 自带 baseTheme，不写死颜色，不碰既有 ⌘R/⌘⏎/⌘./⌘//⇧⌘X）。
+- **空态三态**：零行文案区分「筛选无结果」（提示放宽/清空）与「空表」（提示新增行），由 `effectiveConditionCount(tab.filter)` 派生；`TablePane` 补「有载荷却无列定义」占位（旧实现是纯空白）；idle 自动断开补横幅（`ConnStateBanner` 判 `closed && !lastError`，与事故态、手动断开的 `idle` 互斥）。
+- **死代码**：删 `EmptyState` 的三张引导卡（唯一调用点写死 `hasConnections={false}`，且「有连接无标签」已由 ObjectBrowser 接管，接活会与空态断言冲突）。
+- **不可达 IPC**：命令面板补两条最小入口 —— 「清空查询历史」(`history:clear`)、「显示运行中的查询」(`query:running`)，demo 模式给明确中文回执，不静默。其余四条（`schema:searchColumn`/`app:setGlass`/`app:getMode`/`app:diagnostics`）暂不补 UI，契约保留。
+- **文档**：`README.md` 4 处事实偏差按代码校正（列定位键位 `F12` 非 `⌘F12`、五类模板不含「表」、标签右键实为「在树中定位/复制完整对象身份」、整库导出仅 SQL/Markdown）。
+
+**🔴 本版踩坑（一个「加全局键 e.target 放行」引出连环两处真回归，都自己造成、都被门禁抓到）**
+1. **e2e:ui 崩溃**：焦点判定最初把 `.cm-editor` 算作「文本编辑现场」→ SQL 编辑器里 ⌘W 被放行 → e2e 的「Meta+w 关查询标签」关不掉 → 停在 SQL 页、网格 0 行 → 断言超时崩溃。这是**真实产品回归**（编辑器里 ⌘W 本该关标签，有 dirtyGuard 兜底），不只是测试问题。
+2. **check:bundle 8/9**：修法一用 `target.closest('.cm-editor')`，但这段在**首屏 `App.tsx`**，`.cm-editor` 字面量被打进首屏 bundle → 触发 E2 红线「CodeMirror 0 字节进首屏」。
+3. **最终修法（不含任何 `cm-*` 字面量）**：两档判定 —— F12 用**宽**判定（`input`/`textarea`/`isContentEditable`；CodeMirror 的 `.cm-content` 本身就是 contenteditable，天然覆盖）；⌘W/⌘T/⌘S 门禁用**窄**判定（仅 `tagName===INPUT/TEXTAREA`，SQL 编辑器主体是 contenteditable 的 DIV → 落在门禁外 → ⌘W 能关标签）。**教训**：① 改全局快捷键必连带跑 `e2e:ui`(Meta+w)+`e2e:keys`(K1-K9)+`check:bundle` 三者；② 首屏文件里连「选择器字符串」都算 CodeMirror 泄漏，注释不算（minify 移除）；③ `isContentEditable` 是识别 CM 焦点而**不引入类名字面量**的唯一干净途径。
+
+**门禁实测（2026-11-10，fixture MySQL 8.0.46 @ 13306 healthy）**
+`npm run verify` **exit 0（19 道）**：typecheck 0 / `gen:actions --check` 一致 / 单测 **2487（93 文件，+7）** / `check:bundle` **9/9**（首屏 **595.1 KB** / 1465 KB）/ e2e **74/74，0 跳过** / transfer **36** / ssh **18/18** / grid 性能 / idle **16/16** / keepalive **17/17** / idle:ui **4/4** / e2e:ui **480/480，跳过 0** / toolbar-fit **22/22** / script:data **10/10** / affected **21/21** / conflict **17/17** / script:ui **18/18** / e2e:app **72/72** / e2e:keys **47/47**（另 4 项人工终验未计入）。
+首屏较 0.7.4 的 593.9 KB 微增 1.2 KB（焦点判定两档 + 命令面板两条），仍在预算内。
+
+**如实登记的取舍与遗留**
+- `⌘C/⌘V/⌘A/⌘Z` 与系统 role 的优先级、原生菜单 accelerator、真实 IME 组合期 —— 仍是 `e2e:keys` K7 段登记的**人工终验**项，本版未动。
+- `#51` 完整门禁修复（4 个脚本 `e2e:perf`/`transfer:ui`/`verify:installed`/`verify:traffic-lights` 纳链或标注非门禁）仍属 0.8.0；本版只做了 0.7.4 前移的最小子集。
+- 全角加号 `＋`（`TableDesigner` 多处按钮文案前缀）未换 SVG —— 替换会改变按钮可见文案、e2e 依赖，留待单独一轮。
+- 本版**未发 GitHub Release**（打包与发布留到三个版本研发收尾统一进行）；`verify:installed`/`verify:traffic-lights` 需已安装的 .app，随最终打包补跑。
+
+---
+
+## v0.7.4（2026-11-10）—— 缺陷清零（P0 十项）
+
+范围与优先级依据：`docs/product/PLAN-版本迭代任务清单-2026-11-10.md`、同日只读审计（7 章）。
+工单 `#35–#44`（P0）、`#51` 最小子集、`#55` 收尾、`#56` 里程碑。
+
+**十项修复（均为代码可证，先读原文核对再改）**
+
+| 工单 | 修复 | 定位 |
+|---|---|---|
+| #35 | 冲突整批 ROLLBACK 后历史按 `r.committed` 记 `error` / `rowCount:0`，不再冒充成功 | `M/ipc-handlers.ts:447-469` |
+| #36 | `onRefreshConnSchema` 不再吞异常，返回 `boolean`；失败清 `pendingRevealRef`，5 个 DDL 调用点按结果分文案 | `R/App.tsx` `onRefreshConnSchema` + 建库/删库/改名/维护/复制表 |
+| #37 | 删表与批量删表改为 `await` 刷新之后再报回执，批量场景用 `Promise.all` 汇总刷新结果 | `R/App.tsx` 删表 / 批量删表 |
+| #38 | 空表有草稿新增行时按 `ready` 渲染网格；空态占位块直接给「新增空白行」按钮 | `R/grid/gridStates.ts`、`GridStateBlock.tsx`、`R/workspace/TablePane.tsx` |
+| #39 | 取消查询按 `onCancel` 返回值分支提示，失败不再报「已发送取消」 | `R/editor/SqlEditorPanel.tsx` |
+| #40 | 手输密码改为原地 Promise 续跑，真实结果回送结果 Tab（其余 `pendingAfterConnectRef` 路径不变） | `R/App.tsx` `onRunSql` + `PasswordPromptModal` |
+| #41 | `openTable` 的截断标记改为 `budget.truncated \|\| 行数达 limit`，不再覆盖字节预算截断 | `M/session-registry.ts:1113` |
+| #42 | 握手与 `schemaGet` 拆成两个 try：结构读取失败只提示、连接保持 `connected` | `R/App.tsx` `onConnectNode` |
+| #43 | 5 个模态复用共享 `useEscapeClose`（含未保存守卫）；新增 4 个单测 | `R/ui/useEscapeClose.ts` 等 7 文件 |
+| #44 | 剪贴板失败如实提示 + 「手动复制」退路弹窗（含 Esc / 遮罩 / 关闭三条退路） | `R/App.tsx` `copyText` |
+
+**门禁可信度（#51 最小子集前移）**：`e2e-smoke.mjs` / `e2e-ui.mjs` 新增 `skipped` 显式计数与汇总，前提不成立不再 `check(..., true)` 记绿；headless 帧率改记 skipped 而非恒真；新增 900px 视口 4 条布局断言（主视口仍是 1440×900，476 条既有断言不弱化）。
+**顺带修掉两处 e2e flaky**：面板拖拽改「读真实宽度闭环重试」（判据不降）；TSV 复制改「按剪贴板真实内容闭环等待」，并扩展失败诊断信息。
+
+**证伪验证**：把 #35 实现临时退回 `success: true` 后，新增反例断言立刻报红（`expected true to be false`），确认断言有证伪能力后改回；`gridStates` 补 3 个用例（含 `extraRows=0` 对照组与 loading 优先级）。
+
+**门禁实测（2026-11-10，fixture MySQL 8.0.46 @ 13306 healthy）**
+`npm run verify` **exit 0**（19 道）：typecheck 0 / `gen:actions --check` 通过 / 单测 **2480（93 文件）** / `check:bundle` **9/9**（首屏 **593.9 KB** / 1465 KB）/ e2e **74/74，0 跳过** / transfer **36** / ssh **18/18** / grid 性能 / idle **16/16** / keepalive **17/17** / idle:ui **4/4** / e2e:ui **480/480，跳过 0** / toolbar-fit **22/22** / script:data **10/10** / affected **21/21** / conflict **17/17** / script:ui **18/18** / e2e:app **72/72** / e2e:keys **47/47**（另有 4 项人工终验未计入）。
+首屏较 0.7.3 的 563.0 KB 增 30.9 KB，来自共享 Esc hook、手动复制退路与 DDL 回执分流，仍在预算内。
+
+**如实登记的取舍与遗留**
+- #39 的「queryId 在前置流程期间未注册 → KILL 无效」属时序问题，本次只修「假成功」提示；待 0.8.0 与 #48 的 per-query Map 一并做待取消队列，不冒充已复现缺陷。
+- `verify:installed` / `verify:traffic-lights` 需已安装的 .app，本版尚未打包；0.7.3 遗留的「owner 修复版未复跑」一并在最终打包后补跑。
+- 本版**未发 GitHub Release**（打包与发布留到三个版本研发收尾统一进行）。
+- `#51` 完整修复（4 个脚本纳链或标注非门禁）仍属 0.8.0。
 
 ---
 

@@ -9,7 +9,7 @@ MySQL 优先、单机自用、macOS 原生观感 —— 对标 Navicat Premium�
 
 Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · 虚拟滚动
 
-[![version](https://img.shields.io/badge/version-0.7.3-blue)](docs/RELEASES.md)
+[![version](https://img.shields.io/badge/version-0.8.0-blue)](docs/RELEASES.md)
 [![tests](https://img.shields.io/badge/tests-2473_passed-brightgreen)](#验证)
 [![platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue)](#系统与环境限制)
 [![arch](https://img.shields.io/badge/arch-Apple%20Silicon%20%C2%B7%20Intel-orange)](#适配芯片)
@@ -90,7 +90,7 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 - **ENUM 专用下拉**（选项只来自 DDL 定义值）+ **日期时间辅助控件**（原始字符串逐字可见，日期控件只改日期段，时间与 6 位微秒原样保留）
 - **六态网格**：loading / error / disconnected / idle / empty / ready，各有独立块与重试入口；状态栏行数带口径（`exact` / `estimated` / `truncated`）
 - **表视图记忆**：每张表记住排序与筛选，重开即恢复（只记「怎么看」，不记数据）
-- 外键值导航与下拉、鼠标拖选矩形选区、⌥↑ 递进选区、⌘F 结果集内查找、⌘F12 列快速定位
+- 外键值导航与下拉、鼠标拖选矩形选区、⌥↑ 递进选区、⌘F 结果集内查找、F12 列快速定位（带不带 ⌘ 都收；焦点在输入框时不抢键）
 - 复制 6 格式（TSV/CSV/JSON/Markdown/INSERT/UPDATE 带真实值）；**默认只复制值、不带列名表头**（需要列名走复制菜单的「含列名」，Markdown 永远带表头）
 - 选中区聚合统计；单元格完整值弹窗（JSON 高亮 / BLOB 预览与存盘）
 
@@ -128,18 +128,18 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 
 - 5 层库表树（6 类对象：表/视图/存储过程/函数/触发器/事件）、字段名反查搜索、树展开记忆
 - **对象生命周期闭环**：新建数据库（连接右键 / 库列表尾部行内「＋ 新建数据库」/ 命令面板 `:建库`，实时 SQL 预览 + 非法名当场报错）、删除数据库（**无条件**输库名，比删表更严）
-- **5 类对象新建模板**（表 / 视图 / 存储过程 / 函数 / 触发器）+ 视图「改定义」；模板一律单条语句、DDL 执行后自动刷新树
+- **5 类对象新建模板**（视图 / 存储过程 / 函数 / 触发器 / 事件；建表走可视化设计器，不在此列）+ 视图「改定义」；模板一律单条语句、DDL 执行后自动刷新树
 - **表级三件套**：重命名（F2，⇧F2 进设计器）、复制表（仅结构 / 结构+数据）、维护（优化 / 分析 / 检查表，服务端回执）
 - **分组管理**：新建/重命名/删除空分组，空分组也可见（不会「建完就消失」）
 - 详情面板三区块：表信息 / 字段（**注释常驻显示**）/ 建表语句 DDL；单元格完整值在弹窗里看
 - 可视化表设计器（字段/索引/外键三 Tab + 差异 ALTER + DDL 预览）
-- 导入 4 格式（csv/tsv/xlsx/json）向导；导出 5 格式（xlsx/csv/json/sql/markdown）+ 整库备份
+- 导入 4 格式（csv/tsv/xlsx/json）向导；导出 5 格式（xlsx/csv/json/sql/markdown）+ 整库备份（逐表重查，仅支持 SQL / Markdown 两种格式）
 - **导出四范围**（选区 / 已加载 / 全部匹配 / 整库），每项标注是「快照」还是「重查」
 - 全部导入导出跑在 **utilityProcess**（可 kill = 真取消，崩溃不拖垮主进程）
 - **工具栏身份条**：连接 / 环境 / 库 / 对象四段常显，缺数据时如实写「未命名连接」而非拿 connId 顶替；按**可用宽度**在 full/compact 间切换（导出/导入/设计/粘贴收进「更多」菜单，保存与筛选永不折叠）
 - **更新检查四态**：`unconfigured` / `failed` / `update` / `latest` —— 没配发布通道不会谎报「已是最新」
 - macOS 原生菜单栏、原生交通灯、Liquid Glass 玻璃窗、三栏可拖拽布局、多标签、多窗口、会话恢复、三态主题、⌘K 命令面板
-- **标签右键 8 项**（关闭 / 关闭其他 / 关闭右侧 / **关闭左侧** / **关闭全部** / 固定 / 重命名 / 复制路径）、中间清单右键与 ↑↓ 巡行（单击选中、双击或 Enter 打开）
+- **标签右键 8 项**（关闭 / 固定标签 / 关闭其他 / **关闭左侧** / 关闭右侧 / **关闭全部** / 在树中定位 / 复制完整对象身份）、中间清单右键与 ↑↓ 巡行（单击选中、双击或 Enter 打开）
 
 </details>
 
@@ -379,13 +379,13 @@ npm run verify:installed # 已安装 .app 的真机验收（22 项，含版本�
 npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染层之外验证）
 ```
 
-**当前基线（v0.7.3 · 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases) 并本机安装）**：
+**当前基线（v0.8.0 · 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases) 并本机安装）**：
 
 | 门禁 | 结果 |
 |---|---|
-| 单元测试 | **2473 passed / 92 文件** |
-| `check:bundle` | 9/9 体积断言通过（首屏 563.0 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip；功能弹窗合计 61.1 KB / 64 KB gzip） |
-| e2e:ui（真浏览器 UI 回归） | 476 |
+| 单元测试 | **2537 passed / 99 文件** |
+| `check:bundle` | 9/9 体积断言通过（首屏 597.2 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip；功能弹窗合计 61.1 KB / 64 KB gzip） |
+| e2e:ui（真浏览器 UI 回归） | 480 |
 | e2e:app（Electron 真机） | 72 |
 | e2e:keys（五焦点键盘矩阵） | 47 |
 | e2e:idle / e2e:idle:ui（空闲断开自动重连） | 16 / 4 |
@@ -395,13 +395,15 @@ npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染�
 | SSH 真机（e2e:ssh） | 18 |
 | 影响行数三口径（e2e:affected） | 21 |
 | 冲突检测（e2e:conflict） | 17 |
+| **对象生命周期真库回放（e2e:ddl:real）** | **22** |
 | 工具栏四档视口（verify:toolbar-fit） | 22 |
 | 脚本导入数据完整性（e2e:script:data） | 10 |
 | 脚本导入 UI（e2e:script:ui） | 18 |
 | verify:installed（装好的 .app） | **22/22** |
-| verify:traffic-lights（像素） | **6/6**（本轮未改窗口参数，沿用 0.7.2 结果） |
+| verify:traffic-lights（像素） | **6/6** |
 
 > 🔴 **不跑 `npm run verify` 不许宣告完成**（AGENTS.md §五）。
+> 🔴 **门禁必须能证伪**（AGENTS.md 红线 14）：改 DDL/对象生命周期必跑 `e2e:ddl:real`——`e2e:ui` 那层的 demo 后端 `mutationApply` 恒返回 `committed:true`，**测不出 SQL 拼错**。
 
 ## 文档地图
 

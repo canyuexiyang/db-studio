@@ -75,6 +75,10 @@ docs/                      文档资产(索引见 docs/README.md,改功能前先
 11. 渲染层内容区**必须不透明**(方案 A:玻璃只在 Electron 侧 + 侧栏/浮层的 CSS 毛玻璃降级)。
 12. **窗口:原生交通灯的唯一可用组合是 `transparent: true` + `titleBarStyle: 'hidden'` + `trafficLightPosition`**(几何常量 `TRAFFIC_LIGHT_MEASURED`:直径 14/间距 23/x∈[16,76] → 安全区 **78px**)。🔴 `frame:false` 下 Chromium **根本不创建**窗口按钮视图,`setWindowButtonVisibility(true)` 静默无效;再叠加 `roundedCorners:false` 灯直接消失 —— v1.2「灯已存在、只需让位」的结论**已被 v1.3 证伪**,探针对照表见 `docs/product/REQ-v1.3-缺陷清理.md`。**⛔ 不许自绘按钮**;⛔ 仍不开 vibrancy(与 transparent 冲突导致模糊错乱)。改窗口参数后必须跑 `npm run verify:traffic-lights`(像素级门禁;Playwright/DOM 穿不透 darwin 窗口 API)。
 13. SSH 隧道/驱动层的资源释放语义不许改弱:取消 = 真取消(KILL QUERY / kill utilityProcess)。
+14. **门禁必须能证伪**(0.8.0 立):凡是「demo 后端恒真」的断言都不算验收。改 DDL/对象生命周期 → 必跑 `e2e:ddl:real`(真库 + `information_schema` 回读);新增断言时**先在错误实现上确认它会红**(把实现改坏一次,看报红,再改回)。`e2e-ui.mjs` 的 demo `mutationApply` 恒返回 `committed:true`,那一层**测不出 SQL 拼错**。
+15. **CSS 引用未定义的变量不会报错,整条声明静默失效**(0.8.0 实测:`var(--radius-sm)` 应为 `var(--r-sm)`,告警块就是没有圆角)。新增 `var(--x)` 一律确认 `x` 在 `styles.css` 的 `:root` 里定义;`designTokens.test.ts` 已有幽灵 token 门禁(无 fallback 类必须为 0)。
+16. **单槽位 ref 必须证明「同一时刻只有一个」才安全**(0.8.0 实测:`dirtyGuardResolveRef` 被「truncate 成功后遍历所有同表 tab 重载」并发覆盖 → 前一个 promise 永不落定、该 tab 重载静默消失)。凡「存 resolve / 存回滚闭包」的单槽位,先找有没有 `for (const t of ws.tabs)` / 批量循环调用点;有则必须走 `workspace/singleModalGate.ts` 的占用语义。
+17. **改全局并发/状态逻辑前先跑 `e2e:ui`(Meta+w)、`e2e:keys`(K1-K9)、`check:bundle` 三者**(v0.7.5 教训:改 `App.tsx` 的 `e.target` 放行使 ⌘W 关标签失效、且 `.cm-editor` 字面量打进首屏触发 E2 红线)。首屏文件里**连选择器字符串都算泄漏**;识别 CodeMirror 焦点用 `isContentEditable`,不引类名字面量。
 
 ## 五、⛔ 禁止操作
 
@@ -125,7 +129,8 @@ npm run dist             # 打包 mac arm64(.dmg + .app)
 npm run dist:dir         # 只打 .app + ad-hoc 外层重签 + 签名自检(本机安装用)
 ```
 
-- `npm run verify` 的链条（19 道）：typecheck → **gen:actions --check** → test → check:bundle → e2e(冒烟) → e2e:transfer → e2e:ssh → e2e:grid → **e2e:idle → e2e:keepalive → e2e:idle:ui** → e2e:ui → verify:toolbar-fit → e2e:script:data → e2e:affected → e2e:conflict → e2e:script:ui → e2e:app → e2e:keys。`verify:installed` / `verify:traffic-lights` **不在链里**（前者需要已安装的 .app，后者要像素比对），改对应代码后单独跑。
+- `npm run verify` 的链条（20 道）：typecheck → **gen:actions --check** → test → check:bundle → e2e(冒烟) → e2e:transfer → e2e:ssh → e2e:grid → **e2e:idle → e2e:keepalive → e2e:idle:ui** → e2e:ui → verify:toolbar-fit → e2e:script:data → e2e:affected → e2e:conflict → **e2e:ddl:real** → e2e:script:ui → e2e:app → e2e:keys。`verify:installed` / `verify:traffic-lights` **不在链里**（前者需要已安装的 .app，后者要像素比对），改对应代码后单独跑。
+- `e2e:ddl:real`（0.8.0 新增）是对象生命周期入口的**真库回放**：复用 `renderer/src/database/ddlTemplates.ts` 的**生产同款构造器**（不另写 SQL），在 fixture 真库执行后回读 `information_schema` 验证结构真变，每个入口带反例断言。**fixture 不在时记 skipped，不算通过**。改任何 DDL 模板/弹窗必跑它——`e2e:ui` 那一层的 demo 后端恒 `committed:true`，**测不出 SQL 拼错**。
 - e2e 脚本(playwright-core)复用本机 Chromium:`~/Library/Caches/ms-playwright/`,缺失时设 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`。
 - e2e:smoke / e2e:app / e2e:idle 需要本地 MySQL fixture;纯 UI 改动跑 `e2e:ui` 即可,数据层改动跑对应专项。
 
