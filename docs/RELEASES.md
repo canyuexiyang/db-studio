@@ -11,8 +11,8 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 | 版本 | 日期 | 主题 | 门禁 | 分发 |
 |---|---|---|---|---|
 | **0.8.0** | 2026-11-11 | **验收可信度与规模（P1 八项 + 新功能）**：① **12 个对象生命周期入口的真库回放**（新建 `e2e-ddl-real.mjs`，复用生产同款构造器 + `information_schema` 回读，取代此前 demo「恒 `committed:true`」的假绿）；② `loadTable` 并发闸门（`RequestGate` 按 tabId 请求序号，防慢的旧响应覆盖新条件结果）；③ 结果预算改**全量真实累计**（修「前 200 行采样在「前窄后宽」时低估 → 64MiB 预算形同虚设」）；④ EXPLAIN 补 `running` 守卫（三个执行入口统一并发口径）；⑤ 保存提交在飞标记（防二次提交撞 BUSY 报假「连接忙」）；⑥ 面板宽度**联合**约束（sidebar+detail ≤ 窗口宽−320，修「最小窗口下工作区被压成 0 且宽度已持久化」）；⑦ 门禁假绿修复（补**幽灵 token** 门禁：无 fallback 引用未定义变量=0、带 fallback 棘轮基线 3，证伪验证通过）；⑧ 配置损坏不再静默清空（备份 `.bak.<时间戳>` + 留痕 + UI 如实告知）+ 主进程生产环境落盘日志；⑨ **powerMonitor 休眠释放连接**（suspend 释放含 SSH 隧道 / resume 不主动重连 / 锁屏不动）；⑩ 脏改动守卫**单槽位并发收口**（修「truncate 后批量重载时前一个标签页重载静默消失 + Promise 泄漏」） | **2537 单测（99 文件）** / verify **exit 0（20 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / **ddl:real 22** / script:ui 18 / 首屏 597.2 KB | ✅ GitHub Release + 本机安装 |
-| **0.7.5** | 2026-11-10 | **一致性与上手（P2 八类收口）**：focus ring 两处失效修复 + `--sql-*` 三处一致性门禁 + `font:` 简写字号收敛、6 处字符图标换 SVG、⌘⇧F/⌘S/F12 键位冲突收口 + 全局键 `e.target` 放行、SQL 编辑器 ⌘F 查找面板、空态区分「筛选无结果/空表」+ 无列占位、idle 断开横幅、删除死引导卡、命令面板补 2 条不可达 IPC 入口、README 4 处事实偏差校正 | **2487 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ GitHub Release + 本机安装 |
-| **0.7.4** | 2026-11-10 | **缺陷清零（审计 P0 十项全量落地）**：冲突整批回滚仍记历史「成功」、schemaRefresh 吞异常致 DDL 假成功、删表/批量删表回执被刷新提示盖掉、空表无法录入第一行、取消查询假成功、手输密码重放丢结果、字节预算截断被静默、schemaGet 失败把已握手连接标 failed、五个模态无 Esc、剪贴板失败仍报「已复制」；顺带修门禁可信度最小子集（skipped 显式计数 / headless 帧率不恒真 / 900px 视口断言）与两处 e2e flaky | **2480 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ GitHub Release + 本机安装 |
+| **0.7.5** | 2026-11-10 | **一致性与上手（P2 八类收口）**：focus ring 两处失效修复 + `--sql-*` 三处一致性门禁 + `font:` 简写字号收敛、6 处字符图标换 SVG、⌘⇧F/⌘S/F12 键位冲突收口 + 全局键 `e.target` 放行、SQL 编辑器 ⌘F 查找面板、空态区分「筛选无结果/空表」+ 无列占位、idle 断开横幅、删除死引导卡、命令面板补 2 条不可达 IPC 入口、README 4 处事实偏差校正 | **2487 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ 随 v0.8.0 发布（未单独打 tag） |
+| **0.7.4** | 2026-11-10 | **缺陷清零（审计 P0 十项全量落地）**：冲突整批回滚仍记历史「成功」、schemaRefresh 吞异常致 DDL 假成功、删表/批量删表回执被刷新提示盖掉、空表无法录入第一行、取消查询假成功、手输密码重放丢结果、字节预算截断被静默、schemaGet 失败把已握手连接标 failed、五个模态无 Esc、剪贴板失败仍报「已复制」；顺带修门禁可信度最小子集（skipped 显式计数 / headless 帧率不恒真 / 900px 视口断言）与两处 e2e flaky | **2480 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ 随 v0.8.0 发布（未单独打 tag） |
 | **0.7.3** | 2026-10-29 | **交互完备性缺口全量落地（12 项 / 11 子任务）**：库生命周期闭环（新建/删除数据库）、视图等 5 类对象新建模板 + 视图改定义、重命名表 + F2 语义修正（⇧F2 进设计器等）、清单右键与 ↑↓ 巡行、整库导出、测试连接、标签关闭左侧/全部、表维护（优化/分析/检查）、复制表（结构 / 结构+数据）、分组管理（空分组可见可删）；顺带修 **5 个真缺陷**（4 个门禁抓出：删库/维护回执被刷新 toast 盖掉、设计器是唯一退不出的模态、DDL 后树不定位、demo 后端恒返回同一份结构导致假绿；1 个发版准备时抓出：**`publish.owner` 拼错 → 应用内检查更新永远 404**） | **2473 单测（92 文件）** / verify exit 0（**19 道**）/ e2e:ui **476** / e2e:app **72** / e2e:keys 47 / e2e 74 / e2e:transfer 36 / e2e:ssh 18 / e2e:idle 16 / e2e:keepalive 17 / e2e:idle:ui 4 / verify:toolbar-fit 22 / e2e:script:data 10 / e2e:affected 21 / e2e:conflict 17 / e2e:script:ui 18 | ✅ GitHub Release + 本机安装 |
 | **0.7.2** | 2026-10-28 | **审计改进清单全量落地（22 项 / 27 子任务）**：P0 六项收口（导出范围 / 全树搜索 / 标签滚进视野+固定加 / confirmDanger 目标连接 / 生产库第三层保护 / BLOB-Date 口径）、键盘与标签三件套、筛选器 ⌘⇧F+去 window.prompt+条件停用、设计器失败重拉 diff、多语句续跑、**连接配置导入/导出（白名单剥密文）**、字号/间距 token 收敛 | **2391 单测（89 文件）** / verify exit 0（**19 道**）/ e2e:ui **434** / e2e:app **72** / e2e:keys 47 / e2e 74 / e2e:transfer 36 / e2e:affected 22 / e2e:keepalive 18 / e2e:conflict 18 / e2e:ssh 18 / e2e:idle 17 / verify:toolbar-fit 23 / e2e:idle:ui 5 | ✅ GitHub Release + 本机安装 |
 | **0.7.1** | 2026-10-28 | **真机反馈 4 项修复**：非 SELECT 执行结果显示影响行数 / 工具栏任何宽度按钮尺寸一致 / 中间清单单击选中·双击打开 / 连接有效期 10→120 分钟 + 心跳保活 | 2273 单测（81 文件）/ verify exit 0（**19 道**）/ e2e:ui 377 / e2e:app 60 / e2e:keys 47 / e2e:affected 21 / e2e:keepalive 17 / verify:toolbar-fit 22 | ✅ GitHub Release + 本机安装 |
@@ -101,8 +101,22 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 - `#47` 的「驱动已把全量 rows 读进内存、峰值不受控」**未做** —— 需 mysql2 流式驱动改造（触碰驱动抽象层），本版只修了截断判据。峰值风险仍在。
 - `#51` 只补了幽灵 token 盲区；`e2e:perf` / `transfer:ui` 纳链属**覆盖度增强**（有 flaky 风险），未纳入；`verify:installed` / `verify:traffic-lights` 仍需已安装 .app，随打包单独跑。
 - `⌘C/⌘V/⌘A/⌘Z` 与系统 role 优先级、原生菜单 accelerator、真实 IME 组合期 —— 仍是 `e2e:keys` K7 段人工终验项。
-- **本版未发 GitHub Release**（打包与发布留待统一进行）；`verify:installed` 待已安装 .app 后补跑。
 - 连接数上限（与 powerMonitor 同单 #78 的另一半）**未做**：未确认产品口径（上限值/超限行为如何告知），不擅自定。
+
+**发版结果（2026-11-11）**
+
+Release <https://github.com/canyuexiyang/db-studio/releases/tag/v0.8.0>，tag `v0.8.0` → `caad157`。
+
+| 资产 | 大小 | 校验 |
+|---|---|---|
+| `DB-Studio-0.8.0-arm64.dmg` | 155,565,353 B | 远程下载后 sha256 = 本地 `16327995e412…9a66c` ✓ |
+| `latest-mac.yml` | 347 B | `version: 0.8.0`，`sha512` 与 dmg 匹配、`size` 一致 |
+
+本机安装：`ditto` 装 `/Applications/DB Studio.app`（版本 0.8.0），`verify:installed` **22/22**、`verify:traffic-lights` **6/6**。
+
+⚠️ **只打了 v0.8.0 一个 tag，未拆 v0.7.4 / v0.7.5**：三版代码在同一次提交（`20a7685`）里落地，没有各自独立的提交点，无法为它们打指向不同提交的 tag。Release 说明中已写明本版同时代表前两版成果。
+⚠️ **`latest-mac.yml` 是手工补的**：`npm run dist` 因缺 token 在发布阶段中断，没生成这个文件（本地残留的还是 0.7.3 内容）。已按 dmg 实际 sha512/size 重建后上传，否则应用内「检查更新」会拿旧元数据、永远发现不了新版本。
+⚠️ **dmg 改名后才上传**：EB 产物名带空格（`DB Studio-0.8.0-arm64.dmg`），而 updater 按 `latest-mac.yml` 里的 `url` 找文件 —— 原名上传会 404。已复制为连字符版 `DB-Studio-0.8.0-arm64.dmg` 再传（sha256 与原文件一致）。
 
 ---
 
