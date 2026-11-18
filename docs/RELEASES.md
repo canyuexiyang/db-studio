@@ -72,6 +72,7 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 - `npm run verify` **exit 0（20 道）**；单测 **2537（99 文件）**；首屏 **598.5 KB / 1465 KB**；`check:bundle` 9/9。
 - `e2e:ui` **480/480**、`e2e:app` **72/72**、`e2e:keys` **47/47**（另 4 项按脚本要求人工）、`verify:toolbar-fit` **22/22**。
 - 其余 e2e：smoke 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / script:data 10 / affected 21 / conflict 17 / ddl:real 22 / script:ui 18。
+- GitHub Release：<https://github.com/canyuexiyang/db-studio/releases/tag/v0.9.0>
 - 产物：`apps/desktop/release/DB Studio-0.9.0-arm64.dmg` 与 `DB-Studio-0.9.0-arm64.dmg`（同内容）。
 - SHA256：`349b866fcd330569bcaf2738ee41da65d6aafccc6e99a8d94bd58769021be5f7`。
 - 旧 `/Applications/DB Studio.app`（0.9.2 内部迭代）备份到 `apps/desktop/release/.prev-installed-0.9.2.app`，安装 0.9.0 并移除 quarantine；`codesign --verify` 通过。

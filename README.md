@@ -20,11 +20,11 @@ Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · �
 ---
 
 <details open>
-<summary><b>界面预览（浅色 / 深色，真机截图）</b></summary>
+<summary><b>界面预览（浅色 / 深色，真实渲染截图）</b></summary>
 
 | 浅色 | 深色 |
 |---|---|
-| <img src="docs/design-mockups/shots-installed/1-main-light.png" width="440" alt="主界面浅色"> | <img src="docs/design-mockups/shots-installed/2-main-dark.png" width="440" alt="主界面深色"> |
+| <img src="docs/design-mockups/verify-light.png" width="440" alt="主界面浅色"> | <img src="docs/design-mockups/verify-dark.png" width="440" alt="主界面深色"> |
 
 更多截图（连接编辑器、库表树、右键菜单、SQL 编辑器、网格交互）见 [`docs/design-mockups/`](docs/design-mockups/)；最新的 DSH 风格四界面案例见 [`docs/design-mockups/dsh-ui-case/`](docs/design-mockups/dsh-ui-case/)。
 
