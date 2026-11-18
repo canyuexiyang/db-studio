@@ -4,7 +4,10 @@
 > 规范与样张冲突时以规范为准；规范对样张做了两处适配：浅色强调色 `#3B6EDC`（可读性）、
 > 标准行高 32px（样张展示的是宽松档 36px）。生产图标沿用现有 24 viewBox，不复制样张的 1.5 细线。
 
-> 只读样张：**没有改 `apps/` / `packages/` 里的任何代码**，也没有新增依赖。
+> **落地状态（2026-11-18）**：本案例的设计语言已随 **v0.9.0** 落到生产；生产截图见
+> [`verify-light.png`](../verify-light.png) / [`verify-dark.png`](../verify-dark.png)。
+>
+> 本目录仍是只读样张：没有改 `apps/` / `packages/` 里的代码，也没有新增依赖。
 > 全部文件都在本目录下，打开 `index.html` 即可看。
 
 ![工作台 · DSH 风格案例](shots/workspace-light.png)
@@ -26,9 +29,6 @@
 
 深色版：[overview-dark.png](shots/overview-dark.png)。单张原图在 `shots/`。
 
-和现状的对照（左边是现有 `verify-light.png`，右边是这次案例）：
-
-![同一张表的两种 UI 语言](shots/compare-workspace-light.png)
 
 ## 重要前提：DSH 没有可 import 的“官方组件库”
 
