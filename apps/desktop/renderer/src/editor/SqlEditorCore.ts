@@ -52,18 +52,17 @@ import { search, searchKeymap } from '@codemirror/search';
 import { tags as t } from '@lezer/highlight';
 import { buildCompletions, wordBefore, contextTableOf, statementAt } from '@dbstudio/core-sql-editor';
 //
-// 🔴 为什么这四个子入口走【相对路径】而不是 `@dbstudio/core-sql-editor/formatter`
-//    这样的别名：本仓库根 `vitest.config.ts` 的 `resolve.alias` **实际没有生效**
-//    —— 实测连只存在于 alias 里的 `@dbstudio/shared-ipc` 都解析不到
-//    （`Cannot find package`），也就是说 `npx vitest run` 跑起来时根本没带上
-//    alias，单侧里任何子入口 import 都会炸。
-//    Vite **构建**侧的 alias（vite.config.ts 用数组 + exact 正则）是好的，
-//    但那管不到 vitest。相对路径与 alias 最终指向同一个文件，产物与 chunk
-//    划分完全一致（check:bundle 已验证），且 tsc / vite build / vitest 三处
-//    都能解析。等 vitest 的 alias 修好后，把下面四行改回子入口即可，无需改别的。
-import { formatSql } from '../../../../../packages/core-sql-editor/src/formatter.ts';
-import { lintSql, type LintContext, type SqlDiagnostic } from '../../../../../packages/core-sql-editor/src/lint.ts';
-import { tokenizeSql, type SqlToken } from '../../../../../packages/core-sql-editor/src/tokens.ts';
+// 这四个子入口统一走 `@dbstudio/core-sql-editor/*` 别名，与 renderer 的
+// tsconfig / vite 配置口径一致。
+// 🔴 曾经这里写死相对路径，理由是「vitest alias 不生效」。真实原因是
+//    vitest.config.ts 把主入口排在了 5 个子入口之前（对象 alias 是前缀匹配
+//    + 插入顺序），子入口被拼成 `.../src/index.ts/formatter` → Cannot find package。
+//    顺序修正后已用探针在旧配置上复现红、新配置上转绿，见
+//    packages/core-sql-editor/src/index.test.ts 的常驻回归断言。
+//    `@dbstudio/shared-ipc` 本就只定义在 renderer 两处配置里，不是同一问题。
+import { formatSql } from '@dbstudio/core-sql-editor/formatter';
+import { lintSql, type LintContext, type SqlDiagnostic } from '@dbstudio/core-sql-editor/lint';
+import { tokenizeSql, type SqlToken } from '@dbstudio/core-sql-editor/tokens';
 import {
   aliasMap,
   columnFacts,
@@ -72,7 +71,7 @@ import {
   rankTables,
   tableFactsHover,
   type ColumnFact,
-} from '../../../../../packages/core-sql-editor/src/hints.ts';
+} from '@dbstudio/core-sql-editor/hints';
 import type { ColumnMeta, DatabaseMeta, TableMeta } from '@dbstudio/core-schema-cache';
 
 export interface SqlEditorOptions {

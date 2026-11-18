@@ -50,7 +50,7 @@ export function inferToastTone(text: string): ToastTone {
  * 只让**成功**类自动消失：错误信息是排查现场的唯一线索，自动消失等于把证据藏起来。
  */
 export function toastAutoDismissMs(tone: ToastTone): number | null {
-  return tone === 'ok' ? 3500 : null;
+  return tone === 'ok' ? 3200 : null;
 }
 
 /** 语气 → 样式类名（样式在 styles.css 的 .banner 段） */

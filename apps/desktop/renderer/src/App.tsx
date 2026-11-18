@@ -5452,11 +5452,11 @@ if (table.kind === 'table') {
           )}
           <button onClick={() => setPaletteOpen(true)}>
             <IconSearch size={11} />
-            命令面板 ⌘K
+            命令面板 <kbd className="kbd">⌘K</kbd>
           </button>
           <button onClick={openSql} title="新建查询标签（⌘T）" data-testid="btn-new-query">
             <IconTerminal size={11} />
-            查询 ⌘T
+            查询 <kbd className="kbd">⌘T</kbd>
           </button>
           {openTab ? (
             <>
@@ -5608,9 +5608,9 @@ if (table.kind === 'table') {
             onChange={(e) => setRowHeightMode(e.target.value as RowHeightMode)}
             title="行高"
           >
-            <option value="compact">紧凑 24px</option>
-            <option value="standard">标准 28px</option>
-            <option value="loose">宽松 32px</option>
+            <option value="compact">紧凑 28px</option>
+            <option value="standard">标准 32px</option>
+            <option value="loose">宽松 36px</option>
           </select>
           <select
             value={themeMode}

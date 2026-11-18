@@ -88,7 +88,7 @@ extraResources:
   # Electron 弹错误对话框、应用假死——P2-2 实测踩坑）
   - { from: node_modules/node-sql-parser, to: node_modules/node-sql-parser }
   - { from: node_modules/big-integer, to: node_modules/big-integer }
-  - { from: node_modules/@types/pegjs, to: node_modules/@types/pegjs }
+  # @types/pegjs 只有 index.d.ts（编译期声明），运行时无用，勿再 copy 进包。
   # T45 应用内检查更新：主进程 `await import('electron-updater')` 动态加载。
   # 它不在根 dependencies（依赖收集器不打包 workspace 外的 hoist 包），
   # 且**打包产物里缺它就是真缺**：判据 `hasUpdateConfig()` 为 true 之后

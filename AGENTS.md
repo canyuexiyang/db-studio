@@ -18,7 +18,8 @@
   - 根 `tsconfig.json`:packages + 主进程(pure Node lib,无 DOM);
   - `apps/desktop/renderer/tsconfig.json`:渲染层(DOM lib + JSX)。
   两边分别 typecheck,由 `npm run typecheck` 串联。**🔴 改动后必须全绿再交付**。
-- `@dbstudio/*` 别名在**三处同步维护**:根 tsconfig `paths`、`vitest.config.ts` alias、renderer tsconfig。新增包时三处都要加,漏一处会出现「typecheck 过但测试 fallback 到 node_modules」的隐性错位。
+- `@dbstudio/*` 别名在**四处同步维护**:根 tsconfig `paths`、`vitest.config.ts` alias、renderer tsconfig、renderer vite.config.ts;另 main 进程 vite.config.ts 有一份子集(主进程实际用到的包)。新增包时四处都要加,漏一处会出现「typecheck 过但测试 fallback 到 node_modules」的隐性错位。
+  - 🔴 对象形式 alias(根 tsconfig `paths` 除外、vitest、vite.main)是**前缀匹配 + 插入顺序**,子入口必须排在同名主入口**之前**;renderer vite.config.ts 用数组 + `$` 正则,天然无此问题。改别名后必须跑 `npm test`(仅 typecheck 发现不了)。
 - **测试文件与源码同目录**(`*.test.ts`),`npm test` 跑 `packages/**` + `apps/**`。核心包不依赖 Electron,纯逻辑可离线单测——新逻辑优先做成这种形态。
 
 ## 三、架构地图
@@ -54,6 +55,7 @@ docs/                      文档资产(索引见 docs/README.md,改功能前先
   engineering/             技术评审 / SPIKE 实测报告 / 专项决策实测(代码注释按 §章节号引用)
   research/                竞品调研与功能路线图(唯一维护版本)
   devlog/                  每日开发日志(只追加,真机踩坑都在这)
+  design/                  设计系统 + UI/前端风格规范(唯一执行手册)
   design-mockups/          设计稿 + 双主题真实截图 + 截图脚本
   archive/                 已被取代的历史文档(⚠️ 不要据此实现功能)
 ```
@@ -94,23 +96,22 @@ docs/                      文档资产(索引见 docs/README.md,改功能前先
 
 ## 六、📋 样式与 UI 规范
 
-**风格基调:Apple 原生精修**(2026-09-26 用户拍板,方案 E)。macOS 原生应用质感,克制、柔和、信息密度不降。设计示意图与截图工具在 `docs/design-mockups/`。
+**风格基调：中性精修**（2026-11-17 定稿）。macOS 原生质感 + DSH 案例验证过的中性灰层级、横向分隔、反色主按钮与浮层尺度；不再使用第二套配色、字体、图标或组件库。
+> 0.8.0 存量代码仍是迁移前基线；新代码按手册目标值，存量按手册 §13 分批迁移，不视为第二种风格。
 
-**色彩 token(styles.css `:root`,改色只动这里):**
+> **唯一执行手册：[`docs/design/UI-STYLE-GUIDE.md`](docs/design/UI-STYLE-GUIDE.md)**。token 值、组件尺寸、状态公式、布局断点、命名、代码组织、迁移与 PR 清单都在那里。
+> 本节只保留不可违反的底线；与手册冲突时，视觉/组件细则按手册，红线、窗口与工程约束仍按本文件。
 
-| Token | 浅色 | 深色 |
-|---|---|---|
-| --bg / --bg-alt / --bg-panel | `#FFFFFF` / `#F5F5F7` / `#F6F6F8` | `#1C1C1E` / `#262628` / `#212123` |
-| --text / --text-dim | `#1D1D1F` / `#86868B` | `#F5F5F7` / `#98989D` |
-| --accent | `#007AFF` | `#0A84FF` |
-| 状态 --ok / --warn / --error-bar | `#248A3D` / `#B25E00` / `#FF3B30` | `#30D158` / `#FFD60A` / `#FF453A` |
+**必须遵守：**
 
-**必须遵守:**
-- 主题唯一权威是 `data-theme` 属性(light|dark),`public/theme-boot.js` 在首帧 CSS 前同步写入防闪烁;媒体查询块只是 JS 失效兜底。**🔴 两处深色调色板必须保持一致,改一处必改另一处**。
-- 字体锁定:`-apple-system / "SF Pro Text" / "PingFang SC"`,数据/数字列 `"SF Mono"`/Menlo + `tabular-nums`。不引入外部字体。(注:此为 Apple 品牌约束,经用户确认覆盖 ui-design-guide 的默认字体禁令)
-- 组件既有模式,新代码跟随:按钮 12px + `white-space: nowrap` + 禁止收缩;说明文本 `ellipsis` 可收缩;hover 用灰底浮起(不是边框变蓝);focus 用蓝色柔光 ring(`--focus-ring`);树选中蓝底白字;网格斑马纹靠 `DataGrid.tsx` 里按**全局行号**加的 `.alt` 类(不要改成 nth-child,虚拟滚动会错位);`.env-tag` 永不收缩。
-- 图标一律从 `ui/icons.tsx` 引;颜色跟 `currentColor`,主题切换零成本。
-- 改样式后的验证动作:`npm run e2e:ui`(行为回归)+ `node docs/design-mockups/verify.mjs`(浅/深双主题真实截图,人工比对)。
+- 主题唯一权威是 `data-theme` 属性（light|dark），`public/theme-boot.js` 在首帧 CSS 前同步写入防闪烁；媒体查询块只是 JS 失效兜底。**🔴 两处深色调色板必须保持一致，改一处必改另一处**。
+- 字体锁定：`-apple-system / "SF Pro Text" / "PingFang SC"`，数据/数字列 `"SF Mono"`/Menlo + `tabular-nums`。不引入外部字体。
+- 生产只用 `styles.css` 的 token：不新增第二套 `--dsw-*`、不写死颜色、不新增 CSS Modules/组件库/图标库。DSH 案例的 `--dsw-*` 和多 CSS 文件结构只作为设计参考，**不得原样复制进渲染层**。
+- 主按钮反色（浅色黑底白字 / 深色白底黑字），一个视图只有一个主按钮；蓝色只给链接、focus 与选中条。
+- 组件既有模式继续跟随：按钮 12px + `white-space: nowrap` + 禁止收缩；说明文本 `ellipsis` 可收缩；hover 灰底浮起（不是边框变蓝）；focus 用蓝色柔光 ring（`--focus-ring`）；`.env-tag` 永不收缩。
+- 树选中是灰底 + 主文字（不是蓝底白字）；网格只画横向分隔线，不用斑马纹/竖线；行高 28/32/36 三档，默认 32。细则见手册 §7.5 / §7.8。
+- 图标一律从 `ui/icons.tsx` 引；颜色跟 `currentColor`，主题切换零成本。禁止 emoji 当图标。
+- 改样式后的验证动作：`npm run e2e:ui`（行为回归）+ `node docs/design-mockups/verify.mjs`（浅/深双主题真实截图，人工比对）；改 token 另跑 `npm test`（designTokens 守卫）。
 
 ## 七、命令速查
 

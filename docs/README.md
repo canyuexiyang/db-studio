@@ -1,6 +1,6 @@
 # 文档索引
 
-DB Studio 的全部文档资产。**日常开发只需要看 `AGENTS.md` + 本索引指向的三类文档**：需求看 `product/`，技术决策看 `engineering/`，踩坑记录看 `devlog/`。
+DB Studio 的全部文档资产。**日常开发只需要看 `AGENTS.md` + 本索引指向的四类文档**：需求看 `product/`，设计/样式看 `design/`，技术决策看 `engineering/`，踩坑记录看 `devlog/`。
 
 ```
 docs/
@@ -9,6 +9,7 @@ docs/
 ├── engineering/   技术评审、Spike 实测报告、专项决策实测
 ├── research/      竞品调研与功能路线图（唯一维护版本）
 ├── devlog/        每日开发日志（按日期，只追加不改写）
+├── design/        设计系统、样式与前端开发规范（唯一执行手册）
 ├── design-mockups/ 设计示意图、双主题真实截图、截图脚本
 └── archive/       已被取代的历史文档（留档，不要据此实现）
 ```
@@ -81,11 +82,18 @@ docs/
 | [`devlog/DEV-PROGRESS-2026-10-29-0.7.3.md`](devlog/DEV-PROGRESS-2026-10-29-0.7.3.md) | **0.7.3 交互完备性落地**：e2e 抓出的 4 个既有真缺陷（回执被刷新 toast 盖掉 / 设计器是唯一退不出的模态 / 建库后树不定位 / demo 后端恒返回同一份结构导致假绿）、`node-sql-parser` 不认 `DROP DATABASE` 与四类维护命令的守卫层缺口（兜底边界怎么收窄）、三个「看着像测试问题其实是设计问题」的坑（行内入口位置、树断言要按 key、菜单项要精确等值） |
 | [`devlog/DEV-PROGRESS-2026-11-11.md`](devlog/DEV-PROGRESS-2026-11-11.md) | **0.7.4 / 0.7.5 / 0.8.0 三版连发**：`e2e:ddl:real` 为什么是最大的一件事（demo 恒真导致 12 个 DDL 入口只有假绿验收）、6 个自己造成又被门禁抓到的坑（`var(--radius-sm)` 不存在致 CSS 静默失效 / 交通灯第二次环境假红 / 维护命令对坏表不抛异常 / 脏守卫单槽位致重载静默消失 / React 依赖数组漏 state / 结果预算采样外推）、`dist --publish never` 仍因缺 token 返回 exit 1（产物正常） |
 
+## design/ — 设计系统与前端规范
+
+| 文档 | 说明 | 状态 |
+|---|---|---|
+| [`design/UI-STYLE-GUIDE.md`](design/UI-STYLE-GUIDE.md) | **UI 与前端开发唯一执行手册**：设计原则、token（颜色/字体/间距/圆角/阴影）、字体排版、布局断点、组件与页面样式、交互与状态、代码组织、命名、格式、文档要求、迁移与 PR 清单。区分 🔴 强制 / 🟡 建议 / ⚪ 参考。视觉基线是 `design-mockups/dsh-ui-case/` | ✅ 生效（v1.0） |
+
 ## design-mockups/ — 设计资产
 
-- `style-*.png` / `style-preview.html`：视觉风格探索稿（Apple / Cream / Mist / WeChat / Dark-Tech 五方案对比，最终拍板「Apple 原生精修」方案 E）
+- `style-*.png` / `style-preview.html`：历史视觉风格探索稿（Apple / Cream / Mist / WeChat / Dark-Tech 五方案）。**现行基线见 `design/UI-STYLE-GUIDE.md` 与 `dsh-ui-case/`**
 - `verify-*.png`：浅/深双主题真实截图（主界面、连接编辑器、SQL 脚本、网格行号列/右键菜单/横向滚动/行选中）
 - `verify.mjs` / `verify-darktech.mjs` / `shot.mjs`：截图脚本（改样式后跑，人工比对双主题）
+- `dsh-ui-case/`：DSH 风格四界面案例（工作台 / SQL 查询 / 命令面板 / 写入预演），含 `README.md`、可交互 `index.html` 与 8 张双主题截图。**是视觉基线，不是生产代码**
 - `shots-installed/`：安装后真机截图（由 `scripts/capture-installed.mjs` 生成）
 
 ## archive/ — 历史留档（⚠️ 不要据此实现功能）
@@ -103,9 +111,9 @@ docs/
 
 ## 阅读顺序建议
 
-**新人上手**：根目录 [`README.md`](../README.md)（架构与构建）→ [`AGENTS.md`](../AGENTS.md)（红线与规范）→ `product/PRD-v1.0.md` §一~§三（定位与非目标）。
+**新人上手**：根目录 [`README.md`](../README.md)（架构与构建）→ [`AGENTS.md`](../AGENTS.md)（红线与规范）→ [`design/UI-STYLE-GUIDE.md`](design/UI-STYLE-GUIDE.md)（UI/前端执行手册）→ `product/PRD-v1.0.md` §一~§三（定位与非目标）。
 
-**改功能前**：`product/PRD-v1.0.md` 对应 §6.x 小节 → `research/竞品调研与功能路线图.md` §3.5（确认不在「明确不抄」清单里）→ 相关 `devlog/`。
+**改界面/样式前**：`design/UI-STYLE-GUIDE.md` + `design-mockups/dsh-ui-case/`，再查 `product/PRD-v1.0.md` 对应 §6.x 小节 → `research/竞品调研与功能路线图.md` §3.5（确认不在「明确不抄」清单里）→ 相关 `devlog/`。
 
 **做技术决策前**：`engineering/TECH-REVIEW-v1.0.md` + `engineering/SPIKE-REPORT-v1.0.md` —— 大量决策（E1~E4、D1~D7、R 系）有实测依据，**推翻决策要给实测数据**。
 

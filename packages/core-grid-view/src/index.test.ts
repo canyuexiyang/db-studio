@@ -26,15 +26,15 @@ import {
 } from './index.js';
 
 describe('行高三档', () => {
-  it('紧凑/标准/宽松 = 24/28/32', () => {
-    expect(ROW_HEIGHTS).toEqual({ compact: 24, standard: 28, loose: 32 });
-    expect(rowHeightPx('compact')).toBe(24);
-    expect(rowHeightPx('standard')).toBe(28);
-    expect(rowHeightPx('loose')).toBe(32);
+  it('紧凑/标准/宽松 = 28/32/36', () => {
+    expect(ROW_HEIGHTS).toEqual({ compact: 28, standard: 32, loose: 36 });
+    expect(rowHeightPx('compact')).toBe(28);
+    expect(rowHeightPx('standard')).toBe(32);
+    expect(rowHeightPx('loose')).toBe(36);
   });
 
   it('未知档位回落到标准，不抛异常', () => {
-    expect(rowHeightPx('weird' as never)).toBe(28);
+    expect(rowHeightPx('weird' as never)).toBe(32);
   });
 });
 

@@ -167,7 +167,7 @@ try {
      */
     const h = m.heights[0] ?? 0;
     ok(`${width}px：按钮是单行高度（折行会让 button 长高）`, h >= 24 && h <= 28,
-      `实测 ${h}px（令牌 26px；折行时实测可达 83/121px）`);
+      `实测 ${h}px（令牌 28px；折行时实测可达 83/121px）`);
 
     ok(`${width}px：按钮内容没有被裁切（无 overflow）`, m.wraps.length === 0,
       m.wraps.length ? `溢出：${m.wraps.map((w) => `${w.id}(+${w.over}px)`).join(', ')}` : 'scrollHeight === clientHeight');

@@ -12,7 +12,7 @@ export interface LayoutState {
 }
 
 export const SIDEBAR_W = { min: 180, max: 520, def: 240 };
-export const DETAIL_W = { min: 220, max: 600, def: 280 };
+export const DETAIL_W = { min: 220, max: 600, def: 320 };
 
 /**
  * 中间工作区必须永远留得住的最小宽度。

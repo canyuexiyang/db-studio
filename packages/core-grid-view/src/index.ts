@@ -14,9 +14,9 @@
 // ---------- 行高 ----------
 
 export const ROW_HEIGHTS = {
-  compact: 24,
-  standard: 28,
-  loose: 32,
+  compact: 28,
+  standard: 32,
+  loose: 36,
 } as const;
 
 export type RowHeightMode = keyof typeof ROW_HEIGHTS;

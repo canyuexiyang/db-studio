@@ -199,6 +199,20 @@ export function CommandPalette({
             </li>
           ) : null}
         </ul>
+        <div className="palette-foot">
+          <span className="hint">
+            <kbd className="kbd">↑</kbd>
+            <kbd className="kbd">↓</kbd> 选择
+          </span>
+          <span className="hint">
+            <kbd className="kbd">↵</kbd> 执行
+          </span>
+          <span className="hint">
+            <kbd className="kbd">esc</kbd> 关闭
+          </span>
+          <span className="spacer" />
+          <span className="hint">输入 : 命令 · @ 历史</span>
+        </div>
       </div>
     </div>
   );

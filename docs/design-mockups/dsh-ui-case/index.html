@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DB Studio · DSH 风格界面案例</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="components.css">
+<link rel="stylesheet" href="screens.css">
+</head>
+<body>
+
+<!-- 图标 sprite：全部内联 SVG，不引外部字体/图标包 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-chevron" viewBox="0 0 16 16"><path d="m6 3.8 4.2 4.2L6 12.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 16 16"><path d="m3.8 6 4.2 4.2L12.2 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-up" viewBox="0 0 16 16"><path d="M3.8 10 8 5.8 12.2 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-database" viewBox="0 0 16 16"><ellipse cx="8" cy="3.8" rx="5" ry="2.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3 3.8v8.4c0 1.2 2.2 2.1 5 2.1s5-.9 5-2.1V3.8M3 8c0 1.2 2.2 2.1 5 2.1s5-.9 5-2.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-table" viewBox="0 0 16 16"><rect x="2.2" y="3" width="11.6" height="10" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.2 6.4h11.6M6.3 6.4V13M9.7 6.4V13" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="i-view" viewBox="0 0 16 16"><path d="M1.8 8s2.3-4 6.2-4 6.2 4 6.2 4-2.3 4-6.2 4-6.2-4-6.2-4Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 16 16"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="m5 6 2 2-2 2M8.6 10.2h2.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.2 10.2 3.2 3.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.2v9.6M3.2 8h9.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13.1 7.2a5.3 5.3 0 1 1-1.4-3.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.4 2.6v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-save" viewBox="0 0 16 16"><path d="M3 2.8h7.2L13 5.6v7.6H3V2.8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.2 2.8v3.4h5V2.8M5.3 13.2V9.5h5.4v3.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 16 16"><path d="M2.4 3.2h11.2L9.4 8.4v4l-2.8 1.2v-5.2L2.4 3.2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="i-export" viewBox="0 0 16 16"><path d="M8 2.2v7.1M5 6.4l3 3 3-3M2.7 13.2h10.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-import" viewBox="0 0 16 16"><path d="M8 10.2V3.1M5 6.2l3-3 3 3M2.7 13.2h10.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.2" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.8" cy="8" r="1" fill="currentColor"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="m4.2 4.2 7.6 7.6M11.8 4.2l-7.6 7.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="m3.4 8.3 3 3 6.2-6.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3.4" y="6.9" width="9.2" height="6.2" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.3 6.9V5.2a2.7 2.7 0 0 1 5.4 0v1.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-key" viewBox="0 0 16 16"><circle cx="5.4" cy="10.6" r="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="m7.4 8.6 5.2-5.2M10.4 5.6l1.4 1.4M11.8 4.2l1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.4" y="5.4" width="7.6" height="8.2" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.6 5.4V3.8a1.2 1.2 0 0 0-1.2-1.2H4.2A1.2 1.2 0 0 0 3 3.8v5.2a1.2 1.2 0 0 0 1.2 1.2h1.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 16 16"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.4 2.8v10.4" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.7" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.6v1.4M8 13v1.4M1.6 8h1.4M13 8h1.4M3.5 3.5l1 1M11.5 11.5l1 1M12.5 3.5l-1 1M4.5 11.5l-1 1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.2 9.6A5.7 5.7 0 0 1 6.4 2.8a5.7 5.7 0 1 0 6.8 6.8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.8v1.5M8 12.7v1.5M2.2 5.1l1.3.7M12.5 10.2l1.3.7M2.2 10.9l1.3-.7M12.5 5.8l1.3-.7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.4v9.2L12.4 8 5 3.4Z" fill="currentColor"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 16 16"><rect x="4.3" y="4.3" width="7.4" height="7.4" rx="1" fill="currentColor"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.1v4M8 4.9v.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2.2 4.3a1.2 1.2 0 0 1 1.2-1.2h3l1.4 1.6h4.8a1.2 1.2 0 0 1 1.2 1.2v6.3a1.2 1.2 0 0 1-1.2 1.2H3.4a1.2 1.2 0 0 1-1.2-1.2V4.3Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="i-braces" viewBox="0 0 16 16"><path d="M6.1 2.4c-1.6 0-1.8 1-1.8 2.4 0 1.5-.6 2-1.8 2 1.2 0 1.8.5 1.8 2 0 1.4.2 2.4 1.8 2.4M9.9 2.4c1.6 0 1.8 1 1.8 2.4 0 1.5.6 2 1.8 2-1.2 0-1.8.5-1.8 2 0 1.4-.2 2.4-1.8 2.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2.4 14 13H2L8 2.4Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.2v3.1M8 11.3v.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-history" viewBox="0 0 16 16"><path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8M2.3 2.8v3.1h3.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 5.2V8l2 1.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-external" viewBox="0 0 16 16"><path d="M9.4 2.8h3.8v3.8M13.2 2.8 7.8 8.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M12.2 9.6v3.1H3.3V3.8h3.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-columns" viewBox="0 0 16 16"><path d="M4 3v10M8 3v10M12 3v10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M2.4 6h3.2M6.4 10h3.2M10.4 6h3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-rows" viewBox="0 0 16 16"><path d="M2.6 5h10.8M2.6 8h10.8M2.6 11h10.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-wrap" viewBox="0 0 16 16"><path d="M2.6 4.2h10.8M2.6 8h7.2a2.2 2.2 0 0 1 0 4.4H7.4M7.4 10.4l1.8 2-1.8 2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 16 16"><path d="M3.2 8h9.6M9.4 4.6 12.8 8l-3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3.2 4.6h9.6M6.2 4.6V3.2h3.6v1.4M4.4 4.6l.6 8.2h6l.6-8.2M6.6 7v3.2M9.4 7v3.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-star" viewBox="0 0 16 16"><path d="m8 2.4 1.7 3.4 3.8.6-2.8 2.7.7 3.8L8 11.1l-3.4 1.8.7-3.8L2.5 6.4l3.8-.6L8 2.4Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 16 16"><rect x="2.4" y="2.4" width="4.4" height="4.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="9.2" y="2.4" width="4.4" height="4.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="2.4" y="9.2" width="4.4" height="4.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="9.2" y="9.2" width="4.4" height="4.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="i-function" viewBox="0 0 16 16"><path d="M6.6 13.2c1.7 0 2.2-1 2.6-2.8l1.4-6c.4-1.8 1-2.6 2.3-2.6M4.2 6.2h5.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<!-- 演示控制条：不属于产品 UI；?clean=1 时隐藏 -->
+<div class="demo-bar" id="demo-bar" role="group" aria-label="案例界面切换">
+  <span class="demo-label">DSH UI 案例</span>
+  <button type="button" data-demo-screen="workspace" class="is-active" title="快捷键 1">1 工作台</button>
+  <button type="button" data-demo-screen="query" title="快捷键 2">2 SQL 查询</button>
+  <button type="button" data-demo-screen="palette" title="快捷键 3">3 命令面板</button>
+  <button type="button" data-demo-screen="preview" title="快捷键 4">4 写入预演</button>
+  <span class="demo-sep"></span>
+  <button type="button" id="demo-theme" title="快捷键 T"><span id="demo-theme-label">深色</span></button>
+</div>
+
+<div class="app" id="app" data-screen="workspace">
+
+  <!-- ── 左侧：连接与结构树 ───────────────────────────────────────────── -->
+  <aside class="rail">
+    <div class="rail-head">
+      <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="brand">
+        <span class="brand-mark">DB</span>
+        <span class="brand-name">DB Studio</span>
+        <span class="brand-ver">0.8.0</span>
+      </div>
+    </div>
+
+    <div class="rail-search">
+      <label class="search" aria-label="搜索连接或表">
+        <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="tree-search" type="search" placeholder="搜索连接或表" autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+
+    <div class="rail-section-head">
+      <span class="rail-label">连接</span>
+      <span class="spacer"></span>
+      <div class="rail-actions-inline">
+        <button class="icon-btn is-sm" type="button" data-act="refresh-schema" title="刷新结构：重建表/视图清单" aria-label="刷新结构">
+          <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-refresh"/></svg>
+        </button>
+        <button class="icon-btn is-sm" type="button" data-act="new-connection" title="新建连接" aria-label="新建连接">
+          <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-plus"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="rail-scroll">
+      <div id="tree" role="tree" aria-label="数据库对象树"></div>
+    </div>
+
+    <div class="rail-foot">
+      <span class="rail-health"><i class="dot"></i><span id="rail-health-text">2 个连接 · 8 个活动会话</span></span>
+      <div class="rail-foot-actions">
+        <button class="icon-btn is-sm" type="button" id="btn-theme" title="切换深浅色（T）" aria-label="切换深浅色">
+          <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-moon"/></svg>
+        </button>
+        <button class="icon-btn is-sm" type="button" data-act="settings" title="偏好设置" aria-label="偏好设置">
+          <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-settings"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── 中间：标签 + 工具栏 + 内容 ──────────────────────────────────── -->
+  <main class="main">
+    <div class="tabstrip">
+      <div class="tabs" id="tabs" role="tablist" aria-label="打开的标签"></div>
+      <div class="tabstrip-actions">
+        <button class="icon-btn is-sm" type="button" data-act="browse" title="浏览对象（⌘⇧B）" aria-label="浏览对象">
+          <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-grid"/></svg>
+        </button>
+        <button class="icon-btn is-sm" type="button" data-act="new-query" title="新建查询标签（⌘T）" aria-label="新建查询标签">
+          <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-plus"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="toolbar" id="toolbar"></div>
+    <div class="filterbar" id="filterbar" hidden></div>
+
+    <!-- 工作台 -->
+    <section class="pane" id="pane-workspace" aria-label="数据工作台">
+      <div class="readonly-banner" id="readonly-banner" hidden>
+        <svg class="ic" width="12" height="12" aria-hidden="true"><use href="#i-lock"/></svg>
+        <span>视图只读：不能编辑、导入或删除行。双击视图可另开一个只读结果标签。</span>
+      </div>
+
+      <div class="grid-toolbar">
+        <div class="gt-search">
+          <svg class="ic" width="13" height="13" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="grid-search" type="search" placeholder="在结果中查找" autocomplete="off" spellcheck="false">
+          <span class="kbd">⌘F</span>
+        </div>
+        <button class="grid-tool-btn" type="button" data-act="copy-row" title="复制选中行（TSV）" aria-label="复制选中行">
+          <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-copy"/></svg>
+        </button>
+        <button class="grid-tool-btn" type="button" data-act="columns" title="显示/隐藏列" aria-label="显示或隐藏列">
+          <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-columns"/></svg>
+        </button>
+        <span class="gt-sep"></span>
+        <select class="gt-select" id="grid-rowheight" title="行高（只影响当前表格）" aria-label="行高">
+          <option value="28">紧凑 28</option>
+          <option value="32">标准 32</option>
+          <option value="36" selected>宽松 36</option>
+        </select>
+        <input class="gt-jump" id="grid-jump" type="text" inputmode="numeric" placeholder="行号" title="输入行号后回车跳转" aria-label="跳转到行">
+        <span class="gt-meta" id="gt-meta"></span>
+      </div>
+
+      <div class="grid-wrap" id="grid-wrap" tabindex="0" aria-label="数据网格"></div>
+      <div class="grid-foot" id="grid-foot"></div>
+    </section>
+
+    <!-- SQL 查询 -->
+    <section class="pane" id="pane-query" aria-label="SQL 查询" hidden>
+      <div class="editor">
+        <div class="editor-banner">
+          <svg class="ic file-ico" width="12" height="12" aria-hidden="true"><use href="#i-terminal"/></svg>
+          <span class="file-name">查询 1.sql</span>
+          <span class="file-state">已保存 · order_db</span>
+          <span class="spacer"></span>
+          <span class="editor-meta">SQL · 14 行 · UTF-8</span>
+        </div>
+        <div class="editor-body" id="editor-body">
+          <div class="code-line"><span class="ln">1</span><code><span class="tok-c">-- 近 7 天已支付订单：按用户汇总，用于对账</span></code></div>
+          <div class="code-line"><span class="ln">2</span><code><span class="tok-k">SELECT</span></code></div>
+          <div class="code-line"><span class="ln">3</span><code>  o.id,</code></div>
+          <div class="code-line"><span class="ln">4</span><code>  o.order_no,</code></div>
+          <div class="code-line"><span class="ln">5</span><code>  u.name <span class="tok-k">AS</span> user_name,</code></div>
+          <div class="code-line"><span class="ln">6</span><code>  o.amount,</code></div>
+          <div class="code-line"><span class="ln">7</span><code>  o.status,</code></div>
+          <div class="code-line"><span class="ln">8</span><code>  o.created_at</code></div>
+          <div class="code-line"><span class="ln">9</span><code><span class="tok-k">FROM</span> order_db.<span class="tok-t">`order`</span> <span class="tok-k">AS</span> o</code></div>
+          <div class="code-line"><span class="ln">10</span><code><span class="tok-k">JOIN</span> order_db.<span class="tok-t">`user`</span> <span class="tok-k">AS</span> u <span class="tok-k">ON</span> u.id = o.user_id</code></div>
+          <div class="code-line is-active"><span class="ln">11</span><code><span class="tok-k">WHERE</span> o.status = <span class="tok-s">'paid'</span><span class="code-caret" aria-hidden="true"></span></code></div>
+          <div class="code-line"><span class="ln">12</span><code>  <span class="tok-k">AND</span> o.created_at &gt;= <span class="tok-fn">NOW</span>() - <span class="tok-k">INTERVAL</span> <span class="tok-n">7</span> <span class="tok-k">DAY</span></code></div>
+          <div class="code-line"><span class="ln">13</span><code><span class="tok-k">ORDER BY</span> o.created_at <span class="tok-k">DESC</span></code></div>
+          <div class="code-line"><span class="ln">14</span><code><span class="tok-k">LIMIT</span> <span class="tok-n">200</span>;</code></div>
+        </div>
+      </div>
+
+      <div class="results">
+        <div class="result-tabs" id="result-tabs" role="tablist" aria-label="查询结果">
+          <button class="rtab is-active" type="button" data-result="result" role="tab" aria-selected="true">
+            <span>结果 1</span><span class="rtab-count">200</span>
+          </button>
+          <button class="rtab" type="button" data-result="explain" role="tab" aria-selected="false">
+            <span>执行计划</span>
+          </button>
+          <button class="rtab" type="button" data-result="history" role="tab" aria-selected="false">
+            <span>执行历史</span><span class="rtab-count">12</span>
+          </button>
+        </div>
+
+        <div class="result-message" id="result-message"></div>
+
+        <div class="result-body">
+          <div class="result-view" id="result-view-result">
+            <div class="result-grid-wrap" id="result-grid-wrap"></div>
+          </div>
+
+          <div class="result-view" id="result-view-explain" hidden>
+            <div class="explain-wrap">
+              <div class="explain-summary">
+                <svg class="ic" width="12" height="12" aria-hidden="true"><use href="#i-info"/></svg>
+                <span>命中 <b>2</b> 个索引</span>
+                <span>·</span>
+                <span>预估扫描 <b>1,284</b> 行</span>
+                <span>·</span>
+                <span>临时表 <b>无</b></span>
+                <span class="spacer"></span>
+                <span class="explain-badge">Using index condition</span>
+              </div>
+
+              <div class="explain-tree">
+                <div class="explain-node is-root">
+                  <div class="node-row">
+                    <span class="node-caret"><svg class="ic" width="10" height="10"><use href="#i-chevron-down"/></svg></span>
+                    <span class="node-op">Limit</span>
+                    <span class="node-cost">cost 0.00 · rows 200</span>
+                  </div>
+                  <div class="node-kids">
+                    <div class="explain-node">
+                      <div class="node-row">
+                        <span class="node-caret"><svg class="ic" width="10" height="10"><use href="#i-chevron-down"/></svg></span>
+                        <span class="node-op">Sort</span>
+                        <span class="explain-badge is-warn">filesort</span>
+                        <span class="node-cost">cost 120.4 · rows 200</span>
+                      </div>
+                      <div class="node-detail">按 o.created_at DESC 排序；结果集只有 200 行，filesort 在内存里完成。</div>
+                      <div class="node-kids">
+                        <div class="explain-node">
+                          <div class="node-row">
+                            <span class="node-caret"><svg class="ic" width="10" height="10"><use href="#i-chevron-down"/></svg></span>
+                            <span class="node-op">Nested loop inner join</span>
+                            <span class="node-cost">cost 118.2 · rows 200</span>
+                          </div>
+                          <div class="node-kids">
+                            <div class="explain-node">
+                              <div class="node-row">
+                                <span class="node-caret"></span>
+                                <span class="node-op">Index lookup on o</span>
+                                <span class="node-table">order</span>
+                                <span class="explain-badge">idx_status_created</span>
+                                <span class="node-cost">cost 48.1 · rows 1,284</span>
+                              </div>
+                              <div class="node-detail">o.status = 'paid' AND o.created_at &gt;= NOW() - INTERVAL 7 DAY</div>
+                            </div>
+                            <div class="explain-node">
+                              <div class="node-row">
+                                <span class="node-caret"></span>
+                                <span class="node-op">Single-row index lookup on u</span>
+                                <span class="node-table">user</span>
+                                <span class="explain-badge">PRIMARY</span>
+                                <span class="node-cost">cost 0.25 · rows 1</span>
+                              </div>
+                              <div class="node-detail">u.id = o.user_id</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="result-view" id="result-view-history" hidden>
+            <div class="history-list" id="history-list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 空态 -->
+    <section class="empty-pane" id="pane-empty" hidden>
+      <div class="empty-icon"><svg class="ic" width="22" height="22"><use href="#i-database"/></svg></div>
+      <h2>没有打开的标签</h2>
+      <p>从左侧结构树双击一张表，或者新建一个查询。所有标签都会保留滚动位置和未保存改动。</p>
+      <div class="empty-actions">
+        <button class="btn is-primary" type="button" data-act="new-query">新建查询</button>
+        <button class="btn is-ghost" type="button" data-act="browse">浏览对象</button>
+      </div>
+    </section>
+
+    <footer class="statusbar" id="statusbar"></footer>
+  </main>
+
+  <!-- ── 右侧：表详情 / 执行摘要 ────────────────────────────────────── -->
+  <aside class="detail" id="detail" aria-label="详情面板">
+    <div class="detail-rail">
+      <button class="icon-btn is-sm" type="button" id="btn-detail-expand" title="展开详情面板" aria-label="展开详情面板">
+        <svg class="ic" width="14" height="14"><use href="#i-chevron"/></svg>
+      </button>
+    </div>
+    <div class="detail-inner">
+      <div class="detail-head" id="detail-head"></div>
+      <div class="detail-body" id="detail-body"></div>
+    </div>
+  </aside>
+</div>
+
+<!-- ── 命令面板 ──────────────────────────────────────────────────────── -->
+<div class="overlay" id="palette-overlay" hidden>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="命令面板">
+    <div class="palette-search">
+      <svg class="ic" width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg>
+      <input id="palette-input" type="text" placeholder="搜索表、命令或历史（: 命令 · @ 历史）" autocomplete="off" spellcheck="false">
+      <span class="palette-mode" id="palette-mode">表</span>
+      <kbd class="kbd">esc</kbd>
+    </div>
+    <div class="palette-body" id="palette-body"></div>
+    <div class="palette-foot">
+      <span class="hint"><kbd class="kbd">↑</kbd><kbd class="kbd">↓</kbd> 选择</span>
+      <span class="hint"><kbd class="kbd">↵</kbd> 打开</span>
+      <span class="hint"><kbd class="kbd">esc</kbd> 关闭</span>
+      <span class="spacer"></span>
+      <span class="hint">输入 <b>: </b>命令 · <b>@</b> 历史</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── 写入预演 ──────────────────────────────────────────────────────── -->
+<div class="modal-mask" id="preview-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+    <div class="modal-head">
+      <div class="modal-title-wrap">
+        <h2 id="preview-title">提交前确认</h2>
+        <div class="modal-sub">order_db.order · 3 条语句 · 影响 3 行 · 保存预演不可跳过</div>
+      </div>
+      <span class="badge badge--err is-lg">生产环境</span>
+      <button class="icon-btn" type="button" id="preview-close" title="关闭（Esc）" aria-label="关闭">
+        <svg class="ic" width="14" height="14"><use href="#i-x"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <div class="risk-banner">
+        <span class="risk-ico"><svg class="ic" width="15" height="15"><use href="#i-alert"/></svg></span>
+        <div class="risk-text">
+          这是<strong>生产环境</strong>连接，且本批包含 <strong>DELETE</strong>（执行后无法自动恢复）。
+          请逐条核对下方 SQL 原文，并输入表名 <span class="mono">order</span> 才能提交。
+        </div>
+      </div>
+
+      <div class="section-label">改动摘要 <span class="meta">改前 → 改后</span><span class="spacer"></span><span class="meta">3 处</span></div>
+      <table class="summary-table">
+        <colgroup><col style="width:74px"><col style="width:112px"><col style="width:82px"><col></colgroup>
+        <thead>
+          <tr><th>对象</th><th>行定位</th><th>字段</th><th>改前 → 改后</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>order</td>
+            <td class="cell-mono">id = 1042</td>
+            <td class="cell-mono">amount</td>
+            <td><span class="old mono">1,180.00</span><span class="arrow">→</span><span class="new mono">1,280.00</span></td>
+          </tr>
+          <tr>
+            <td>order</td>
+            <td class="cell-mono">id = 1039</td>
+            <td class="cell-mono">status</td>
+            <td><span class="old mono">'paid'</span><span class="arrow">→</span><span class="new mono">'refunded'</span></td>
+          </tr>
+          <tr>
+            <td>order</td>
+            <td class="cell-mono">id = 1038</td>
+            <td class="cell-mono">（整行）</td>
+            <td><span class="del">删除该行</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="section-label">SQL 原文 <span class="meta">参数已内联展示 · 只读</span><span class="spacer"></span><span class="meta">3 条</span></div>
+      <div class="sql-list">
+        <div class="sql-stmt">
+          <div class="sql-stmt-head"><span class="stmt-type">UPDATE</span><span>order · 1 行</span><span class="spacer"></span><span class="fx-tag">id = 1042</span></div>
+          <pre><span class="sql-line"><span class="ln">1</span><span><span class="tok-k">UPDATE</span> <span class="tok-t">`order`</span></span></span>
+<span class="sql-line"><span class="ln">2</span><span><span class="tok-k">SET</span> <span class="tok-t">`amount`</span> = <span class="tok-n">1280.00</span></span></span>
+<span class="sql-line"><span class="ln">3</span><span><span class="tok-k">WHERE</span> <span class="tok-t">`id`</span> = <span class="tok-n">1042</span>;</span></span></pre>
+        </div>
+        <div class="sql-stmt">
+          <div class="sql-stmt-head"><span class="stmt-type">UPDATE</span><span>order · 1 行</span><span class="spacer"></span><span class="fx-tag">id = 1039</span></div>
+          <pre><span class="sql-line"><span class="ln">1</span><span><span class="tok-k">UPDATE</span> <span class="tok-t">`order`</span></span></span>
+<span class="sql-line"><span class="ln">2</span><span><span class="tok-k">SET</span> <span class="tok-t">`status`</span> = <span class="tok-s">'refunded'</span></span></span>
+<span class="sql-line"><span class="ln">3</span><span><span class="tok-k">WHERE</span> <span class="tok-t">`id`</span> = <span class="tok-n">1039</span>;</span></span></pre>
+        </div>
+        <div class="sql-stmt">
+          <div class="sql-stmt-head"><span class="stmt-type">DELETE</span><span>order · 1 行 · 不可恢复</span><span class="spacer"></span><span class="fx-tag">id = 1038</span></div>
+          <pre><span class="sql-line"><span class="ln">1</span><span><span class="tok-k">DELETE FROM</span> <span class="tok-t">`order`</span></span></span>
+<span class="sql-line"><span class="ln">2</span><span><span class="tok-k">WHERE</span> <span class="tok-t">`id`</span> = <span class="tok-n">1038</span>;</span></span></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <div class="gate-field">
+        <label for="gate-input">确认表名</label>
+        <input class="input is-mono" id="gate-input" type="text" placeholder="order" autocomplete="off" spellcheck="false">
+        <span class="gate-hint" id="gate-hint">输入 order 后才能提交</span>
+      </div>
+      <span class="spacer"></span>
+      <span class="esc-hint">Esc 取消</span>
+      <button class="btn is-ghost" type="button" id="preview-cancel">取消</button>
+      <button class="btn is-danger" type="button" id="preview-confirm" disabled>确认提交 3 条</button>
+    </div>
+  </div>
+</div>
+
+<div class="popover-scrim" id="popover-scrim" hidden></div>
+<div id="menu-root"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

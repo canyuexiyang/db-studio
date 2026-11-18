@@ -726,7 +726,7 @@ export function TreeView({
               else rowEls.current.delete(n.key);
             }}
             className={`tree-row${activeKey === n.key ? ' active' : ''}${selection.has(n.key) ? ' selected' : ''}`}
-            style={{ paddingLeft: 6 + f.depth * 14 }}
+            style={{ paddingLeft: 8 + f.depth * 15 }}
             data-testid={n.kind === 'connection' ? `tree-conn-${n.connection?.name ?? ''}` : undefined}
             /**
              * v0.6.0：稳定的定位钩子。
@@ -880,7 +880,7 @@ onSelectNode?.(n);
           {addDbAfter.has(vi) && onNewDatabase ? (
             <div
               className="tree-adddb"
-              style={{ paddingLeft: 6 + addDbAfter.get(vi)!.depth * 14 }}
+              style={{ paddingLeft: 8 + addDbAfter.get(vi)!.depth * 15 }}
               data-node-kind="add-database"
               data-conn-id={addDbAfter.get(vi)!.connId}
               title="新建数据库（连接右键里也有同一条）"
@@ -900,7 +900,7 @@ onSelectNode?.(n);
             <div
               key={h.key}
               className="tree-row tree-col-hit"
-              style={{ paddingLeft: 6 }}
+              style={{ paddingLeft: 8 }}
               title={`点击打开 ${h.path}.${h.tableName}`}
               onClick={() => {
                 if (h.database && h.tableName) onOpenTableRef?.(h.database, h.tableName);

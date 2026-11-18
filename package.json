@@ -1,6 +1,6 @@
 {
   "name": "db-studio",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "DB Studio - 反应最快的 macOS 数据库查看器",
   "repository": {
@@ -73,6 +73,7 @@
     "electron": "44.4.3",
     "electron-builder": "^26.15.3",
     "electron-window-glass": "^1.0.0",
+    "js-yaml": "^4.3.2",
     "mysql2": "^3.24.4",
     "playwright-core": "^1.63.0",
     "react": "^19.3.0",

@@ -1104,6 +1104,13 @@ interface GlassProvider {
 
 ## 九、键盘快捷键（全 Cmd，不用 Ctrl）
 
+> ⚠️ **本节是 v1.0 时期的设计稿，键位已在后续版本多次调整，禁止据此实现或验收。**
+> 唯一的权威事实表是 `docs/product/ACTION-CATALOG-自动生成.md`（由 `npm run gen:actions`
+> 从 `apps/desktop/src/shared/action-catalog.ts` 生成，`gen:actions --check` 纳入门禁）。
+> 已知与现状不符的例子：`⌘R` 现归「执行全部」（刷新表结构让位到 `⇧⌘R`）；
+> `⇧⌘F` 是筛选、格式化是 `⌘I`；执行选中是 `⌘⏎`、EXPLAIN 是 `⇧⌘X`；
+> 下表的 `⌘L` / `⇧⌘H` / `⇧⌘Z` 无对应实装动作。保留原表仅作历史追溯。
+
 Navicat 大量使用 Ctrl 且快捷键数量少，是被吐槽的点。我们全面对齐 macOS 习惯。
 
 ### 9.1 全局

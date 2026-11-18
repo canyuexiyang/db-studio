@@ -234,7 +234,7 @@ export function SavePreviewModal({
           ) : null}
           <button onClick={onCancel}>取消</button>
           <button
-            className="primary"
+            className={needsGate ? 'primary danger-primary' : 'primary'}
             onClick={onConfirm}
             disabled={statements.length === 0 || !gateMatched}
             data-testid="preview-confirm"

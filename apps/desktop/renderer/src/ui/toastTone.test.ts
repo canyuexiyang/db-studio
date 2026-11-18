@@ -28,7 +28,7 @@ describe('inferToastTone', () => {
 
 describe('toastAutoDismissMs', () => {
   it('只有 ok 自动消失；error 常驻（自动消失等于藏起证据）', () => {
-    expect(toastAutoDismissMs('ok')).toBe(3500);
+    expect(toastAutoDismissMs('ok')).toBe(3200);
     expect(toastAutoDismissMs('warn')).toBeNull();
     expect(toastAutoDismissMs('error')).toBeNull();
   });

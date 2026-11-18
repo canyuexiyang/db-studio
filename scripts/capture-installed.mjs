@@ -11,7 +11,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'docs/design-mockups/shots-installed');
 mkdirSync(OUT, { recursive: true });
 
-const BIN = '/Applications/DB Studio.app/Contents/MacOS/DB Studio';
+// 与 verify-installed.mjs / e2e-transfer-ui.mjs 等保持一致，允许指向别处安装的应用。
+const BIN = process.env.DB_STUDIO_INSTALLED_APP
+  ? join(process.env.DB_STUDIO_INSTALLED_APP, 'Contents/MacOS/DB Studio')
+  : '/Applications/DB Studio.app/Contents/MacOS/DB Studio';
 const electron = (await import('playwright-core')).electron ?? (await import('playwright-core'))._electron;
 
 const childEnv = { ...process.env };

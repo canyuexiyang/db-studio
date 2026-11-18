@@ -531,3 +531,21 @@ export function IconCloseAll({ size = 12 }: IconProps) {
     </svg>
   );
 }
+
+/** 查询工具栏横向滚动：左箭头 */
+export function IconChevronLeft({ size = 12 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** 查询工具栏横向滚动：右箭头 */
+export function IconChevronRight({ size = 12 }: IconProps) {
+  return (
+    <svg className="ic" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

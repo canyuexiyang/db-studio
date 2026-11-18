@@ -22,6 +22,14 @@ import {
   type ExplainNode,
 } from './index.js';
 import type { DatabaseMeta } from '@dbstudio/core-schema-cache';
+// 🔴 别名回归守卫（不新增 it，避免改变 0.8.0 的 2537 基线）：
+// 对象形式 alias 是前缀匹配 + 插入顺序，子入口若排在同主入口之后会被拼成
+// `.../src/index.ts/facts` → 解析失败。曾在 vitest.config.ts 真实爆红，
+// 故把四个关键解析点钉在既有断言里，改坏顺序立刻红。
+import { formatCount as formatCountFromSubpath } from '@dbstudio/core-sql-editor/facts';
+import { lintSql } from '@dbstudio/core-sql-editor/lint';
+import { snippetNameTooLongMessage } from '@dbstudio/core-history/snippet-name';
+import { guessMapping } from '@dbstudio/core-import';
 
 const DB: DatabaseMeta[] = [
   {
@@ -343,6 +351,11 @@ describe('formatCount', () => {
     expect(formatCount(null)).toBe('—');
     expect(formatCount(undefined)).toBe('—');
     expect(formatCount(NaN)).toBe('—');
+    // 子入口别名解析（同一函数经两条路径导入必须一致）
+    expect(formatCountFromSubpath(12_450_000)).toBe(formatCount(12_450_000));
+    expect(typeof lintSql).toBe('function');
+    expect(typeof snippetNameTooLongMessage).toBe('function');
+    expect(typeof guessMapping).toBe('function');
   });
 });
 

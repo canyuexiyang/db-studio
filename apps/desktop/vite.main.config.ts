@@ -38,6 +38,10 @@ const CORE_ALIAS: Record<string, string> = {
   '@dbstudio/core-export': resolve(root, 'packages/core-export/src/index.ts'),
   '@dbstudio/core-grid-view': resolve(root, 'packages/core-grid-view/src/index.ts'),
   '@dbstudio/core-tree-view': resolve(root, 'packages/core-tree-view/src/index.ts'),
+  // 主进程实际 import 的两个包（transfer-manager / tunnel-manager），
+  // 此前漏配只能靠 node_modules workspace 软链兜底，违反本文件头的口径。
+  '@dbstudio/core-import': resolve(root, 'packages/core-import/src/index.ts'),
+  '@dbstudio/core-ssh-tunnel': resolve(root, 'packages/core-ssh-tunnel/src/index.ts'),
 };
 
 /**

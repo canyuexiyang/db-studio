@@ -39,9 +39,9 @@ export interface PreferencesPanelProps {
 }
 
 const ROW_HEIGHT_LABELS: Record<PrefsRowHeight, string> = {
-  compact: '紧凑 24px',
-  standard: '标准 28px',
-  loose: '宽松 32px',
+  compact: '紧凑 28px',
+  standard: '标准 32px',
+  loose: '宽松 36px',
 };
 
 export function PreferencesPanel({

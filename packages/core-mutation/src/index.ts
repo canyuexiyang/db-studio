@@ -1094,59 +1094,14 @@ export function previewSql(plan: MutationPlan): string[] {
 // ---------- T25：「使用默认值」的两种语境 ----------
 
 /**
- * MySQL 的「默认值」在 INSERT 与 UPDATE 里是**两件不同的事**，
- * 本项目在代码注释、菜单文案、保存预览三处都必须说清，否则用户会按错的那个预期去理解：
+ * 「使用默认值」的编辑构造与文案已统一到渲染层：
+ * apps/desktop/renderer/src/grid/editors/valueEditorModel.ts
+ * （DEFAULT_KEYWORD / defaultKeywordEdit / DEFAULT 菜单项），这里曾有一份
+ * 零引用的重复实现，两份常量与说明会各自漂移，故删除。
  *
- * | 语境 | 写法 | 语义 | 列没有 DEFAULT 子句时 |
- * |---|---|---|---|
- * | INSERT（新增行） | **不把该列写进 INSERT 列表** | 由数据库按 DEFAULT 填 | 取隐式默认值（可空 → NULL；NOT NULL → 严格模式报错） |
- * | UPDATE（已有行） | `SET col = DEFAULT` | 显式把该列重设为 DEFAULT | 同上，**不是**写成字符串 `'DEFAULT'` |
- *
- * 🔴 最常见的误解是「把默认值当成某个值写进去」——
- *    默认值是**列的约束**，只有数据库知道它现在是什么；
- *    渲染层拿不到、也不该缓存它（缓存会与 DDL 漂移）。
+ * 领域语义备忘（两份实现都遵守）：
+ * - INSERT 新行：不把该列写进 INSERT 列表，由数据库填默认值；显式 NULL 会覆盖 DEFAULT。
+ * - UPDATE 已有行：`SET col = DEFAULT`（SQL 关键字），不是字符串字面量 `'DEFAULT'`。
+ * - 默认值是列的约束，渲染层拿不到也不该缓存（缓存会与 DDL 漂移）。
  */
-export const DEFAULT_KEYWORD = 'DEFAULT';
-
-/** 一段文本是不是「使用默认值」关键字（去空白、大小写不敏感） */
-export function isDefaultKeyword(v: unknown): boolean {
-  return typeof v === 'string' && v.trim().toUpperCase() === DEFAULT_KEYWORD;
-}
-
-export interface DefaultKeywordEdit {
-  column: string;
-  /** 固定 `DEFAULT` —— **SQL 关键字**，不是字符串字面量 */
-  newValue: string;
-  /**
-   * 固定 `sql-expr`：这是渲染层目前**唯一**能一路带到 SQL 文本、且被
-   * `buildUpdate` 原样嵌入的值形态（见 V10 的通道说明）。
-   * 于是 `newValue='DEFAULT' + valueKind='sql-expr'` ⇒ `SET col = DEFAULT`；
-   * 而 `newValue='DEFAULT' + valueKind='literal'` ⇒ `SET col = ?` 且参数是字符串 'DEFAULT'。
-   * 两者产出的 SQL **完全不同**，单测里互为对照。
-   */
-  valueKind: EditValueKind;
-}
-
-/**
- * 构造「使用默认值」的编辑片段（**UPDATE 语境专用**）。
- *
- * ⚠️ INSERT 语境**不要**调它 —— 新增行要让数据库填默认值，
- *    做法是**把该列从 INSERT 列表里去掉**（即清除该格的待提交值），
- *    写成 `VALUES (DEFAULT)` 虽然语法合法，但它依赖"该列确实有 DEFAULT"，
- *    且会让「这一格到底是空着还是填了」在本地状态里无法区分。
- */
-export function defaultValueEdit(column: string): DefaultKeywordEdit {
-  return { column, newValue: DEFAULT_KEYWORD, valueKind: 'sql-expr' };
-}
-
-/**
- * 人类可读的语境说明（菜单 title / 提示条直接用）。
- *
- * @param isInsertRow 行号 ≥ 已加载行数 = 待插入的新行
- */
-export function describeDefaultKeyword(isInsertRow: boolean): string {
-  return isInsertRow
-    ? '新行：把该列从 INSERT 列表里去掉，由数据库填默认值（不是写 NULL —— 显式 NULL 会覆盖 DEFAULT）'
-    : '已有行：UPDATE … SET 该列 = DEFAULT（MySQL 关键字，不是字符串 \'DEFAULT\'）';
-}
 

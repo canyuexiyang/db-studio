@@ -34,14 +34,16 @@ export default defineConfig({
       '@dbstudio/core-filter': resolve(__dirname, 'packages/core-filter/src/index.ts'),
       '@dbstudio/core-tree-view': resolve(__dirname, 'packages/core-tree-view/src/index.ts'),
       '@dbstudio/core-command-palette': resolve(__dirname, 'packages/core-command-palette/src/index.ts'),
-      '@dbstudio/core-sql-editor': resolve(__dirname, 'packages/core-sql-editor/src/index.ts'),
+      // 🔴 五个子入口必须排在主入口 @dbstudio/core-sql-editor 之前（同上前缀匹配规则）。
       '@dbstudio/core-sql-editor/facts': resolve(__dirname, 'packages/core-sql-editor/src/facts.ts'),
       '@dbstudio/core-sql-editor/tokens': resolve(__dirname, 'packages/core-sql-editor/src/tokens.ts'),
       '@dbstudio/core-sql-editor/formatter': resolve(__dirname, 'packages/core-sql-editor/src/formatter.ts'),
       '@dbstudio/core-sql-editor/lint': resolve(__dirname, 'packages/core-sql-editor/src/lint.ts'),
       '@dbstudio/core-sql-editor/hints': resolve(__dirname, 'packages/core-sql-editor/src/hints.ts'),
+      '@dbstudio/core-sql-editor': resolve(__dirname, 'packages/core-sql-editor/src/index.ts'),
       '@dbstudio/core-ssh-tunnel': resolve(__dirname, 'packages/core-ssh-tunnel/src/index.ts'),
       '@dbstudio/core-table-designer': resolve(__dirname, 'packages/core-table-designer/src/index.ts'),
+      '@dbstudio/core-import': resolve(__dirname, 'packages/core-import/src/index.ts'),
     },
   },
   test: {

@@ -38,7 +38,7 @@ import {
 import { DataGrid, type GridColumn } from '../grid/DataGrid';
 import type { GridSnapshotSource } from '../grid/exportSnapshot';
 import { useGridDataSource } from '../grid/useGridData';
-import { IconX, IconSave, IconExport, IconBraces, IconStarFilled, IconFolder, IconRun, IconStop, IconInfo, IconAlert, IconPin } from '../ui/icons';
+import { IconX, IconSave, IconExport, IconBraces, IconStarFilled, IconFolder, IconRun, IconStop, IconInfo, IconAlert, IconPin, IconChevronLeft, IconChevronRight } from '../ui/icons';
 // T33：值查看器**只调用不改**（detail/ 归别的并行任务）
 import { CellValueModal } from '../detail/CellValueModal';
 // T33：结果网格取值的纯逻辑（值与原字节一致 + 回调装配）
@@ -383,8 +383,11 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<SqlEditorHandle | null>(null);
   const queryIdRef = useRef<string | null>(null);
+  /** 查询工具栏横向滚动容器（0.9.0：单行 + 左右滑动） */
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
 
   const [coreLoading, setCoreLoading] = useState(true);
+  const [toolbarScroll, setToolbarScroll] = useState({ left: false, right: false });
   const [running, setRunning] = useState(false);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [elapsedTick, setElapsedTick] = useState(0);
@@ -530,6 +533,58 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
   const scope = useMemo(() => executionScopeLegend(selChars), [selChars]);
   /** T29：目标连接与环境徽标 */
   const connTarget = useMemo(() => describeConnectionTarget(connections, connId), [connections, connId]);
+
+  // ---------- 0.9.0：查询工具栏单行横向滚动 ----------
+  /**
+   * 控件多且都要在，单行不换行；用左右箭头 + 触控板横向滑动查看。
+   * 所有控件 `flex: 0 0 auto`，徽标不再被压成灰块；工具栏高度保持 44。
+   */
+  const refreshToolbarScroll = useCallback(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const next = {
+      left: max > 1 && el.scrollLeft > 1,
+      right: max > 1 && el.scrollLeft < max - 1,
+    };
+    setToolbarScroll((prev) =>
+      prev.left === next.left && prev.right === next.right ? prev : next,
+    );
+  }, []);
+
+  const scrollToolbar = useCallback((direction: -1 | 1) => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const step = Math.max(200, Math.round(el.clientWidth * 0.6));
+    el.scrollBy({ left: direction * step, behavior: 'smooth' });
+  }, []);
+
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    refreshToolbarScroll();
+    const ro = new ResizeObserver(refreshToolbarScroll);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [refreshToolbarScroll]);
+
+  // 徽标/按钮文案变化（保存文件→保存文件 *、连接目标、只读标记）会改变 scrollWidth
+  useEffect(() => {
+    const id = requestAnimationFrame(refreshToolbarScroll);
+    return () => cancelAnimationFrame(id);
+  }, [
+    refreshToolbarScroll,
+    fileState,
+    fileDirty,
+    running,
+    props.readOnlyConn,
+    databases.length,
+    scope.hint,
+    connTarget.name,
+    connTarget.environment,
+  ]);
+
+  const toolbarHasOverflow = toolbarScroll.left || toolbarScroll.right;
 
   // ---------- B3 草稿自动保存（debounce 后写 localStorage） ----------
   // 定时器与待写内容放 ref：草稿是副作用，不该牵动 React 渲染
@@ -1326,167 +1381,199 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
 
   return (
     <div className="sql-editor">
-      <div className="sql-toolbar">
-        {/*
-         * 0.7.1（真机反馈 2）：按钮内部必须拆成 图标 / 文案 / 快捷键 三段 span。
-         *
-         * 旧实现把快捷键拼进可见文本（`{`▶ ${label} ⌘R`}`），CSS 无从单独控制它 ——
-         * 于是窄宽度下只能整体折行（用户截图里 9 个按钮全部两行）。
-         * 拆开之后三段可以按容器宽度独立降级：
-         *   ≥900px  图标+文案+快捷键 ／ 620–900px 丢快捷键 ／ <620px 只留图标。
-         *
-         * 🔴 图标用真 SVG 而不是 "▶" 字符：字符和 label 在同一个文本节点里，
-         *    没法在「只留图标」那一档单独活下来。
-         * 🔴 aria-label / title 在任何一档都必须齐 —— 图标态下它是唯一的语义来源。
-         */}
-        {/* T29：按钮 1 的可见文案必须自己说清是「全部」——
-            早先它只写「▶ 执行 ⌘R」，与右边那个「执行当前语句」并排时
-            用户根本分不出哪个跑全部（这正是 T29 要修的问题点）。
-            ⚠️ e2e 曾用精确文本 /^▶ 执行 ⌘R$/ 点它 —— 那等于让测试文案绑死 UI，
-            现已改为 data-testid（语义钩子），文案可以按需求自由演进。 */}
-        <button
-          className="primary"
-          onClick={() => void execute('all')}
-          disabled={running || !connId}
-          aria-label={`${scope.runAll}（${displayOf('sql-run-all') ?? '⌘R'}）`}
-          data-testid="sql-run-all"
-          title={`${scope.runAll}（${displayOf('sql-run-all') ?? '⌘R'}）：运行编辑器中的所有语句`}
-        >
-          <span className="sql-btn-icon"><IconRun size={11} /></span>
-          <span className="sql-btn-label">{scope.runAll}</span>
-          <span className="sql-btn-kbd">{displayOf('sql-run-all') ?? '⌘R'}</span>
-        </button>
-        {/* T29：⌘⏎ 的执行对象随选区实时改名 —— 无选区时叫「执行当前语句」，不叫「执行选中」 */}
-        <button
-          onClick={() => void execute('selection')}
-          disabled={running || !connId}
-          aria-label={`${scope.runSelection}（${displayOf('sql-run-selection') ?? '⌘⏎'}）`}
-          title={`${scope.runSelection}（${displayOf('sql-run-selection') ?? '⌘⏎'}）：有选区时执行选中内容，无选区时执行光标所在的那条语句`}
-          data-testid="sql-run-selection"
-        >
-          <span className="sql-btn-icon"><IconRun size={11} /></span>
-          <span className="sql-btn-label">{scope.runSelection}</span>
-          <span className="sql-btn-kbd">{displayOf('sql-run-selection') ?? '⌘⏎'}</span>
-        </button>
-        <button
-          onClick={() => void runExplain()}
-          disabled={running || !connId}
-          aria-label={`${scope.explain}（${displayOf('sql-explain') ?? '⇧⌘X'}）`}
-          title={`${scope.explain}（${displayOf('sql-explain') ?? '⇧⌘X'}）：不真正执行，只看优化器打算怎么跑`}
-          data-testid="sql-run-explain"
-        >
-          <span className="sql-btn-icon"><IconInfo size={11} /></span>
-          <span className="sql-btn-label">{scope.explain}</span>
-          <span className="sql-btn-kbd">{displayOf('sql-explain') ?? '⇧⌘X'}</span>
-        </button>
-        <button
-          onClick={() => void cancel()}
-          disabled={!running}
-          aria-label={`取消查询（${displayOf('sql-cancel') ?? '⌘.'}）`}
-          title={`取消查询（${displayOf('sql-cancel') ?? '⌘.'}）：向服务端发 KILL QUERY`}
-        >
-          <span className="sql-btn-icon"><IconStop size={11} /></span>
-          <span className="sql-btn-label">取消</span>
-          <span className="sql-btn-kbd">{displayOf('sql-cancel') ?? '⌘.'}</span>
-        </button>
-        {/* T41：SQL 文件三件套（打开 / 另存为 / 保存）—— 只操作文件，绝不执行 */}
-        <button onClick={openSqlFile} title={OPEN_BUTTON_TITLE} aria-label="打开 SQL 文件" data-testid="sql-open-file">
-          <IconFolder size={11} />
-          <span className="sql-btn-label">打开文件</span>
-        </button>
-        <button
-          onClick={() => void saveSqlFile({ saveAs: true })}
-          title={SAVE_AS_BUTTON_TITLE}
-          aria-label="另存为 SQL 文件"
-          data-testid="sql-save-as-file"
-        >
-          <span className="sql-btn-label">另存为</span>
-        </button>
-        <button
-          onClick={onSaveClick}
-          title={SAVE_BUTTON_TITLE}
-          aria-label={saveButtonLabel(fileState, fileDirty)}
-          data-testid="sql-save-file"
-        >
-          <IconSave size={11} />
-          <span className="sql-btn-label">{saveButtonLabel(fileState, fileDirty)}</span>
-        </button>
-        {/* T41：文件状态徽标 —— 草稿 / 文件名 / 未保存，让用户知道内容属于谁 */}
-        <span
-          className="sql-file-badge"
-          data-testid="sql-file-badge"
-          data-dirty={fileDirty ? '1' : '0'}
-          data-has-file={fileState.path !== null ? '1' : '0'}
-        >
-          {fileBadgeText(fileState, fileDirty)}
-        </span>
-        <button
-          onClick={openSnippetSave}
-          disabled={running}
-          title="把当前编辑器内容存为可复用的 SQL 片段"
-          aria-label="保存片段"
-          data-testid="sql-save-snippet"
-        >
-          <IconSave size={11} />
-          <span className="sql-btn-label">保存片段</span>
-        </button>
-        {/* S1：格式化。只在这里 / ⌘I / 右键菜单触发 —— 绝不在 change 时自动跑 */}
-        <button
-          onClick={() => handleRef.current?.format()}
-          title="格式化当前语句或选区（⌘I）"
-          aria-label="格式化（⌘I）"
-          data-testid="sql-format"
-        >
-          <IconBraces size={11} />
-          <span className="sql-btn-label">格式化</span>
-          <span className="sql-btn-kbd">⌘I</span>
-        </button>
-        {onDatabaseChange && databases.length > 0 ? (
-          <select
-            className="sql-db-select"
-            value={database ?? ''}
-            onChange={(e) => onDatabaseChange(e.target.value || null)}
-            title="查询目标库（左树选中库 / 表标签所在库；未指定库时请用库名限定表名）"
-            data-testid="sql-db-select"
+      <div className="sql-toolbar-shell">
+        {toolbarHasOverflow ? (
+          <button
+            type="button"
+            className="sql-scroll-btn"
+            onClick={() => scrollToolbar(-1)}
+            disabled={!toolbarScroll.left}
+            aria-label="向左滚动查询工具栏"
+            title="向左滚动"
           >
-            <option value="">（未指定库）</option>
-            {databases.map((d) => (
-              <option key={d.name} value={d.name}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+            <IconChevronLeft size={12} />
+          </button>
         ) : null}
-        {/* T29：⌘⏎ 此刻会执行哪个对象（全部在按钮 1，这里区分「当前语句 / 选中」） */}
-        <span
-          className="sql-exec-target"
-          data-testid="sql-exec-target"
-          title={`⌘⏎（${displayOf('sql-run-selection') ?? '⌘⏎'}）的执行对象；⌘R 执行全部语句`}
+        <div
+          className="sql-toolbar"
+          ref={toolbarRef}
+          onScroll={() => refreshToolbarScroll()}
+          onFocusCapture={(e) => {
+            const el = toolbarRef.current;
+            const target = e.target as HTMLElement;
+            if (!el || !el.contains(target)) return;
+            const box = el.getBoundingClientRect();
+            const r = target.getBoundingClientRect();
+            const pad = 8;
+            if (r.left < box.left + pad) el.scrollLeft -= box.left + pad - r.left;
+            else if (r.right > box.right - pad) el.scrollLeft += r.right - (box.right - pad);
+          }}
+          onWheel={(e) => {
+            if (!e.shiftKey) return;
+            const el = toolbarRef.current;
+            if (!el || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+            e.preventDefault();
+            el.scrollLeft += e.deltaY;
+          }}
         >
-          {`执行对象：${scope.hint}`}
-        </span>
-        {/* T29：这条 SQL 会发往哪个连接、哪个环境 —— 生产环境用红底突出 */}
-        <span
-          className="sql-conn-target"
-          data-testid="sql-conn-target"
-          data-production={connTarget.production ? '1' : '0'}
-          title={
-            connTarget.known
-              ? `执行目标连接：${connTarget.name}${connTarget.environment ? ` · ${connTarget.environment}` : ''}`
-              : '未能从连接列表匹配到该连接，仅显示连接 id'
-          }
-        >
-          {connTarget.production ? <IconAlert /> : null}
-          {`${connTarget.name}${connTarget.environment ? ` · ${connTarget.environment}` : ''}`}
-        </span>
-        <span className="spacer" />
-        {running ? (
-          <span className="sql-running">
-            <span className="spinner" />
-            执行中 {(elapsedNow / 1000).toFixed(1)}s
+          {/*
+           * 0.7.1：按钮内部拆成 图标 / 文案 / 快捷键 三段 span，按容器宽度独立降级。
+           * 0.9.0：工具栏恢复单行；空间不足时横向滚动 + 左右箭头，不换行、不压缩徽标。
+           * 顺序按使用频率：执行组 → 库/执行目标 → 编辑 → 文件 → 片段。
+           */}
+          <button
+            className="primary"
+            onClick={() => void execute('all')}
+            disabled={running || !connId}
+            aria-label={`${scope.runAll}（${displayOf('sql-run-all') ?? '⌘R'}）`}
+            data-testid="sql-run-all"
+            title={`${scope.runAll}（${displayOf('sql-run-all') ?? '⌘R'}）：运行编辑器中的所有语句`}
+          >
+            <span className="sql-btn-icon"><IconRun size={11} /></span>
+            <span className="sql-btn-label">{scope.runAll}</span>
+            <span className="sql-btn-kbd">{displayOf('sql-run-all') ?? '⌘R'}</span>
+          </button>
+          <button
+            onClick={() => void execute('selection')}
+            disabled={running || !connId}
+            aria-label={`${scope.runSelection}（${displayOf('sql-run-selection') ?? '⌘⏎'}）`}
+            title={`${scope.runSelection}（${displayOf('sql-run-selection') ?? '⌘⏎'}）：有选区时执行选中内容，无选区时执行光标所在的那条语句`}
+            data-testid="sql-run-selection"
+          >
+            <span className="sql-btn-icon"><IconRun size={11} /></span>
+            <span className="sql-btn-label">{scope.runSelection}</span>
+            <span className="sql-btn-kbd">{displayOf('sql-run-selection') ?? '⌘⏎'}</span>
+          </button>
+          <button
+            onClick={() => void runExplain()}
+            disabled={running || !connId}
+            aria-label={`${scope.explain}（${displayOf('sql-explain') ?? '⇧⌘X'}）`}
+            title={`${scope.explain}（${displayOf('sql-explain') ?? '⇧⌘X'}）：不真正执行，只看优化器打算怎么跑`}
+            data-testid="sql-run-explain"
+          >
+            <span className="sql-btn-icon"><IconInfo size={11} /></span>
+            <span className="sql-btn-label">{scope.explain}</span>
+            <span className="sql-btn-kbd">{displayOf('sql-explain') ?? '⇧⌘X'}</span>
+          </button>
+          <button
+            onClick={() => void cancel()}
+            disabled={!running}
+            aria-label={`取消查询（${displayOf('sql-cancel') ?? '⌘.'}）`}
+            title={`取消查询（${displayOf('sql-cancel') ?? '⌘.'}）：向服务端发 KILL QUERY`}
+          >
+            <span className="sql-btn-icon"><IconStop size={11} /></span>
+            <span className="sql-btn-label">取消</span>
+            <span className="sql-btn-kbd">{displayOf('sql-cancel') ?? '⌘.'}</span>
+          </button>
+          <span className="sql-toolbar-sep" aria-hidden="true" />
+          {onDatabaseChange && databases.length > 0 ? (
+            <select
+              className="sql-db-select"
+              value={database ?? ''}
+              onChange={(e) => onDatabaseChange(e.target.value || null)}
+              title="查询目标库（左树选中库 / 表标签所在库；未指定库时请用库名限定表名）"
+              data-testid="sql-db-select"
+            >
+              <option value="">（未指定库）</option>
+              {databases.map((d) => (
+                <option key={d.name} value={d.name}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <span
+            className="sql-exec-target"
+            data-testid="sql-exec-target"
+            title={`⌘⏎（${displayOf('sql-run-selection') ?? '⌘⏎'}）的执行对象；⌘R 执行全部语句`}
+          >
+            {`执行对象：${scope.hint}`}
           </span>
+          <span
+            className="sql-conn-target"
+            data-testid="sql-conn-target"
+            data-production={connTarget.production ? '1' : '0'}
+            title={
+              connTarget.known
+                ? `执行目标连接：${connTarget.name}${connTarget.environment ? ` · ${connTarget.environment}` : ''}`
+                : '未能从连接列表匹配到该连接，仅显示连接 id'
+            }
+          >
+            {connTarget.production ? <IconAlert /> : null}
+            {`${connTarget.name}${connTarget.environment ? ` · ${connTarget.environment}` : ''}`}
+          </span>
+          <span className="sql-toolbar-sep" aria-hidden="true" />
+          <button
+            onClick={() => handleRef.current?.format()}
+            title="格式化当前语句或选区（⌘I）"
+            aria-label="格式化（⌘I）"
+            data-testid="sql-format"
+          >
+            <IconBraces size={11} />
+            <span className="sql-btn-label">格式化</span>
+            <span className="sql-btn-kbd">⌘I</span>
+          </button>
+          <span className="sql-toolbar-sep" aria-hidden="true" />
+          <button onClick={openSqlFile} title={OPEN_BUTTON_TITLE} aria-label="打开 SQL 文件" data-testid="sql-open-file">
+            <IconFolder size={11} />
+            <span className="sql-btn-label">打开文件</span>
+          </button>
+          <button
+            onClick={onSaveClick}
+            title={SAVE_BUTTON_TITLE}
+            aria-label={saveButtonLabel(fileState, fileDirty)}
+            data-testid="sql-save-file"
+          >
+            <IconSave size={11} />
+            <span className="sql-btn-label">{saveButtonLabel(fileState, fileDirty)}</span>
+          </button>
+          <button
+            onClick={() => void saveSqlFile({ saveAs: true })}
+            title={SAVE_AS_BUTTON_TITLE}
+            aria-label="另存为 SQL 文件"
+            data-testid="sql-save-as-file"
+          >
+            <span className="sql-btn-label">另存为</span>
+          </button>
+          <span
+            className="sql-file-badge"
+            data-testid="sql-file-badge"
+            data-dirty={fileDirty ? '1' : '0'}
+            data-has-file={fileState.path !== null ? '1' : '0'}
+          >
+            {fileBadgeText(fileState, fileDirty)}
+          </span>
+          <button
+            onClick={openSnippetSave}
+            disabled={running}
+            title="把当前编辑器内容存为可复用的 SQL 片段"
+            aria-label="保存片段"
+            data-testid="sql-save-snippet"
+          >
+            <IconSave size={11} />
+            <span className="sql-btn-label">保存片段</span>
+          </button>
+          <span className="spacer" />
+          {running ? (
+            <span className="sql-running">
+              <span className="spinner" />
+              执行中 {(elapsedNow / 1000).toFixed(1)}s
+            </span>
+          ) : null}
+          {props.readOnlyConn ? <span className="tag-readonly">只读连接</span> : null}
+        </div>
+        {toolbarHasOverflow ? (
+          <button
+            type="button"
+            className="sql-scroll-btn"
+            onClick={() => scrollToolbar(1)}
+            disabled={!toolbarScroll.right}
+            aria-label="向右滚动查询工具栏"
+            title="向右滚动"
+          >
+            <IconChevronRight size={12} />
+          </button>
         ) : null}
-        {props.readOnlyConn ? <span className="tag-readonly">只读连接</span> : null}
       </div>
 
       {timeoutPrompt ? (

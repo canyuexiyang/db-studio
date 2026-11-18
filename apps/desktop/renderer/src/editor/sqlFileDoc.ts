@@ -144,9 +144,11 @@ export function resolveUnsaved(choice: UnsavedChoice): UnsavedResolution {
  *
  * 🔴 必须带【文件】二字：工具栏上并排着「执行」，只写「保存」会被读成
  *    「保存这次执行」—— 这正是 T41 表述约束要防的混淆。
+ *    未关联文件时也用「保存文件」：点击后走另存为，不再与独立「另存为」按钮
+ *    形成两个几乎相同的文案。
  */
-export function saveButtonLabel(state: SqlFileState, dirty: boolean): string {
-  return state.path === null ? '另存为文件' : dirty ? '保存文件 *' : '保存文件';
+export function saveButtonLabel(_state: SqlFileState, dirty: boolean): string {
+  return dirty ? '保存文件 *' : '保存文件';
 }
 
 export const SAVE_BUTTON_TITLE = '把编辑器内容写入 SQL 文件（只写文件，不执行任何语句）';

@@ -178,7 +178,7 @@ try {
         await page.waitForTimeout(30);
       }
       await page.mouse.up();
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(350);
     };
 
     const readSidebar = () =>
@@ -189,12 +189,13 @@ try {
      * 🔴 逐段小步 + 等帧仍不能 100% 躲开 Chromium 对 setPointerCapture 后同帧
      *    pointermove 的合并（实测偶发只生效第一步：240 → 250）。
      *    判据**不降级**（仍要求 >+60 / <-40），改为读真实布局做闭环重试：
-     *    没到位就按当前分隔条位置再拖一次，最多 3 次；3 次仍不到位就如实报红。
+     *    没到位就按当前分隔条位置再拖一次。实测在高负载下偶发每次只 +10px，
+     *    所以给到 8 次闭环重试；判据仍是 >+60 / <-40，不降级。
      */
     const dragUntil = async (index, dx, read, reached) => {
       const before = await read();
       let after = before;
-      for (let attempt = 0; attempt < 3 && !reached(before, after); attempt++) {
+      for (let attempt = 0; attempt < 8 && !reached(before, after); attempt++) {
         const r = await page.locator('.panel-resizer').nth(index).boundingBox();
         await dragBy(r.x + r.width / 2, r.y + 300, dx);
         after = await read();
@@ -1282,8 +1283,8 @@ try {
     await page.waitForTimeout(200);
     const themeAttr = await page.evaluate(() => document.documentElement.dataset.theme);
     const bodyBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    // 深色底色 2026-09 随 Apple 精修设计更新:#1e1e1e → #1c1c1e
-    ok('P1-2 选深色后 data-theme=dark 且背景变深', themeAttr === 'dark' && /rgb\(28, 28, 30\)/.test(bodyBg),
+    // 深色底色按 2026-11 UI-STYLE-GUIDE v1.0：#151517
+    ok('P1-2 选深色后 data-theme=dark 且背景变深', themeAttr === 'dark' && /rgb\(21, 21, 23\)/.test(bodyBg),
       `${themeAttr} ${bodyBg}`);
     const persisted = await page.evaluate(() => localStorage.getItem('dbstudio.theme'));
     ok('P1-2 主题偏好已持久化', persisted === 'dark', String(persisted));
@@ -3916,7 +3917,7 @@ try {
       const connIndent = await connRow.evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingLeft));
       ok(
         'P0-19 行内入口缩进在库层（比连接行多一级，不是挂在连接行里）',
-        indent === connIndent + 14,
+        indent === connIndent + 15,
         `连接 ${connIndent}px → 入口 ${indent}px`,
       );
       if (addCount >= 1) {
@@ -4210,7 +4211,7 @@ try {
     // ③ 按钮不折行。verify-toolbar-fit.mjs 的教训：height:auto 的按钮会「长高」
     //    去容纳折行文本，scrollHeight === clientHeight 照样通过，所以判据必须是高度本身。
     //    能证伪的错误输入：去掉 white-space:nowrap 并给按钮限宽 → 文字折两行 →
-    //    按钮长高超过单行令牌带（~26px）→ maxH > 34 / 高度种类增多 → 红。
+    //    按钮长高超过单行令牌带（~28px）→ maxH > 34 / 高度种类增多 → 红。
     const heights = m.btnHeights;
     const maxH = heights.length ? Math.max(...heights) : 0;
     const minH = heights.length ? Math.min(...heights) : 0;

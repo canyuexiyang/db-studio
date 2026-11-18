@@ -10,6 +10,7 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 
 | 版本 | 日期 | 主题 | 门禁 | 分发 |
 |---|---|---|---|---|
+| **0.9.0** | 2026-11-18 | **一次迭代：全站样式基线 v1.0 + 查询工具栏**：中性精修令牌/布局/组件全量落地；查询工具栏单行 44px、按钮按频率重排、超出时左右箭头横向滚动、徽标不压缩；保存按钮未关联文件统一「保存文件」 | **2537 单测（99 文件）** / verify **exit 0（20 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / ddl:real 22 / script:ui 18 / 首屏 598.5 KB / verify:installed **22/22** | ✅ GitHub Release + 本机安装 |
 | **0.8.0** | 2026-11-11 | **验收可信度与规模（P1 八项 + 新功能）**：① **12 个对象生命周期入口的真库回放**（新建 `e2e-ddl-real.mjs`，复用生产同款构造器 + `information_schema` 回读，取代此前 demo「恒 `committed:true`」的假绿）；② `loadTable` 并发闸门（`RequestGate` 按 tabId 请求序号，防慢的旧响应覆盖新条件结果）；③ 结果预算改**全量真实累计**（修「前 200 行采样在「前窄后宽」时低估 → 64MiB 预算形同虚设」）；④ EXPLAIN 补 `running` 守卫（三个执行入口统一并发口径）；⑤ 保存提交在飞标记（防二次提交撞 BUSY 报假「连接忙」）；⑥ 面板宽度**联合**约束（sidebar+detail ≤ 窗口宽−320，修「最小窗口下工作区被压成 0 且宽度已持久化」）；⑦ 门禁假绿修复（补**幽灵 token** 门禁：无 fallback 引用未定义变量=0、带 fallback 棘轮基线 3，证伪验证通过）；⑧ 配置损坏不再静默清空（备份 `.bak.<时间戳>` + 留痕 + UI 如实告知）+ 主进程生产环境落盘日志；⑨ **powerMonitor 休眠释放连接**（suspend 释放含 SSH 隧道 / resume 不主动重连 / 锁屏不动）；⑩ 脏改动守卫**单槽位并发收口**（修「truncate 后批量重载时前一个标签页重载静默消失 + Promise 泄漏」） | **2537 单测（99 文件）** / verify **exit 0（20 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / **ddl:real 22** / script:ui 18 / 首屏 597.2 KB | ✅ GitHub Release + 本机安装 |
 | **0.7.5** | 2026-11-10 | **一致性与上手（P2 八类收口）**：focus ring 两处失效修复 + `--sql-*` 三处一致性门禁 + `font:` 简写字号收敛、6 处字符图标换 SVG、⌘⇧F/⌘S/F12 键位冲突收口 + 全局键 `e.target` 放行、SQL 编辑器 ⌘F 查找面板、空态区分「筛选无结果/空表」+ 无列占位、idle 断开横幅、删除死引导卡、命令面板补 2 条不可达 IPC 入口、README 4 处事实偏差校正 | **2487 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ 随 v0.8.0 发布（未单独打 tag） |
 | **0.7.4** | 2026-11-10 | **缺陷清零（审计 P0 十项全量落地）**：冲突整批回滚仍记历史「成功」、schemaRefresh 吞异常致 DDL 假成功、删表/批量删表回执被刷新提示盖掉、空表无法录入第一行、取消查询假成功、手输密码重放丢结果、字节预算截断被静默、schemaGet 失败把已握手连接标 failed、五个模态无 Esc、剪贴板失败仍报「已复制」；顺带修门禁可信度最小子集（skipped 显式计数 / headless 帧率不恒真 / 900px 视口断言）与两处 e2e flaky | **2480 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ 随 v0.8.0 发布（未单独打 tag） |
@@ -29,6 +30,53 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 > 主题按同期 `devlog/` 与 dmg 产物时间对应，未做追溯补录。
 
 ---
+
+## v0.9.0（2026-11-18）—— 全站样式基线 v1.0 + 查询工具栏
+
+本轮对话的全部改动收敛为一个 minor 版本：**视觉基线重建 + 查询工具栏交互收口**。
+
+### 1. 全站样式基线 v1.0（中性精修）
+
+依据 [`design/UI-STYLE-GUIDE.md`](design/UI-STYLE-GUIDE.md) v1.0，视觉基线为 `design-mockups/dsh-ui-case/`。
+
+- **令牌层**：浅色主底 `#FFFFFF`、侧栏 `#F5F6F7`、详情 `#F5F5F7`；深色 `#151517 / #353638 / #262628`；浅色 accent `#3B6EDC`（4.72:1）、深色 `#7AAAFF`；主按钮反色；状态文字拆出 `--ok-text/--warn-text`；圆角 4/8/12/16；内部 0.5px 发丝线。
+- **布局**：工具栏 44 / 标签条 38 / 网格工具条 34 / 表头 32 / 状态栏 28 / 详情 320；行高三档 28/32/36，默认 32；树缩进 15。
+- **组件**：按钮/输入/标签/树/网格/筛选条/详情/对象浏览/命令面板/弹窗/菜单/Toast/表单/偏好设置/连接编辑器统一到同一套尺度与状态；网格去斑马纹、去竖线，只留横线；选中行灰底 + accent 左条；条件条补齐此前完全没有样式的 `fbbar-*`；命令面板底部增加快捷键提示；Toast 改为底部深色浮层，成功 3.2s；生产写入确认改为危险红。
+- **门禁同步**：行高常量、详情默认宽、树缩进、快捷键 `kbd`、e2e 颜色/缩进断言、`verify-toolbar-fit` 文案同步更新；侧栏拖拽 e2e 偶发只 +20px，重试 8 次闭环，阈值未降级。
+
+### 2. 查询工具栏：单行、按频率排序、横向滑动
+
+**布局**
+
+- 工具栏固定 44px 单行，`flex-wrap: nowrap`。
+- 所有按钮、下拉、徽标 `flex: 0 0 auto`；徽标不再收缩，也没有 96px 截断。
+- 超出时左右边缘显示 24×28 滚动箭头；无溢出时箭头隐藏；滚到最左/最右时对应箭头禁用。
+- 每次点击滚动约 60% 可视宽度；支持触控板横向滑动、`Shift + 滚轮`、Tab 焦点自动滚入视野。
+- 1440 宽实测：查询面板 880 → 工具栏可视 824，内容 1344，滚动量 520；初始位置执行组、库下拉、执行对象、连接目标可见，右侧文件和片段操作通过右箭头进入。
+
+**按钮顺序（按使用频率）**
+
+`执行全部 → 执行当前语句 → 执行计划 → 取消 → 库下拉 → 执行对象 → 连接目标 → 格式化 → 打开文件 → 保存文件 → 另存为 → 文件状态 → 保存片段`
+
+- 前四项是执行主链路，始终最先出现；库/执行目标紧随其后，避免滚到右侧才能确认目标。
+- 格式化属于编辑高频；文件操作次之；保存片段最低频，放最后。
+- 保存按钮未关联文件时统一显示「保存文件」（点击后走另存为），不再与独立「另存为」按钮形成两个近似文案。
+
+**修复的回归**
+
+- 过程中较早的实现曾把工具栏改成 `nowrap + overflow-x:auto`，三个状态徽标没有 `flex:0 0 auto`，被压成 14px 灰色小块；随后改为换行，用户明确反馈「换行破坏整体布局」，最终收口为当前单行 + 左右箭头方案。
+- 过程中顺手修正了 96px 文件徽标截断与「另存为文件 / 另存为」近似文案。
+
+### 3. 门禁与本机安装
+
+- `npm run verify` **exit 0（20 道）**；单测 **2537（99 文件）**；首屏 **598.5 KB / 1465 KB**；`check:bundle` 9/9。
+- `e2e:ui` **480/480**、`e2e:app` **72/72**、`e2e:keys` **47/47**（另 4 项按脚本要求人工）、`verify:toolbar-fit` **22/22**。
+- 其余 e2e：smoke 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / script:data 10 / affected 21 / conflict 17 / ddl:real 22 / script:ui 18。
+- 产物：`apps/desktop/release/DB Studio-0.9.0-arm64.dmg` 与 `DB-Studio-0.9.0-arm64.dmg`（同内容）。
+- SHA256：`349b866fcd330569bcaf2738ee41da65d6aafccc6e99a8d94bd58769021be5f7`。
+- 旧 `/Applications/DB Studio.app`（0.9.2 内部迭代）备份到 `apps/desktop/release/.prev-installed-0.9.2.app`，安装 0.9.0 并移除 quarantine；`codesign --verify` 通过。
+- `verify:installed` **22/22**，installed=0.9.0 与 declared=0.9.0 一致。
+- `verify:traffic-lights` 本轮未复跑：宿主 `screencapture` 无屏幕录制权限；本轮未改窗口参数/交通灯几何，0.8.0 基线为 6/6。
 
 ## v0.8.0（2026-11-11）—— 验收可信度与规模
 
@@ -76,7 +124,7 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
    5 单测钉住「写盘失败不抛」（日志不能成为新故障源）+ 5 单测钉住备份/留痕/读后清除/正常文件不留痕。
 
 9. **powerMonitor 休眠释放连接（#78，本版唯一新功能）**
-   承诺出处：`docs/RELEASES.md:177`、`REQ-0.7.1:357,377,536`。
+   承诺出处：本文件「v0.7.1 排期承诺」段的 powerMonitor 条目、`REQ-0.7.1` 的对应需求条目（原文按行号引用，后续插文已使行号漂移）。
    `power-events.ts`（依赖注入，决策可单测）+ `SessionRegistry.releaseAllForSuspend()`（复用 `disconnect`：取消查询 → 关驱动+隧道 → 推进状态机 → 推送，先停心跳扫描器）。决策：**suspend 释放**（否则白占服务端连接名额 + SSH 隧道变孤儿进程，触 AGENTS §四.7 红线）、**resume 不主动重连**（避免唤醒瞬间连接风暴，靠既有 `ensureConnection` 按需温和恢复）、**锁屏不动**（锁屏≠休眠，激进断连体验差）。幂等：释放进行中来第二次 suspend 不叠加（部分机型连发 suspend/resume）。6 单测含幂等/失败不抛/dispose。
 
 10. **脏改动守卫单槽位并发收口（#79）**

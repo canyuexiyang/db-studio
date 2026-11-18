@@ -9,8 +9,8 @@ MySQL 优先、单机自用、macOS 原生观感 —— 对标 Navicat Premium�
 
 Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · 虚拟滚动
 
-[![version](https://img.shields.io/badge/version-0.8.0-blue)](docs/RELEASES.md)
-[![tests](https://img.shields.io/badge/tests-2473_passed-brightgreen)](#验证)
+[![version](https://img.shields.io/badge/version-0.9.0-blue)](docs/RELEASES.md)
+[![tests](https://img.shields.io/badge/tests-2537_passed-brightgreen)](#验证)
 [![platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue)](#系统与环境限制)
 [![arch](https://img.shields.io/badge/arch-Apple%20Silicon%20%C2%B7%20Intel-orange)](#适配芯片)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
@@ -26,7 +26,7 @@ Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · �
 |---|---|
 | <img src="docs/design-mockups/shots-installed/1-main-light.png" width="440" alt="主界面浅色"> | <img src="docs/design-mockups/shots-installed/2-main-dark.png" width="440" alt="主界面深色"> |
 
-更多截图（连接编辑器、库表树、右键菜单、SQL 编辑器、网格交互）见 [`docs/design-mockups/`](docs/design-mockups/)。
+更多截图（连接编辑器、库表树、右键菜单、SQL 编辑器、网格交互）见 [`docs/design-mockups/`](docs/design-mockups/)；最新的 DSH 风格四界面案例见 [`docs/design-mockups/dsh-ui-case/`](docs/design-mockups/dsh-ui-case/)。
 
 </details>
 
@@ -363,7 +363,7 @@ DB Studio 是**桌面客户端应用**，本身不是服务端。这里的「客
 ### 开发/构建环境注意
 
 - **两套 tsconfig 互不包含**：根（packages + 主进程，pure Node lib）+ renderer（DOM + JSX），`npm run typecheck` 串联两者，**改动后必须全绿**。
-- **`@dbstudio/*` 别名三处同步**：根 tsconfig `paths` / `vitest.config.ts` alias / renderer tsconfig，漏一处会「typecheck 过但测试 fallback 到 node_modules」。
+- **`@dbstudio/*` 别名四处同步**：根 tsconfig `paths` / `vitest.config.ts` alias / renderer tsconfig / renderer vite.config.ts（main 进程另有一份子集），漏一处会「typecheck 过但测试 fallback 到 node_modules」。对象形式 alias 的**子入口必须排在主入口之前**，否则拼成 `.../index.ts/subpath` 解析失败。
 - **preload 必须是 `.cjs`**：sandbox 开启时 ESM preload 会失败。
 - **渲染层产物必须 `base: './'`**：`file://` 下绝对路径会解析到磁盘根 → 全白屏（而主进程 IPC 全通，调接口测不出来）。
 - **e2e 复用本机 Chromium**：`~/Library/Caches/ms-playwright/`，缺失时设 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`。
@@ -379,12 +379,12 @@ npm run verify:installed # 已安装 .app 的真机验收（22 项，含版本�
 npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染层之外验证）
 ```
 
-**当前基线（v0.8.0 · 已发 [GitHub Release](https://github.com/canyuexiyang/db-studio/releases) 并本机安装）**：
+**当前基线（v0.9.0 · GitHub Release + 本机安装）**：
 
 | 门禁 | 结果 |
 |---|---|
 | 单元测试 | **2537 passed / 99 文件** |
-| `check:bundle` | 9/9 体积断言通过（首屏 597.2 KB / 预算 1465 KB；编辑器 lazy 133.4 KB / 150 KB gzip；功能弹窗合计 61.1 KB / 64 KB gzip） |
+| `check:bundle` | 9/9 体积断言通过（首屏 598.5 KB / 预算 1465 KB；编辑器 lazy 140.4 KB / 150 KB gzip；功能弹窗合计 60.4 KB / 64 KB gzip） |
 | e2e:ui（真浏览器 UI 回归） | 480 |
 | e2e:app（Electron 真机） | 72 |
 | e2e:keys（五焦点键盘矩阵） | 47 |
@@ -400,7 +400,7 @@ npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染�
 | 脚本导入数据完整性（e2e:script:data） | 10 |
 | 脚本导入 UI（e2e:script:ui） | 18 |
 | verify:installed（装好的 .app） | **22/22** |
-| verify:traffic-lights（像素） | **6/6** |
+| verify:traffic-lights（像素） | 未复跑：宿主 `screencapture` 无屏幕录制权限（0.8.0 基线为 6/6；窗口参数未改） |
 
 > 🔴 **不跑 `npm run verify` 不许宣告完成**（AGENTS.md §五）。
 > 🔴 **门禁必须能证伪**（AGENTS.md 红线 14）：改 DDL/对象生命周期必跑 `e2e:ddl:real`——`e2e:ui` 那层的 demo 后端 `mutationApply` 恒返回 `committed:true`，**测不出 SQL 拼错**。
@@ -416,9 +416,10 @@ npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染�
 | [`docs/engineering/`](docs/engineering/) | 技术评审 / Spike 实测报告 / 专项决策实测（代码注释按 §章节号引用） |
 | [`docs/research/`](docs/research/) | 竞品调研与功能路线图（唯一维护版本） |
 | [`docs/devlog/`](docs/devlog/) | 每日开发日志（真机踩坑都在这，只追加不改写） |
+| [`docs/design/`](docs/design/) | **设计系统 + UI/前端开发规范**（视觉、组件、代码组织、命名、迁移与 PR 清单的唯一执行手册） |
 | [`docs/design-mockups/`](docs/design-mockups/) | 设计稿 + 双主题真实截图 + 截图脚本 |
 | [`docs/archive/`](docs/archive/) | 已被取代的历史文档（⚠️ 不要据此实现功能） |
-| [`AGENTS.md`](AGENTS.md) | AI 编码代理工作规范：红线 / 禁止操作 / 样式规范 / 命令速查 |
+| [`AGENTS.md`](AGENTS.md) | AI 编码代理工作规范：红线 / 禁止操作 / 命令速查（样式细则见 `docs/design/`） |
 
 ## 设计红线
 
