@@ -47,4 +47,4 @@ smoke 74、transfer 36、ssh 18、idle 16、keepalive 17、idle:ui 4、toolbar-f
 - P3-12 列虚拟化：未做，需先测 200/500 列帧时间再决定。
 - P3-13 结果快照恢复：未做；现有只恢复 tab 元数据，避免陈旧数据误导。
 - P3-14 可重绑定快捷键：未做；保留只读速查 + 动作目录。
-- 已用 `npm run dist:dir` 打包并 `ditto` 安装到 `/Applications/DB Studio.app`（0.10.0，ad-hoc 重签自检通过）；按要求**跳过** `verify:installed`。旧 0.9.0 备份在 `apps/desktop/release/.prev-installed-0.9.0-before-0.10.0.app`。
+- 已用 `npm run dist:dir` 打包并 `ditto` 安装到 `/Applications/DB Studio.app`（0.10.0，ad-hoc 重签自检通过）；已发布 [GitHub Release v0.10.0](https://github.com/canyuexiyang/db-studio/releases/tag/v0.10.0)。按要求**跳过** `verify:installed`。旧 0.9.0 备份在 `apps/desktop/release/.prev-installed-0.9.0-before-0.10.0.app`。

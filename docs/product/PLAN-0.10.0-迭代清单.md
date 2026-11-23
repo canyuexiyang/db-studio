@@ -3,7 +3,7 @@
 > **来源**：[DBDelve 深度分析与迭代清单](research/DBDelve-深度分析与迭代清单-2026-11-23.md) 的 P0/P1/P2。
 > **范围**：11 项，全部纳入 0.10.0；P3（列虚拟化/结果快照/可重绑定快捷键）不在本轮。
 > **纪律**：不新增写路径；所有网格编辑仍走脏单元格 + 保存预演；不引入新依赖；不碰 PRD §三 非目标。
-> **状态**：2026-11-23 研发实现完成；`verify` 全链通过（含 MySQL fixture）；已 `dist:dir` 打包并本机安装 0.10.0。按要求未跑 `verify:installed`。
+> **状态**：2026-11-23 研发实现完成；`verify` 全链通过（含 MySQL fixture）；已 `dist:dir` 打包并本机安装 0.10.0，发布 [GitHub Release v0.10.0](https://github.com/canyuexiyang/db-studio/releases/tag/v0.10.0)。按要求未跑 `verify:installed`。
 
 ## 1. 范围与状态
 
