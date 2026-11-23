@@ -199,13 +199,23 @@ function charMaxLength(dataType) {
 
 const DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?$/;
 
-function validateCellText(raw, col) {
+function validateCellText(raw, col, opts) {
+  opts = opts || {};
   const text = raw == null ? '' : raw;
   const type = baseType(col.dataType);
 
   const isNullLiteral = text.trim().toUpperCase() === 'NULL' || text.trim() === '\\N';
 
   if (text === '') {
+    // 0.10.0：空字段语义由用户选。默认仍是 NULL（与 0.7.x 行为一致）；
+    // 选「空串」时，字符串/文本列的空串是合法值，数值/日期/布尔列仍拒绝
+    // —— 把 '' 写进 INT 会被 MySQL 静默转成 0，那是数据损坏不是导入。
+    if (opts.emptyAsString) {
+      if (isNumericType(col.dataType) || isTemporalType(col.dataType) || type === 'bool' || type === 'boolean') {
+        return `列 ${col.name} 是 ${type}，不能填空串（请选择 NULL 或填合法值）`;
+      }
+      return null;
+    }
     if (isNullLiteral) return null;
     return col.nullable ? null : `列 ${col.name} 不允许为 NULL（NOT NULL），但值为空`;
   }
@@ -258,6 +268,43 @@ function cellTextToValue(raw) {
   if (t === '') return null; // 空单元格 → NULL（Excel 无法表达 NULL 的现实约定）
   if (t.toUpperCase() === 'NULL' || t === '\\N') return null;
   return raw;
+}
+
+/**
+ * 0.10.0 P0-03：按「解析为」归一化一个单元格。
+ *
+ * 这是**导入侧**唯一的值变换点：validatePreview / buildInsertBatches 都走这里，
+ * 保证「预览校验通过」与「真正写进去的值」同一口径。默认 auto 不做任何变换，
+ * 只处理空字段与 NULL 文本，保持 0.7.x 行为。
+ */
+function normalizeImportCell(raw, parseAs, emptyAsNull) {
+  const text = raw == null ? '' : String(raw);
+  const trimmed = text.trim();
+  if (trimmed === '') return emptyAsNull === false ? '' : null;
+  if (trimmed.toUpperCase() === 'NULL' || trimmed === '\\N') return null;
+
+  switch (parseAs) {
+    case 'text':
+      return text;
+    case 'number': {
+      // 千分位与前后空白是表格软件最常见的导出噪声；其他非法字符保留，让校验报错
+      return trimmed.replace(/[,\s]/g, '');
+    }
+    case 'date': {
+      // 只把无歧义的年-月-日分隔符统一成 '-'；DD/MM 与 MM/DD 不猜。
+      const m = /^(\d{4})[\/.](\d{1,2})[\/.](\d{1,2})(.*)$/.exec(trimmed);
+      if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}${m[4] || ''}`;
+      return trimmed;
+    }
+    case 'boolean': {
+      const t = trimmed.toLowerCase();
+      if (t === 'true' || t === 'yes' || t === 'y' || t === '1') return '1';
+      if (t === 'false' || t === 'no' || t === 'n' || t === '0') return '0';
+      return trimmed;
+    }
+    default:
+      return text;
+  }
 }
 
 // ---------- 列映射 ----------
@@ -316,6 +363,13 @@ function usableColumns(mapping, columns) {
   return out;
 }
 
+/** 预览用 SQL 字面量（不是执行路径；执行永远走 ? 参数绑定） */
+function sqlLiteral(v) {
+  if (v === null || v === undefined) return 'NULL';
+  if (typeof v === 'number') return String(v);
+  return "'" + String(v).replace(/\\/g, '\\\\').replace(/'/g, "''") + "'";
+}
+
 function buildInsertBatches(database, tableName, rows, mapping, columns, opts) {
   opts = opts || {};
   const batchSize = Math.max(1, opts.batchSize || 1000);
@@ -333,24 +387,29 @@ function buildInsertBatches(database, tableName, rows, mapping, columns, opts) {
 
   const invalidRows = [];
   const validValues = [];
+  const emptyAsNull = opts.emptyAsNull !== false;
+  const parsers = Array.isArray(opts.parsers) ? opts.parsers : [];
+  const parseAsOf = (fileIdx) => parsers[fileIdx] ?? 'auto';
 
   dataRows.forEach((row, ri) => {
     if (retrySet && !retrySet.has(ri)) return;
     const fileRow = (hasHeader ? 1 : 0) + ri + 1;
     let rowValid = true;
+    const normalized = [];
 
     for (const c of cols) {
       const raw = row[c.fileIdx] == null ? '' : row[c.fileIdx];
-      const reason = validateCellText(raw, c.col);
+      const value = normalizeImportCell(raw, parseAsOf(c.fileIdx), emptyAsNull);
+      normalized.push(value);
+      const reason = validateCellText(value, c.col, { emptyAsString: emptyAsNull === false });
       if (reason) {
+        // 报错里回原文，用户才能对着文件找
         invalidRows.push({ fileRow, column: c.col.name, raw, reason });
         rowValid = false;
       }
     }
     if (!rowValid) return;
-
-    const values = cols.map((c) => cellTextToValue(row[c.fileIdx] == null ? '' : row[c.fileIdx]));
-    validValues.push(values);
+    validValues.push(normalized);
   });
 
   const statements = [];
@@ -360,11 +419,20 @@ function buildInsertBatches(database, tableName, rows, mapping, columns, opts) {
     const placeholders = slice.map(() => rowTemplate).join(', ');
     const params = [];
     for (const v of slice) params.push(...v);
-    statements.push({
+    const statement = {
       sql: `INSERT INTO ${qualified} (${colList}) VALUES ${placeholders}`,
       params,
       rowCount: slice.length,
-    });
+    };
+    if (opts.withPreview === true) {
+      // 只给预览用：把参数转成可读字面量。执行路径永远用 `?` 参数绑定。
+      const groups = [];
+      for (let i = 0; i < params.length; i += cols.length) {
+        groups.push(`(${params.slice(i, i + cols.length).map(sqlLiteral).join(', ')})`);
+      }
+      statement.previewSql = `INSERT INTO ${qualified} (${colList}) VALUES ${groups.join(', ')};`;
+    }
+    statements.push(statement);
   }
 
   return {
@@ -377,16 +445,21 @@ function buildInsertBatches(database, tableName, rows, mapping, columns, opts) {
 
 // ---------- 预览校验 ----------
 
-function validatePreview(rows, mapping, columns, hasHeader) {
+function validatePreview(rows, mapping, columns, hasHeader, opts) {
+  opts = opts || {};
   const cols = usableColumns(mapping, columns);
   const dataRows = hasHeader ? rows.slice(1) : rows;
   const issues = [];
+  const emptyAsNull = opts.emptyAsNull !== false;
+  const parsers = Array.isArray(opts.parsers) ? opts.parsers : [];
+  const parseAsOf = (fileIdx) => parsers[fileIdx] ?? 'auto';
 
   dataRows.forEach((row, ri) => {
     const fileRow = (hasHeader ? 1 : 0) + ri + 1;
     for (const c of cols) {
       const raw = row[c.fileIdx] == null ? '' : row[c.fileIdx];
-      const reason = validateCellText(raw, c.col);
+      const value = normalizeImportCell(raw, parseAsOf(c.fileIdx), emptyAsNull);
+      const reason = validateCellText(value, c.col, { emptyAsString: emptyAsNull === false });
       if (reason) issues.push({ fileRow, column: c.col.name, raw, reason });
     }
   });
@@ -1084,6 +1157,7 @@ module.exports = {
   sniffDelimiter,
   guessMapping,
   cellTextToValue,
+  normalizeImportCell,
   buildInsertBatches,
   validatePreview,
   issuesToCsv,

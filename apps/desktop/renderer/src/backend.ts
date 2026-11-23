@@ -575,6 +575,10 @@ const demoBackend: Backend = {
     comment: null,
     createTime: new Date().toISOString(),
     autoIncrement: 50_001,
+    indexes: [
+      { name: 'PRIMARY', unique: true, kind: 'primary', type: 'BTREE', columns: ['id'] },
+      { name: 'idx_name', unique: false, kind: 'index', type: 'BTREE', columns: ['name'] },
+    ],
   }),
 
   /**

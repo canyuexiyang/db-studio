@@ -37,6 +37,11 @@ describe('前缀判定', () => {
     expect(parsePaletteInput('@select')).toEqual({ mode: 'history', query: 'select' });
   });
 
+  it('0.10.0：# 走连接 scope', () => {
+    expect(parsePaletteInput('#prod')).toEqual({ mode: 'connection', query: 'prod' });
+    expect(PALETTE_PREFIXES.connection).toBe('#');
+  });
+
   it('只认首字符：表名里的 @ 不会被当前缀', () => {
     expect(parsePaletteInput('user@2').mode).toBe('table');
     expect(parsePaletteInput('user@2').query).toBe('user@2');
@@ -129,6 +134,14 @@ describe('面板查询', () => {
     expect(r.results[0].item.title).toBe('order');
   });
 
+  it('0.10.0：连接模式只查连接，不混入表/命令', () => {
+    const conns = [item('conn:1', 'prod-db'), item('conn:2', 'dev-db')];
+    const r = queryPalette('#prod', { items: tables, connections: conns });
+    expect(r.mode).toBe('connection');
+    expect(r.results[0].item.title).toBe('prod-db');
+    expect(r.results.every((x) => x.item.id.startsWith('conn:'))).toBe(true);
+  });
+
   it('命令模式：用内置命令', () => {
     const r = queryPalette(':refresh', { items: tables });
     expect(r.mode).toBe('command');
@@ -198,7 +211,7 @@ describe('面板查询', () => {
   });
 
   it('前缀常量', () => {
-    expect(PALETTE_PREFIXES).toEqual({ command: ':', history: '@', table: '>' });
+    expect(PALETTE_PREFIXES).toEqual({ command: ':', history: '@', table: '>', connection: '#' });
   });
 });
 

@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense, memo } from 'react';
 import { GridDataSource } from './grid/useGridData';
 import { SavePreviewModal } from './grid/SavePreviewModal';
-import { ColumnarReader, type CellValue } from '@dbstudio/core-ipc-codec';
+import { ColumnarReader, columnarByteLength, type CellValue } from '@dbstudio/core-ipc-codec';
 import { buildRowProbeSql } from './grid/conflictProbe';
 import type { ConflictView, ProbeOutcome } from './grid/SaveConflictModal';
 import { TreeView } from './tree/TreeView';
@@ -42,6 +42,7 @@ import { QueryCancelGate } from './editor/queryCancelGate';
 import { SingleModalGate } from './workspace/singleModalGate';
 import { WorkspaceTabsBar } from './workspace/WorkspaceTabsBar';
 import { TablePane, type TablePaneHandlers } from './workspace/TablePane';
+import { resultMetaLabel } from './workspace/resultMeta';
 import type { GridForeignKey } from './grid/DataGrid';
 // P0-1：导出快照的类型（快照本体由网格产出，App 只做搬运）
 import type { GridSnapshotSource } from './grid/exportSnapshot';
@@ -531,6 +532,11 @@ export function App() {
   // ---- 连接与树 ----
   const [connections, setConnections] = useState<ConnectionConfig[]>([]);
   const [schemas, setSchemas] = useState<Record<string, DatabaseMeta[]>>({});
+  /** 0.10.0 P2-10：本地 schema 缓存年龄（详情面板显示；任何刷新都更新） */
+  const [schemasLoadedAt, setSchemasLoadedAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (Object.keys(schemas).length > 0) setSchemasLoadedAt(Date.now());
+  }, [schemas]);
   const [connStates, setConnStates] = useState<Record<string, { state: string; lastError: string | null }>>({});
   /** onConnectNode 的守卫要同步读最新状态，不经 state 闭包（setState 异步） */
   const connStatesRef = useRef(connStates);
@@ -615,7 +621,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws.tabs]);
 
-  const [rowHeightMode, setRowHeightMode] = useState<RowHeightMode>('standard');
+  const [rowHeightMode, setRowHeightMode] = useState<RowHeightMode>(() => loadPreferences().rowHeight);
   const [preview, setPreview] = useState<{
     tabId: string;
     source: GridDataSource;
@@ -700,6 +706,12 @@ export function App() {
   }, [toast]);
   /** F5：激活 tab 网格的选中统计（状态栏显示「选中 N 行 / M 格」） */
   const [selectionSummary, setSelectionSummary] = useState<{ rows: number; cells: number } | null>(null);
+  /**
+   * 0.10.0 P0-01：每个 tab 的焦点格（行检查器跟随）。
+   * 按 tab 存而不是全局一个：多标签常挂 DOM，切回来时要回到该 tab 原来的行，
+   * 不能让 A 表的行号落到 B 表上。
+   */
+  const [activeCellByTab, setActiveCellByTab] = useState<Record<string, { row: number; col: number }>>({});
 
   // ---- 深色模式三态（P1-2）----
   // 启动首帧的主题由 public/theme-boot.js 在 CSS 之前同步设置（无闪烁），
@@ -743,6 +755,11 @@ export function App() {
   const patchPrefs = useCallback((patch: Partial<Preferences>) => {
     setPrefs((cur) => patchPreferences(cur, patch));
   }, []);
+
+  // 0.10.0 P2-11：行高的唯一来源改为偏好设置；工具栏不再放第二个下拉
+  useEffect(() => {
+    setRowHeightMode(prefs.rowHeight);
+  }, [prefs.rowHeight]);
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -800,6 +817,7 @@ export function App() {
   type EditorState =
     | 'closed'
     | 'new'
+    | { seedUrl: string; duplicateOf: null }
     | { config: ConnectionConfig; duplicateOf: string | null };
   const [editorState, setEditorState] = useState<EditorState>('closed');
 
@@ -904,7 +922,15 @@ export function App() {
     const get = exportSnapshotGetters.current.get(tab.id);
     return get ? get() : null;
   }, [exportTarget, ws.tabs]);
-  const [importTarget, setImportTarget] = useState<{ connId: string; database: string; table: TableMeta } | null>(null);
+  const [importTarget, setImportTarget] = useState<{
+    connId: string;
+    database: string;
+    table: TableMeta;
+    /** 0.10.0 P2-09：拖入文件时预选；普通入口为空 */
+    filePath?: string;
+  } | null>(null);
+  /** 拖拽文件进入窗口时的覆盖层 */
+  const [dragActive, setDragActive] = useState(false);
   /** 运行 SQL 脚本（库/表级别）：connId + 目标库上下文 */
   const [scriptTarget, setScriptTarget] = useState<{ connId: string; database: string } | null>(null);
   /**
@@ -2688,6 +2714,26 @@ export function App() {
    */
   const [fkCache, setFkCache] = useState<Record<string, GridForeignKey[]>>({});
 
+  /**
+   * 0.10.0 P1-07：把已加载的外键摊平成补全可用的形状。
+   * 只覆盖「本会话点开过的表」—— 没有数据就不建议 ON，绝不按列名猜连接。
+   */
+  const completionForeignKeys = useMemo(
+    () =>
+      Object.entries(fkCache).flatMap(([key, fks]) => {
+        const [connId, , ...tableParts] = key.split(':');
+        const table = tableParts.join(':');
+        return fks.map((fk) => ({
+          connId,
+          table,
+          column: fk.column,
+          refTable: fk.referencedTable,
+          refColumn: fk.referencedColumn,
+        }));
+      }),
+    [fkCache],
+  );
+
   /** 激活的表 tab 变化时按需拉外键（只拉一次；失败降级为空 = 不画链接） */
   useEffect(() => {
     const tab = openTab;
@@ -2938,6 +2984,20 @@ export function App() {
       },
       // F5：选中统计 → 状态栏（仅激活 pane 回报，见 TablePane 侧实现）
       onSelectionSummary: (_tabId, summary) => setSelectionSummary(summary),
+      // 0.10.0 P0-01：焦点格 → 行检查器（同样只由激活 pane 回报）
+      onActiveCellChange: (tabId, cell) => {
+        setActiveCellByTab((prev) => {
+          if (cell === null) {
+            if (!(tabId in prev)) return prev;
+            const next = { ...prev };
+            delete next[tabId];
+            return next;
+          }
+          const cur = prev[tabId];
+          if (cur && cur.row === cell.row && cur.col === cell.col) return prev;
+          return { ...prev, [tabId]: cell };
+        });
+      },
       // A2：网格就地清了脏标记，这里只刷角标
       onCellCleared: (tabId, s) => {
         ws.patchTable(tabId, { dirtyCount: s.dirtyCount });
@@ -2981,6 +3041,12 @@ export function App() {
       onNotice: (_tabId, msg) => setToast(msg),
       // P0-1：导出快照注册（网格挂载时交来「读当前快照」的函数）
       onExportSnapshot: registerExportSnapshot,
+      // 0.10.0 P1-04：结构页「设计」→ 既有表设计器
+      onOpenDesigner: (tabId) => {
+        const t = ws.getTable(tabId);
+        if (!t) return;
+        setDesigner({ mode: 'edit', database: t.database, table: t.table, connId: t.connId });
+      },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [onSortChange, onRequestSave, openTab, sources, ws, onDuplicateRow, onAddBlankRow, onQuickFilter, onPasteRows, onDeleteRows, onBatchEdit, onBatchDiscard, onFollowForeignKey, onLookupForeignKeyValues, readOnlyConns, registerExportSnapshot],
@@ -3004,17 +3070,87 @@ export function App() {
     [sources, ws, rerender],
   );
 
+  /**
+   * 0.10.0 P2-09：窗口级拖拽。
+   *
+   * 只处理 Files（标签页拖拽是 text/plain，不受影响）：
+   *  - .sql → 新查询标签，**不自动执行**（与「打开文件」按钮同语义）
+   *  - .csv/.tsv/.xlsx/.json → 当前表导入向导，路径预选
+   */
+  const handleDroppedFile = useCallback(
+    async (file: File) => {
+      const name = file.name.toLowerCase();
+      const path =
+        window.dbStudio?.pathForFile?.(file) ||
+        (file as File & { path?: string }).path ||
+        '';
+      if (name.endsWith('.sql')) {
+        try {
+          const text = path ? (await backend.sqlFileRead(path)).text : await file.text();
+          ws.newQuery(sqlConnId, openTab?.database ?? null, text);
+          setToast(`已打开 ${file.name}（未执行）`);
+        } catch (e) {
+          setToast(`打开 SQL 文件失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+        return;
+      }
+      if (/\.(csv|tsv|xlsx|json)$/.test(name)) {
+        if (!openTab) {
+          setToast('先打开要导入的表，再拖入 CSV/Excel/JSON 文件');
+          return;
+        }
+        if (!path) {
+          setToast('读不到文件路径：请用「导入」按钮选择文件');
+          return;
+        }
+        setImportTarget({ connId: openTab.connId, database: openTab.database, table: openTab.table, filePath: path });
+        return;
+      }
+      setToast('只支持 .sql 查询文件，或 .csv/.tsv/.xlsx/.json 数据文件');
+    },
+    [backend, openTab, setToast, sqlConnId, ws],
+  );
+
+  useEffect(() => {
+    const hasFiles = (e: DragEvent): boolean => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      setDragActive(true);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (e.relatedTarget === null) setDragActive(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDragActive(false);
+      const file = e.dataTransfer?.files?.[0];
+      if (file) void handleDroppedFile(file);
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [handleDroppedFile]);
+
   // ---- 连接编辑器（§6.1）----
   const closeEditor = useCallback(() => setEditorState('closed'), []);
 
   const editorTarget = useMemo(
-    () => (typeof editorState === 'object' ? editorState.config : null),
+    () => (typeof editorState === 'object' && 'config' in editorState ? editorState.config : null),
     [editorState],
   );
+  const editorSeedUrl = typeof editorState === 'object' && 'seedUrl' in editorState ? editorState.seedUrl : null;
 
   /** P1-8：非空 = 创建副本模式（保存为一条新连接，密文沿用源连接） */
   const editorDuplicateOf = useMemo(
-    () => (typeof editorState === 'object' ? editorState.duplicateOf : null),
+    () => (typeof editorState === 'object' && 'config' in editorState ? editorState.duplicateOf : null),
     [editorState],
   );
 
@@ -4759,6 +4895,48 @@ if (table.kind === 'table') {
   }, [schemas, paletteOpen, openTab, groupStripeByTab, recentTables]);
 
   /**
+   * 0.10.0 P1-05：命令面板 # 连接 scope。
+   * 只从内存 connections 构建，不新增 IPC；状态徽章与颜色标签都取现有字段。
+   */
+  const paletteConnectionItems: PaletteItem[] = useMemo(
+    () =>
+      connections.map((c) => {
+        const st = connStates[c.id]?.state;
+        const live = st === 'connected' || st === 'busy';
+        return {
+          id: `conn:${c.id}`,
+          title: c.name,
+          subtitle: `${c.group ?? '未分组'} · ${c.host}:${c.port}${c.defaultDatabase ? `/${c.defaultDatabase}` : ''}`,
+          badge: live ? '已连接' : st === 'connecting' ? '连接中' : '未连接',
+        };
+      }),
+    [connections, connStates],
+  );
+
+  /** 选中连接：已连接 → 在树里定位；未连接 → 走既有握手（含密码提示） */
+  const onPickConnection = useCallback(
+    async (item: PaletteItem) => {
+      setPaletteOpen(false);
+      const id = item.id.startsWith('conn:') ? item.id.slice(5) : item.id;
+      const cfg = connections.find((c) => c.id === id);
+      if (!cfg) {
+        setToast('连接已不存在，请刷新连接列表');
+        return;
+      }
+      setActiveKey(`conn:${cfg.id}`);
+      setExpanded((prev) => new Set(prev).add(`conn:${cfg.id}`));
+      const st = connStatesRef.current[cfg.id]?.state;
+      if (st === 'connected' || st === 'busy') {
+        setToast(`当前连接：${cfg.name}`);
+        return;
+      }
+      if (cfg.promptEveryTime) setPwdPrompt(cfg);
+      else await onConnectNode(cfg);
+    },
+    [connections, onConnectNode, setToast],
+  );
+
+  /**
    * V19：命令面板里的「按列分组着色」开关 —— 作用于【当前列】。
    *
    * 当前列取详情面板的激活格（cell）。App 层能拿到的"当前列"只有这一处
@@ -5137,6 +5315,38 @@ if (table.kind === 'table') {
   const statusReadOnlyReason = openTab ? statusEdit.message : '';
   const statusStrategy = openTab ? locateStrategy(openTab.table) : 'none';
 
+  /**
+   * 0.10.0 P0-01：行检查器只服务「激活表标签 + 详情面板正看着同一张表」。
+   * 用户单击左树另一张表时，详情面板仍应显示那张表的静态信息，不能把
+   * 激活标签的行数据硬塞进去（否则「表名是 A、字段是 B 的行」）。
+   */
+  const rowInspector = (() => {
+    if (!openTab) return null;
+    const cell = activeCellByTab[openTab.id];
+    if (!cell) return null;
+    const source = sources.get(openTab.id);
+    if (!source) return null;
+    const sameTable =
+      detailTable?.name === openTab.tableName &&
+      detailDatabase === openTab.database &&
+      detailConnId === openTab.connId;
+    if (!sameTable) return null;
+    return {
+      source,
+      table: openTab.table,
+      row: cell.row,
+      activeCol: cell.col,
+      writable: statusWritable,
+      onEdit: (row: number, col: number, value: string | null) => {
+        tablePaneHandlers.onCellEdited(openTab.id, source, row, col, value);
+      },
+      onInspect: (row: number, col: number) => {
+        tablePaneHandlers.onInspectCell?.(openTab.id, row, col, source.raw(row, col));
+      },
+      onToast: setToast,
+    };
+  })();
+
   // ---- T46：活动区身份条（连接 / 环境 / 库 / 对象） ----
   /**
    * 🔴 身份条必须**常驻**且不依赖左树红点：侧栏可被收窄、详情面板可能跟随
@@ -5237,6 +5447,19 @@ if (table.kind === 'table') {
     truncated: openTab?.truncated ?? false,
     hasPayload: !!openTab?.payload,
   });
+  /**
+   * 0.10.0 P1-06：结果透明度 —— 行数 / 截断 / 字节 / 耗时放在同一处。
+   * 字节取列式 payload 的实际 buffer 长度（不估算、不全量解码）。
+   */
+  const statusResultMeta =
+    openTab?.payload
+      ? resultMetaLabel({
+          rowsLabel: statusRowCount.label,
+          bytes: columnarByteLength(openTab.payload),
+          queryMs: openTab.queryMs,
+          truncated: openTab.truncated,
+        })
+      : null;
   /** T47：连接不可用的判定（idle 未连接不算断开，只有这四态才提示） */
   const connDown = (connId: string): boolean => {
     const s = connStates[connId]?.state;
@@ -5603,25 +5826,15 @@ if (table.kind === 'table') {
               ) : null}
             </>
           ) : null}
-          <select
-            value={rowHeightMode}
-            onChange={(e) => setRowHeightMode(e.target.value as RowHeightMode)}
-            title="行高"
+          {/* 0.10.0 P2-11：外观/行高下沉到偏好设置（⌘,），工具栏只留对象动作 */}
+          <button
+            onClick={() => setPrefsOpen(true)}
+            title="偏好设置：主题 / 行高 / 字体 / 快捷键（⌘,）"
+            aria-label="偏好设置"
+            data-testid="btn-prefs"
           >
-            <option value="compact">紧凑 28px</option>
-            <option value="standard">标准 32px</option>
-            <option value="loose">宽松 36px</option>
-          </select>
-          <select
-            value={themeMode}
-            onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
-            title="外观（跟随系统 / 浅色 / 深色）"
-            data-testid="theme-select"
-          >
-            <option value="system">外观：跟随系统</option>
-            <option value="light">外观：浅色</option>
-            <option value="dark">外观：深色</option>
-          </select>
+            <IconGear size={11} />
+          </button>
           {openTab ? (
             <span style={{ color: 'var(--text-dim)' }} data-testid="toolbar-locate-strategy">
               定位策略：
@@ -5647,6 +5860,7 @@ if (table.kind === 'table') {
         {tableTabs.map((t) => (
           <TablePane
             key={t.id}
+            backend={backend}
             tab={t}
             active={!browseMode && ws.activeId === t.id}
             source={sources.get(t.id) ?? null}
@@ -5690,6 +5904,9 @@ if (table.kind === 'table') {
                   connId={t.connId ?? sqlConnId}
                   database={t.database ?? openTab?.database ?? null}
                   databases={t.connId ? (schemas[t.connId] ?? []) : sqlDatabases}
+                  foreignKeys={completionForeignKeys
+                    .filter((fk) => fk.connId === (t.connId ?? sqlConnId))
+                    .map(({ connId: _connId, ...fk }) => fk)}
                   onDatabaseChange={(db) => ws.patchQuery(t.id, { database: db })}
                   initialSql={t.initialSql}
                   onRun={onRunSql}
@@ -5751,8 +5968,21 @@ if (table.kind === 'table') {
             />
           ) : (
             // 0.7.5：三张快捷入口卡（死代码）已删；这里只保留「新建连接」引导。
-            <EmptyState onNewConnection={() => setEditorState('new')} />
+            <EmptyState
+              onNewConnection={() => setEditorState('new')}
+              onPasteUrl={(url) => setEditorState({ seedUrl: url, duplicateOf: null })}
+            />
           )
+        ) : null}
+
+        {/* 0.10.0 P2-09：拖入文件的落点提示（仅 Files 拖拽时出现） */}
+        {dragActive ? (
+          <div className="drop-overlay" data-testid="drop-overlay" aria-hidden="true">
+            <div className="drop-card">
+              <strong>松开以打开</strong>
+              <span>.sql 打开查询（不执行） · .csv/.xlsx/.json 导入当前表</span>
+            </div>
+          </div>
         ) : null}
 
         {toast ? (
@@ -5829,19 +6059,20 @@ if (table.kind === 'table') {
           </span>
           <span>排序：{openTab?.sorts.map((s) => `${s.column} ${s.direction}`).join(', ') || '无'}</span>
           {selectionSummary ? <span>选中 {selectionSummary.rows} 行 / {selectionSummary.cells} 格</span> : null}
-          {statusRowCount.basis !== 'none' ? (
+          {statusResultMeta ? (
             <span
               data-testid="status-row-count"
               data-basis={statusRowCount.basis}
+              data-truncated={openTab?.truncated ? '1' : '0'}
               title={
                 statusRowCount.exact
-                  ? '精确行数：当前已加载的行全部来自结果集'
+                  ? '精确行数；字节为当前已加载结果的列式大小，耗时为本次查询'
                   : statusRowCount.basis === 'truncated'
                     ? '已被行上限截断：这不是全表总数'
                     : 'information_schema 估算值，不做全表 COUNT'
               }
             >
-              {statusRowCount.label}
+              {statusResultMeta}
             </span>
           ) : null}
           {filterCount > 0 ? <span>筛选：{filterCount} 条</span> : null}
@@ -5864,6 +6095,8 @@ if (table.kind === 'table') {
         collapsed={detailCollapsed}
         onToggle={() => setDetailCollapsed((v) => !v)}
         onToast={setToast}
+        rowInspector={rowInspector}
+        schemaLoadedAt={schemasLoadedAt}
       />
 
       {cellModal ? (
@@ -6049,10 +6282,12 @@ if (table.kind === 'table') {
       {paletteOpen ? (
         <CommandPalette
           items={paletteItems}
+          connectionItems={paletteConnectionItems}
           historySource={historySource}
           commands={paletteCommands}
           onClose={() => setPaletteOpen(false)}
           onPickTable={onPickTable}
+          onPickConnection={(it) => void onPickConnection(it)}
           onPickHistory={(it) => {
             setPaletteOpen(false);
             const sql = (it as PaletteItem & { sql?: string }).sql ?? '';
@@ -6074,6 +6309,7 @@ if (table.kind === 'table') {
         <Suspense fallback={<div className="sql-loading">连接编辑器载入中…</div>}>
           <ConnectionEditor
             editing={editorTarget}
+            initialUrl={editorSeedUrl}
             /* P1-8：非空 = 创建副本（保存为新建 + 密文沿用源连接） */
             duplicateOf={editorDuplicateOf}
             onCancel={closeEditor}
@@ -6123,6 +6359,7 @@ if (table.kind === 'table') {
             connId={importTarget.connId}
             database={importTarget.database}
             table={importTarget.table}
+            initialFilePath={importTarget.filePath ?? null}
             onClose={() => setImportTarget(null)}
             onToast={setToast}
             onImported={() => {

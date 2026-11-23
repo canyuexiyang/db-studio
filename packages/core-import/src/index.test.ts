@@ -10,6 +10,7 @@ import {
   guessMapping,
   cellTextToValue,
   buildInsertBatches,
+  validatePreview,
   issuesToCsv,
   normalizeJsonRows,
   jsonCellText,
@@ -176,6 +177,46 @@ describe('buildInsertBatches', () => {
     expect(r.invalidRows[0].fileRow).toBe(2);
     expect(r.invalidRows[0].column).toBe('id');
     expect(r.invalidRows[0].reason).toContain('bigint');
+  });
+
+  it('0.10.0：空字段选「空串」时，可空文本列写入空串而不是 NULL', () => {
+    const rows = [
+      ['id', 'name'],
+      ['1', ''],
+    ];
+    const r = buildInsertBatches('db', 't', rows, ['id', 'name'], cols, { hasHeader: true, emptyAsNull: false });
+    expect(r.insertableRows).toBe(1);
+    expect(r.statements[0].params).toEqual(['1', '']);
+  });
+
+  it('0.10.0：逐列解析 number/boolean 在预览与执行同一口径', () => {
+    const rows = [
+      ['id', 'name'],
+      ['1,234', 'yes'],
+    ];
+    const table = [
+      C({ name: 'id', dataType: 'int', nullable: false }),
+      C({ name: 'name', dataType: 'varchar(8)', nullable: false }),
+    ];
+    const r = buildInsertBatches('db', 't', rows, ['id', 'name'], table, {
+      hasHeader: true,
+      parsers: ['number', 'boolean'],
+    });
+    expect(r.invalidRows).toEqual([]);
+    expect(r.statements[0].params).toEqual(['1234', '1']);
+    const preview = validatePreview(rows, ['id', 'name'], table, true, {
+      parsers: ['number', 'boolean'],
+    });
+    expect(preview.issues).toEqual([]);
+  });
+
+  it('0.10.0：SQL 预览把参数转成字面量，且单引号转义', () => {
+    const rows = [
+      ['id', 'name'],
+      ['1', "o'brien"],
+    ];
+    const r = buildInsertBatches('db', 't', rows, ['id', 'name'], cols, { hasHeader: true, withPreview: true });
+    expect(r.statements[0].previewSql).toBe("INSERT INTO `db`.`t` (`id`, `name`) VALUES ('1', 'o''brien');");
   });
 
   it('NOT NULL 空值被拒', () => {

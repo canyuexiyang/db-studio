@@ -10,6 +10,7 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 
 | 版本 | 日期 | 主题 | 门禁 | 分发 |
 |---|---|---|---|---|
+| **0.10.0** | 2026-11-23 | **DBDelve 借鉴轮（P0/P1/P2 共 11 项）**：行检查器（当前行全字段/编辑）· 执行计划 2.0（估算条形/全表扫/估算行）· 导入 SQL 预览 + 空字段 NULL/空串 + 逐列解析 · 只读结构页（列/索引/FK）· 命令面板 `#` 连接 scope · 状态栏行数/截断/字节/耗时 · 外键感知 JOIN ON 补全 · 欢迎页 URL 粘贴 · 拖拽 `.sql`/`.csv` · 表体积/缓存年龄 · 工具栏外观下沉 | **2550 单测（101 文件）** / verify **exit 0（20 道）** / e2e:ui **484** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / ddl:real 22 / script:ui 18 / 首屏 618.5 KB | ✅ 本机安装（未跑 verify:installed，按要求跳过） |
 | **0.9.0** | 2026-11-18 | **一次迭代：全站样式基线 v1.0 + 查询工具栏**：中性精修令牌/布局/组件全量落地；查询工具栏单行 44px、按钮按频率重排、超出时左右箭头横向滚动、徽标不压缩；保存按钮未关联文件统一「保存文件」 | **2537 单测（99 文件）** / verify **exit 0（20 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / ddl:real 22 / script:ui 18 / 首屏 598.5 KB / verify:installed **22/22** | ✅ GitHub Release + 本机安装 |
 | **0.8.0** | 2026-11-11 | **验收可信度与规模（P1 八项 + 新功能）**：① **12 个对象生命周期入口的真库回放**（新建 `e2e-ddl-real.mjs`，复用生产同款构造器 + `information_schema` 回读，取代此前 demo「恒 `committed:true`」的假绿）；② `loadTable` 并发闸门（`RequestGate` 按 tabId 请求序号，防慢的旧响应覆盖新条件结果）；③ 结果预算改**全量真实累计**（修「前 200 行采样在「前窄后宽」时低估 → 64MiB 预算形同虚设」）；④ EXPLAIN 补 `running` 守卫（三个执行入口统一并发口径）；⑤ 保存提交在飞标记（防二次提交撞 BUSY 报假「连接忙」）；⑥ 面板宽度**联合**约束（sidebar+detail ≤ 窗口宽−320，修「最小窗口下工作区被压成 0 且宽度已持久化」）；⑦ 门禁假绿修复（补**幽灵 token** 门禁：无 fallback 引用未定义变量=0、带 fallback 棘轮基线 3，证伪验证通过）；⑧ 配置损坏不再静默清空（备份 `.bak.<时间戳>` + 留痕 + UI 如实告知）+ 主进程生产环境落盘日志；⑨ **powerMonitor 休眠释放连接**（suspend 释放含 SSH 隧道 / resume 不主动重连 / 锁屏不动）；⑩ 脏改动守卫**单槽位并发收口**（修「truncate 后批量重载时前一个标签页重载静默消失 + Promise 泄漏」） | **2537 单测（99 文件）** / verify **exit 0（20 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / **ddl:real 22** / script:ui 18 / 首屏 597.2 KB | ✅ GitHub Release + 本机安装 |
 | **0.7.5** | 2026-11-10 | **一致性与上手（P2 八类收口）**：focus ring 两处失效修复 + `--sql-*` 三处一致性门禁 + `font:` 简写字号收敛、6 处字符图标换 SVG、⌘⇧F/⌘S/F12 键位冲突收口 + 全局键 `e.target` 放行、SQL 编辑器 ⌘F 查找面板、空态区分「筛选无结果/空表」+ 无列占位、idle 断开横幅、删除死引导卡、命令面板补 2 条不可达 IPC 入口、README 4 处事实偏差校正 | **2487 单测（93 文件）** / verify **exit 0（19 道）** / e2e:ui **480** / e2e:app **72** / e2e:keys 47 / e2e 74 / transfer 36 / ssh 18 / idle 16 / keepalive 17 / idle:ui 4 / toolbar-fit 22 / script:data 10 / affected 21 / conflict 17 / script:ui 18 | ✅ 随 v0.8.0 发布（未单独打 tag） |
@@ -28,6 +29,38 @@ DB Studio 的**发布历史与门禁基线**。每次打包发版后在这里追
 
 > 0.1.0~0.3.0 只在本地打了 dmg、未发 GitHub Release，也没有留下门禁数字；
 > 主题按同期 `devlog/` 与 dmg 产物时间对应，未做追溯补录。
+
+---
+
+## v0.10.0（2026-11-23）—— DBDelve 借鉴轮
+
+**范围**：[`product/PLAN-0.10.0-迭代清单.md`](product/PLAN-0.10.0-迭代清单.md)。全部 11 项一次迭代完成，不加新依赖。
+
+**本机安装**：`npm run dist:dir` 打包 + ad-hoc 外层重签自检通过；产物 `apps/desktop/release/mac-arm64/DB Studio.app` 已 `ditto` 到 `/Applications/DB Studio.app`，`CFBundleShortVersionString=0.10.0`，`codesign --verify` 通过。旧 0.9.0 已备份到 `apps/desktop/release/.prev-installed-0.9.0-before-0.10.0.app`。按要求本轮**未跑** `verify:installed`。
+
+### P0（信息面补齐）
+
+- **行检查器**：表标签右侧详情面板新增「行」页签；当前行全字段纵读、按列名/值过滤、NULL/空串/二进制区分、JSON 美化、字段复制；编辑只标脏，仍走 `⌘S` 保存预演，**不新增写路径**。
+- **执行计划 2.0**：`ExplainNode` 增加 `costValue/estimatedRows/rowsExamined/filteredPct`；计划页新增相对成本条、`ALL` 全表扫红色计数、排序/临时表告警、节点汇总；仍只发 `EXPLAIN FORMAT=JSON`，不执行查询。
+- **导入向导**：Rows/SQL 双预览；SQL 由与执行同源的 `buildInsertBatches(..., withPreview)` 生成；空字段可选 NULL/空串（默认 NULL，保持 0.7.x 行为）；逐列「解析为」auto/text/number/date/boolean；数值/日期/布尔列的空串仍拒绝，防止 MySQL 静默转 0。
+
+### P1（对象上下文与键盘）
+
+- **结构页**：表标签新增 数据/结构 视图；结构页只读展示概览/字段/索引/外键；索引按需 `includeIndexes=true` 加载，不拖慢表首屏；「设计」仍打开既有设计器。
+- **命令面板连接 scope**：输入 `#` 进入 Connections；按分组展示、当前连接徽章；已连接在树中定位，未连接走既有握手/密码提示。
+- **状态栏结果透明度**：行数/是否截断/列式字节数/本次耗时合并为一个可断言单元；未知不编造。
+- **外键感知补全**：已加载外键参与 `JOIN <table> ` 后的 `ON` 建议；无外键数据不按列名猜；歧义不自动插入。
+
+### P2（上手与减负）
+
+- **欢迎页 URL**：无连接空态支持粘贴 `mysql://` / `mariadb://`，解析后预填新建表单；密码只在表单内存，保存仍走 safeStorage。
+- **拖拽文件**：窗口级 drop；`.sql` 开新查询且不执行，`.csv/.tsv/.xlsx/.json` 预选进入当前表导入向导；preload 经 `webUtils.getPathForFile` 取真实路径。
+- **表体积/缓存年龄**：详情面板按需拉 `information_schema.TABLES`，显示数据/索引大小、创建时间与 schema 快照年龄；读不到显示「—」。
+- **工具栏减负**：移除主题/行高两个下拉，统一进偏好设置（`⌘,`）；工具栏只保留对象动作，行高变化实时生效。
+
+### 门禁
+
+`npm run verify` 全链通过（MySQL fixture 在线）：typecheck → test 2550 → check:bundle 9/9 → e2e 74 → transfer 36 → ssh 18 → grid → idle/keepalive/idle:ui → e2e:ui 484 → toolbar-fit 22 → script:data 10 → affected 21 → conflict 17 → ddl:real 22 → script:ui 18 → e2e:app 72 → e2e:keys 47。本轮新增 0.10.0 专项 UI 断言：状态栏结果元数据、行检查器、结构页。
 
 ---
 

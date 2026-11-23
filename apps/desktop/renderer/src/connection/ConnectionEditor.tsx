@@ -38,6 +38,7 @@ import {
   DEFAULT_IDLE_TIMEOUT_MS,
   COLOR_TAGS,
   SUPPORTED_TYPES,
+  parseMysqlUrl,
   type ConnectionConfig,
   type DbType,
   type ColorTag,
@@ -49,6 +50,11 @@ import { useEscapeClose } from '../ui/useEscapeClose';
 export interface ConnectionEditorProps {
   /** null = 新建；否则预填这条已有连接（创建副本时传的是源连接） */
   editing: ConnectionConfig | null;
+  /**
+   * 0.10.0 P2-08：欢迎页粘贴的连接 URL。只在新建时生效；
+   * 解析失败按普通新建处理（欢迎页会先给原因，不让表单替它猜）。
+   */
+  initialUrl?: string | null;
   /**
    * P1-8 创建副本：源连接 id。非空 = 保存为**一条新连接**，且密文由主进程
    * 从源连接按字节复制。
@@ -138,6 +144,7 @@ const Field: React.FC<{
 
 export function ConnectionEditor({
   editing,
+  initialUrl,
   duplicateOf,
   onCancel,
   onSave,
@@ -148,9 +155,22 @@ export function ConnectionEditor({
   const isNew = editing === null;
   /** 创建副本：有源就有标记，两者同生同灭（App 用同一个 state 传下来） */
   const isDuplicate = !isNew && typeof duplicateOf === 'string' && duplicateOf.length > 0;
+  /** 欢迎页粘贴的 URL 只在新建时当种子；密码只进本次表单内存 */
+  const seed = !isNew || !initialUrl ? null : parseMysqlUrl(initialUrl);
 
   const [form, setForm] = useState<ConnectionConfig>(() => {
-    const base = editing ?? defaultConnectionConfig({ type: 'mysql' });
+    let base = editing ?? defaultConnectionConfig({ type: 'mysql' });
+    if (!editing && seed) {
+      base = {
+        ...base,
+        type: 'mysql',
+        name: seed.database ?? seed.host,
+        host: seed.host,
+        port: seed.port,
+        user: seed.user,
+        defaultDatabase: seed.database,
+      };
+    }
     /**
      * 编辑时把凭据字段归一成 `string | null`，但**必须保留 '' 这个区分**：
      * 主进程剥密文时，`''` = "存过"，`null` = "没有"。
@@ -173,7 +193,7 @@ export function ConnectionEditor({
   });
 
   /** 明文密码。只在内存里活到保存/测试那一刻 */
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(seed?.password ?? '');
   const [sshPassword, setSshPassword] = useState('');
   const [passphrase, setPassphrase] = useState('');
 

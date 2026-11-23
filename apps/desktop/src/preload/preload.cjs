@@ -16,7 +16,7 @@
  *    （纯浏览器 dev 模式下没有 IPC → 降级到 demo 数据，见 App.tsx）
  */
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const { IPC } = require('../shared/ipc-channels.cjs');
 
 /** 统一的 invoke 包装：把异常收敛成 IpcResult，渲染侧无需满屏 try/catch */
@@ -44,6 +44,18 @@ function subscribe(channel, cb) {
 }
 
 contextBridge.exposeInMainWorld('dbStudio', {
+  /**
+   * 0.10.0 P2-09：拖入文件的真实路径。
+   * Electron 32+ 移除了 File.path，必须经 webUtils 取；取不到返回 ''，
+   * 由渲染层决定降级（.sql 可用 file.text()，导入则必须路径）。
+   */
+  pathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file) || '';
+    } catch {
+      return '';
+    }
+  },
   // ---- 连接 ----
   connList: () => invoke(IPC.CONN_LIST, null),
   connCreate: (input) => invoke(IPC.CONN_CREATE, input),

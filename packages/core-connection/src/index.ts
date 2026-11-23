@@ -655,3 +655,40 @@ export function buildGroupTree(list: ConnectionConfig[], extraGroups: readonly s
 export function isProduction(cfg: ConnectionConfig): boolean {
   return cfg.colorTag === 'red';
 }
+
+
+/**
+ * 0.10.0 P2-08：解析 MySQL 连接 URL（欢迎页粘贴用）。
+ *
+ * 只接受 mysql:// 与 mariadb://，只负责拆字段；SSL/SSH 等仍由表单决定。
+ * 密码做 decodeURIComponent，但**不**在此处持久化、不写日志。
+ * 非法输入返回 null，由 UI 给中文原因（不抛异常）。
+ */
+export interface ParsedMysqlUrl {
+  host: string;
+  port: number;
+  user: string;
+  password: string | null;
+  database: string | null;
+}
+
+export function parseMysqlUrl(raw: string): ParsedMysqlUrl | null {
+  const text = (raw ?? '').trim();
+  if (text === '') return null;
+  let u: URL;
+  try {
+    u = new URL(text);
+  } catch {
+    return null;
+  }
+  const proto = u.protocol.toLowerCase();
+  if (proto !== 'mysql:' && proto !== 'mariadb:') return null;
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (host === '') return null;
+  const port = u.port === '' ? 3306 : Number(u.port);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  const user = decodeURIComponent(u.username ?? '');
+  const password = u.password === '' ? null : decodeURIComponent(u.password);
+  const db = decodeURIComponent((u.pathname ?? '').replace(/^\//, ''));
+  return { host, port, user, password, database: db === '' ? null : db };
+}

@@ -325,6 +325,18 @@ export const SHOW_CREATE_DDL_COLUMN: Record<ObjectKind, string> = {
   event: 'Create Event',
 };
 
+/** 一条索引（0.10.0 P1-04 结构页用；来自 information_schema.STATISTICS） */
+export interface TableIndexInfo {
+  name: string;
+  /** 唯一索引（含主键） */
+  unique: boolean;
+  kind: 'primary' | 'unique' | 'index';
+  /** BTREE / FULLTEXT / SPATIAL … */
+  type: string | null;
+  /** 按 SEQ_IN_INDEX 排的列名；函数索引的列可能为 null */
+  columns: (string | null)[];
+}
+
 /** information_schema.TABLES 单行的表信息（C9 表信息面板 / A14 行数估算） */
 export interface TableInfo {
   engine: string | null;
@@ -339,6 +351,8 @@ export interface TableInfo {
   /** CREATE_TIME 服务端原文（dateStrings 下是 'YYYY-MM-DD HH:MM:SS'） */
   createTime: string | null;
   autoIncrement: number | null;
+  /** 仅 includeIndexes=true 时返回（结构页按需加载，不拖慢表首屏） */
+  indexes?: TableIndexInfo[];
 }
 
 /** utf8mb4_0900_ai_ci → utf8mb4；无下划线（如 binary）本身就是字符集名 */
@@ -798,7 +812,11 @@ export class MySqlDriver {
    * 列顺序由本方法的 SELECT 文本决定（rowsAsArray 下按下标解构即可）；
    * 返回 null 表示表不存在，由调用方决定报错方式。
    */
-  async getTableInfo(database: string, table: string): Promise<TableInfo | null> {
+  async getTableInfo(
+    database: string,
+    table: string,
+    opts?: { includeIndexes?: boolean },
+  ): Promise<TableInfo | null> {
     const res = await this.query(
       `SELECT ENGINE, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, TABLE_COLLATION,
               TABLE_COMMENT, CREATE_TIME, AUTO_INCREMENT
@@ -818,7 +836,7 @@ export class MySqlDriver {
     };
     const collation = str(row[4]);
 
-    return {
+    const info: TableInfo = {
       engine: str(row[0]),
       rowsEstimate: num(row[1]),
       dataLength: num(row[2]),
@@ -831,6 +849,47 @@ export class MySqlDriver {
       createTime: str(row[6]),
       autoIncrement: num(row[7]),
     };
+    // 结构页按需加载：默认不查，避免每次打开表都多一次 SHOW INDEX
+    if (opts?.includeIndexes) info.indexes = await this.listIndexes(database, table);
+    return info;
+  }
+
+  /**
+   * 0.10.0 P1-04：一张表的索引。
+   *
+   * 用 information_schema.STATISTICS 而非 SHOW INDEX：字段名稳定、可显式排序，
+   * 也不必依赖 SHOW 的列位置（MySQL 5.7/8.0 的 SHOW 列数不同）。
+   * 结构页只读展示，不参与生成 DDL。
+   */
+  async listIndexes(database: string, table: string): Promise<TableIndexInfo[]> {
+    const res = await this.query(
+      `SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, INDEX_TYPE
+       FROM information_schema.STATISTICS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+       ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
+      [database, table],
+    );
+    const byName = new Map<string, TableIndexInfo>();
+    for (const row of res.rows) {
+      const name = row[0] == null ? '' : String(row[0]);
+      if (name === '') continue;
+      const unique = Number(row[1]) === 0;
+      const col = row[3] == null ? null : String(row[3]);
+      const type = row[4] == null ? null : String(row[4]);
+      const cur = byName.get(name);
+      if (cur) {
+        cur.columns.push(col);
+      } else {
+        byName.set(name, {
+          name,
+          unique,
+          kind: name.toUpperCase() === 'PRIMARY' ? 'primary' : unique ? 'unique' : 'index',
+          type,
+          columns: [col],
+        });
+      }
+    }
+    return [...byName.values()];
   }
 
   /**

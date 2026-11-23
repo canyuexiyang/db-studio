@@ -55,6 +55,8 @@ async function main() {
     database,
     tableName,
     retryRows,
+    emptyAsNull,
+    parsers,
   } = job;
 
   const startedAt = Date.now();
@@ -133,6 +135,8 @@ async function main() {
     hasHeader: effHeader,
     batchSize: batchSize || 1000,
     retryRows: retry.length > 0 ? retry : undefined,
+    emptyAsNull: emptyAsNull !== false,
+    parsers: Array.isArray(parsers) ? parsers : undefined,
   });
 
   if (plan.insertableRows === 0) {

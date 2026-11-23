@@ -259,8 +259,18 @@ export interface ExplainNode {
   detail: string[];
   /** 优化器估算成本（cost_info.query_cost / prefix_cost），缺省无 */
   cost?: string;
+  /** cost 的数值形态（估算版条形用；无 cost_info 时缺省） */
+  costValue?: number;
   /** 原始访问类型（ALL / index / ref / eq_ref / range / const …），UI 据此上色 */
   accessType?: string;
+  /** 优化器估算的输出行数（rows_produced_per_join 优先，其次 rows_examined_per_scan） */
+  estimatedRows?: number;
+  /** 每次扫描检查的行数 */
+  rowsExamined?: number;
+  /** JOIN 输出行数 */
+  rowsProduced?: number;
+  /** 过滤后剩余百分比（0-100） */
+  filteredPct?: number;
   children: ExplainNode[];
 }
 
@@ -362,6 +372,21 @@ function pickCost(costInfo: unknown, prefer: 'query' | 'prefix'): string | undef
   return strOrUndef(ci[prefer === 'query' ? 'query_cost' : 'prefix_cost']) ?? strOrUndef(ci.read_cost);
 }
 
+function numOrUndef(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+function costValueOf(cost: string | undefined): number | undefined {
+  if (cost === undefined) return undefined;
+  const n = Number(cost);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 /** 收集表节点自带的 using_* 布尔旗标为人话列表 */
 function usingFlagTexts(t: Record<string, unknown>): string[] {
   const out: string[] = [];
@@ -398,11 +423,20 @@ function explainTableNode(t: Record<string, unknown>, inheritedFlags: string[]):
 
   detail.push(...inheritedFlags, ...usingFlagTexts(t));
 
+  const cost = pickCost(t.cost_info, 'prefix');
+  const rowsExamined = numOrUndef(t.rows_examined_per_scan);
+  const rowsProduced = numOrUndef(t.rows_produced_per_join);
+  const filteredPct = numOrUndef(t.filtered);
   const node: ExplainNode = {
     title: strOrUndef(t.table_name) ?? strOrUndef(t.table_alias) ?? '未知表',
     detail,
-    cost: pickCost(t.cost_info, 'prefix'),
+    cost,
+    costValue: costValueOf(cost),
     accessType: access,
+    estimatedRows: rowsProduced ?? rowsExamined,
+    rowsExamined,
+    rowsProduced,
+    filteredPct,
     children: [],
   };
 
@@ -468,10 +502,12 @@ function collectExplainChildren(
 
 /** query_block → 树节点 */
 function explainQueryBlockNode(qb: Record<string, unknown>): ExplainNode {
+  const cost = pickCost(qb.cost_info, 'query');
   const node: ExplainNode = {
     title: `SELECT #${strOrUndef(qb.select_id) ?? '?'}`,
     detail: [],
-    cost: pickCost(qb.cost_info, 'query'),
+    cost,
+    costValue: costValueOf(cost),
     children: [],
   };
   collectExplainChildren(qb, [], node.children);

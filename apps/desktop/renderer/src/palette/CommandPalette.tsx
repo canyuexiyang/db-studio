@@ -17,6 +17,8 @@ import { isImeComposing } from '../ui/imeGuard';
 
 export interface CommandPaletteProps {
   items: PaletteItem[];
+  /** 0.10.0 P1-05：# 连接 scope。由宿主按现有 connections 内存数据构建。 */
+  connectionItems?: PaletteItem[];
   /**
    * @ 历史模式的【异步】数据源（走主进程 historySearch，P1-3 接线）。
    * 不传则退化为在 items 里同步过滤 —— demo 后端就是这么降级的。
@@ -27,6 +29,8 @@ export interface CommandPaletteProps {
   onClose: () => void;
   onPickTable: (item: PaletteItem) => void;
   onPickHistory: (item: PaletteItem) => void;
+  /** 0.10.0 P1-05：选中连接（已连接则定位，未连接则握手） */
+  onPickConnection?: (item: PaletteItem) => void;
   /**
    * V6：历史模式下删单条（⌘⌫）。不传则禁用该键。
    * 面板只负责"告知意图 + 关面板"，实际删除与列表刷新由宿主执行。
@@ -49,15 +53,18 @@ const MODE_HINT: Record<PaletteMode, string> = {
   table: '搜索表与视图',
   command: '执行命令',
   history: '搜索查询历史（⌘S 星标 · ⌘⌫ 删除）',
+  connection: '切换连接（# 连接）',
 };
 
 export function CommandPalette({
   items,
+  connectionItems,
   historySource,
   commands,
   onClose,
   onPickTable,
   onPickHistory,
+  onPickConnection,
   onDeleteHistory,
   onToggleHistoryStar,
   historyReloadKey,
@@ -97,8 +104,12 @@ export function CommandPalette({
 
   const { results } = useMemo(() => {
     const effItems = mode === 'history' && remote !== null ? remote : items;
-    return queryPalette(input, { items: effItems, commands }, { limit: 10 });
-  }, [input, items, commands, remote, mode]);
+    return queryPalette(
+      input,
+      { items: effItems, commands, connections: connectionItems ?? [] },
+      { limit: 10 },
+    );
+  }, [input, items, commands, remote, mode, connectionItems]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -118,12 +129,14 @@ export function CommandPalette({
         if (action) onCommand(action);
       } else if (mode === 'history') {
         onPickHistory(item);
+      } else if (mode === 'connection') {
+        onPickConnection?.(item);
       } else {
         onPickTable(item);
       }
       onClose();
     },
-    [results, mode, onCommand, onPickHistory, onPickTable, onClose],
+    [results, mode, onCommand, onPickHistory, onPickConnection, onPickTable, onClose],
   );
 
   return (
@@ -131,7 +144,7 @@ export function CommandPalette({
       <div className="palette" onMouseDown={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
-          placeholder={`${MODE_HINT[mode]}　（: 命令 · @ 历史）`}
+          placeholder={`${MODE_HINT[mode]}　（: 命令 · @ 历史 · # 连接）`}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -211,7 +224,7 @@ export function CommandPalette({
             <kbd className="kbd">esc</kbd> 关闭
           </span>
           <span className="spacer" />
-          <span className="hint">输入 : 命令 · @ 历史</span>
+          <span className="hint">输入 : 命令 · @ 历史 · # 连接</span>
         </div>
       </div>
     </div>

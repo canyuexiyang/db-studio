@@ -14,6 +14,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { DataGrid, type GridColumn, type GridForeignKey } from '../grid/DataGrid';
 import type { GridSnapshotSource } from '../grid/exportSnapshot';
+import type { Backend } from '../backend';
+import { StructureTab } from './StructureTab';
 import type { GridDataSource } from '../grid/useGridData';
 import { FilterBar } from '../grid/FilterBar';
 import { HeaderFilterContext, type HeaderFilterBridge, type ColumnFilterMode } from '../grid/headerFilterBridge';
@@ -105,6 +107,13 @@ export interface TablePaneHandlers {
    */
   onSelectionSummary?: (tabId: string, summary: { rows: number; cells: number } | null) => void;
   /**
+   * 0.10.0 P0-01：焦点单元格回报（行检查器跟随鼠标/键盘）。
+   * 只在激活 pane 接线，理由同 onSelectionSummary。
+   */
+  onActiveCellChange?: (tabId: string, cell: { row: number; col: number } | null) => void;
+  /** 0.10.0 P1-04：从结构页的「设计」按钮打开既有表设计器 */
+  onOpenDesigner?: (tabId: string) => void;
+  /**
    * V9：点击外键值 → 跳转到引用表的那一行（App 侧新开/复用 tab + 按引用列定位）。
    * 走既有 locateStrategy 链路，App 侧负责「引用行不存在」的明确提示。
    */
@@ -148,6 +157,7 @@ export interface TablePaneHandlers {
 }
 
 export interface TablePaneProps {
+  backend: Backend;
   tab: TableTabState;
   active: boolean;
   source: GridDataSource | null;
@@ -217,6 +227,7 @@ export interface TablePaneProps {
 }
 
 export function TablePane({
+  backend,
   tab,
   active,
   source,
@@ -240,6 +251,10 @@ export function TablePane({
   onRedo,
 }: TablePaneProps) {
   const table = tab.table;
+  /** 0.10.0 P1-04：数据 / 结构视图。pane 常挂 DOM，所以切回来仍停在结构页 */
+  const [view, setView] = useState<'data' | 'structure'>('data');
+  /** 结构页首次打开才挂载：不打开就不查 information_schema；挂载后保持，避免来回切重复请求 */
+  const [structureMounted, setStructureMounted] = useState(false);
 
   // ---- 可编辑性：B5 红线，只有 isEditable() 说了算，本组件不自己判主键 ----
   const strategy: LocateStrategy = useMemo(() => locateStrategy(table), [table]);
@@ -436,6 +451,14 @@ export function TablePane({
     [handlers, tab.id],
   );
 
+  // 0.10.0 P0-01：行检查器的焦点格（DataGrid 会在点击/方向键/翻页后回报）
+  const handleActiveCellChange = useCallback(
+    (cell: { row: number; col: number } | null) => {
+      handlers.onActiveCellChange?.(tab.id, cell);
+    },
+    [handlers, tab.id],
+  );
+
   // A2：清除本格改动（网格已执行 source.clearCell，这里只让宿主刷新角标）
   const handleCellCleared = useCallback(
     (row: number, col: number) => {
@@ -509,6 +532,34 @@ export function TablePane({
       data-testid={`pane-${tab.tableName}`}
       data-tab-id={tab.id}
     >
+      {/* 0.10.0 P1-04：Data / Structure 视图切换（只读结构页，编辑仍走设计器） */}
+      <div className="table-view-tabs" role="tablist" aria-label="表视图">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'data'}
+          className={view === 'data' ? 'active' : undefined}
+          onClick={() => setView('data')}
+          data-testid={`table-view-data-${tab.id}`}
+        >
+          数据
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'structure'}
+          className={view === 'structure' ? 'active' : undefined}
+          onClick={() => {
+            setView('structure');
+            setStructureMounted(true);
+          }}
+          data-testid={`table-view-structure-${tab.id}`}
+        >
+          结构
+        </button>
+      </div>
+
+      <div className={view === 'data' ? 'ws-view' : 'ws-view-hidden'}>
       {/*
         T26：条件条。
         🔴 渲染条件刻意保持「有已生效条件才出现」—— 无筛选时不凭空多一条 bar，
@@ -608,6 +659,7 @@ export function TablePane({
           // P0-1：导出快照取数口（选区/已加载行/可见列）
           onExportSnapshot={handlers.onExportSnapshot ? handleExportSnapshot : undefined}
           onSelectionSummary={active ? handleSelectionSummary : undefined}
+          onActiveCellChange={active ? handleActiveCellChange : undefined}
           // V22：截断提示条。三个数据任一缺失都不影响渲染（网格侧逐项降级），
           // 但 rowLimit 必须与 App 实际请求的 limit 同源，否则「是否还有更多」会算错
           truncated={truncated}
@@ -620,6 +672,19 @@ export function TablePane({
           // P1-9 / P2-18a/b：网格侧的一句话反馈上抛（无 toast 状态，不重复造）
           onNotice={handlers.onNotice ? (msg) => handlers.onNotice!(tab.id, msg) : undefined}
         />
+      ) : null}
+      </div>
+      {structureMounted ? (
+        <div className={view === 'structure' ? 'ws-view' : 'ws-view-hidden'}>
+          <StructureTab
+            backend={backend}
+            connId={tab.connId}
+            database={tab.database}
+            table={table}
+            onEdit={() => handlers.onOpenDesigner?.(tab.id)}
+            onToast={handlers.onNotice ? (msg) => handlers.onNotice!(tab.id, msg) : undefined}
+          />
+        </div>
       ) : null}
     </div>
     </HeaderFilterContext.Provider>

@@ -295,6 +295,13 @@ export interface DataGridProps {
   /** F5：选中统计回报（null = 无选择）；App 状态栏显示「选中 N 行 / M 格」 */
   onSelectionSummary?: (summary: { rows: number; cells: number } | null) => void;
   /**
+   * 0.10.0 P0-01：焦点单元格变化（鼠标点击、方向键、Tab、翻页都算）。
+   *
+   * 与 `onCellActivated` 的区别：后者只在左键点击时触发（历史命名），
+   * 行检查器要跟随键盘导航，必须单独回报。null = 当前没有有效焦点。
+   */
+  onActiveCellChange?: (cell: { row: number; col: number } | null) => void;
+  /**
    * 遗留宿主钩子（可选）：⌘C 已改为网格内部复制选中区（A17），不再依赖宿主。
    * 复制成功后回调一次，宿主只想 toast/统计时用。
    */
@@ -441,6 +448,7 @@ export function DataGrid(props: DataGridProps) {
     onVisibleColumnsChange,
     onExportSnapshot,
     onSelectionSummary,
+    onActiveCellChange,
     onCopy,
     // 网格 D
     truncated,
@@ -1026,6 +1034,18 @@ export function DataGrid(props: DataGridProps) {
   useEffect(() => {
     summaryCbRef.current?.(selectionSummary);
   }, [selectionSummary]);
+
+  // 0.10.0 P0-01：焦点格回报给行检查器。selection 是可变对象，靠 selVersion 触发；
+  // 数据量/列数变化时也重报一次（resize 可能把焦点夹回合法范围）。
+  const activeCellCbRef = useRef(onActiveCellChange);
+  useEffect(() => {
+    activeCellCbRef.current = onActiveCellChange;
+  }, [onActiveCellChange]);
+  useEffect(() => {
+    const f = selection.focus;
+    const valid = f.row >= 0 && f.row < rowCount && f.col >= 0 && f.col < colCount;
+    activeCellCbRef.current?.(valid ? { row: f.row, col: f.col } : null);
+  }, [selection, selVersion, rowCount, colCount]);
 
   // ---- V9：外键映射（列名 → 外键信息）----
   // 宿主没传 foreignKeys（或该表没外键）时 map 为空 → 不画链接、不给下拉。

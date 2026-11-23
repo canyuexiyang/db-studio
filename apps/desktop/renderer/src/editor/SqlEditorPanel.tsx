@@ -107,7 +107,7 @@ import type {
 
 
 // 🔴 只在这里 import【类型】，值一律走 lazyCodemirror()
-import type { SqlEditorHandle } from './SqlEditorCore';
+import type { CompletionForeignKey, SqlEditorHandle } from './SqlEditorCore';
 import { isImeComposing } from '../ui/imeGuard';
 import { useMenuBehavior } from '../ui/useMenuBehavior';
 
@@ -125,6 +125,8 @@ export interface SqlEditorPanelProps {
   database: string | null;
   /** E4：补全数据源，只吃内存里的 schema 缓存 */
   databases: DatabaseMeta[];
+  /** 0.10.0 P1-07：JOIN 后按外键补 ON；缺省 = 不补（不猜列名） */
+  foreignKeys?: CompletionForeignKey[];
   initialSql?: string;
   onRun: (req: { connId: string; sql: string; database?: string | null; queryId?: string }) => Promise<{
     payload: ColumnarPayload;
@@ -494,6 +496,8 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
   }, [connId, database]);
   const favoritesRef = useRef(favorites);
   favoritesRef.current = favorites;
+  const foreignKeysRef = useRef(props.foreignKeys ?? []);
+  foreignKeysRef.current = props.foreignKeys ?? [];
 
   // 编辑器实例：dependencies 里【刻意不放 databases】——
   // 补全源通过闭包读最新值，重建编辑器会丢光标与撤销栈
@@ -633,6 +637,9 @@ export function SqlEditorPanel(props: SqlEditorPanelProps) {
         // S3：收藏表名（按当前连接/库过滤后的裸表名）
         get favorites() {
           return favoritesRef.current;
+        },
+        get foreignKeys() {
+          return foreignKeysRef.current;
         },
         // V16/S4：当前查询目标库。没有库上下文时诊断自动只跑词法级规则
         get database() {
@@ -2260,6 +2267,7 @@ function ExplainView({
   }, [parsed.parseError]);
 
   const showTree = mode === 'tree' && parsed.tree !== null;
+  const treeStats = useMemo(() => (parsed.tree ? explainStats(parsed.tree) : null), [parsed.tree]);
 
   return (
     <div className="explain-view">
@@ -2282,12 +2290,21 @@ function ExplainView({
         </button>
         {showTree ? <span className="sql-explain-hint">缩进 = 执行嵌套层级</span> : null}
       </div>
-      {showTree && parsed.tree ? (
-        <div className="sql-explain-tree">
-          {parsed.tree.map((n, i) => (
-            <ExplainTreeNode key={i} node={n} />
-          ))}
-        </div>
+      {showTree && parsed.tree && treeStats ? (
+        <>
+          <div className="sql-explain-summary" data-testid="sql-explain-summary">
+            <span className="sql-explain-est">估算计划（不执行查询）</span>
+            <span>{treeStats.nodes} 个节点</span>
+            {treeStats.maxCost > 0 ? <span>最高 cost {treeStats.maxCost.toFixed(2)}</span> : null}
+            {treeStats.fullScans > 0 ? <span className="sql-warn-text">{treeStats.fullScans} 处全表扫描</span> : null}
+            {treeStats.warnings > 0 ? <span className="sql-warn-text">{treeStats.warnings} 处排序/临时表</span> : null}
+          </div>
+          <div className="sql-explain-tree">
+            {parsed.tree.map((n, i) => (
+              <ExplainTreeNode key={i} node={n} stats={treeStats} />
+            ))}
+          </div>
+        </>
       ) : (
         <ExplainTable rows={parsed.rows} cols={parsed.cols} />
       )}
@@ -2334,15 +2351,69 @@ const ACCESS_BADGE_CLASS: Record<string, string> = {
   INDEX: 'sql-access-index',
 };
 
-function ExplainTreeNode({ node }: { node: ExplainNode }) {
+function flattenExplain(nodes: readonly ExplainNode[]): ExplainNode[] {
+  const out: ExplainNode[] = [];
+  const walk = (list: readonly ExplainNode[]) => {
+    for (const n of list) {
+      out.push(n);
+      walk(n.children);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+interface ExplainStats {
+  maxCost: number;
+  maxRows: number;
+  nodes: number;
+  fullScans: number;
+  warnings: number;
+}
+
+function explainStats(nodes: readonly ExplainNode[]): ExplainStats {
+  const flat = flattenExplain(nodes);
+  let maxCost = 0;
+  let maxRows = 0;
+  let fullScans = 0;
+  let warnings = 0;
+  for (const n of flat) {
+    if (n.costValue !== undefined) maxCost = Math.max(maxCost, n.costValue);
+    if (n.estimatedRows !== undefined) maxRows = Math.max(maxRows, n.estimatedRows);
+    if (n.accessType?.toUpperCase() === 'ALL') fullScans += 1;
+    if (n.detail.some((d) => d.startsWith('Using filesort') || d.startsWith('Using temporary'))) warnings += 1;
+  }
+  return { maxCost, maxRows, nodes: flat.length, fullScans, warnings };
+}
+
+function ExplainTreeNode({ node, stats }: { node: ExplainNode; stats: ExplainStats }) {
   const badge = node.accessType?.toUpperCase() ?? null;
   const badgeClass = badge ? (ACCESS_BADGE_CLASS[badge] ?? 'sql-access-other') : null;
+  // 估算版没有 self time：条形用「cost 占最高节点」的相对值；没有 cost 时退回估算行数。
+  const share =
+    stats.maxCost > 0 && node.costValue !== undefined
+      ? node.costValue / stats.maxCost
+      : stats.maxRows > 0 && node.estimatedRows !== undefined
+        ? node.estimatedRows / stats.maxRows
+        : null;
+  const pct = share === null ? null : Math.max(2, Math.min(100, share * 100));
   return (
     <div className="sql-explain-node">
       <div className="sql-node-row">
+        {pct !== null ? (
+          <span className="sql-node-track" title="相对估算成本/行数（最高节点 = 满格）" aria-hidden="true">
+            <i style={{ width: `${pct}%` }} className={badge === 'ALL' ? 'is-warn' : undefined} />
+          </span>
+        ) : null}
         {badge && badgeClass ? <span className={`sql-access-badge ${badgeClass}`}>{badge}</span> : null}
         <span className="sql-node-title">{node.title}</span>
         {node.cost ? <span className="sql-node-cost">cost {node.cost}</span> : null}
+        <span className="sql-node-metrics">
+          {node.estimatedRows !== undefined ? <span>估行 {formatCount(node.estimatedRows)}</span> : null}
+          {node.filteredPct !== undefined ? (
+            <span className={node.filteredPct < 10 ? 'sql-warn-text' : undefined}>过滤 {node.filteredPct}%</span>
+          ) : null}
+        </span>
         {node.detail.length > 0 ? (
           <div className="sql-node-detail">
             {node.detail.map((d, i) => (
@@ -2366,7 +2437,7 @@ function ExplainTreeNode({ node }: { node: ExplainNode }) {
       {node.children.length > 0 ? (
         <div className="sql-node-kids">
           {node.children.map((c, i) => (
-            <ExplainTreeNode key={i} node={c} />
+            <ExplainTreeNode key={i} node={c} stats={stats} />
           ))}
         </div>
       ) : null}

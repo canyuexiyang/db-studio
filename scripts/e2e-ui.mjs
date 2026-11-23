@@ -261,6 +261,32 @@ try {
     `${await page.locator('.grid-row').count()} 行`);
   await page.waitForTimeout(500);
 
+  // 0.10.0 P0/P1：行检查器 / 结构页 / 状态栏结果透明度
+  {
+    const meta = await page.locator('[data-testid="status-row-count"]').innerText().catch(() => '');
+    ok('0.10.0 状态栏显示行数/字节/耗时', /行/.test(meta) && /(KB|MB|B)/.test(meta) && /ms/.test(meta), meta);
+
+    await page.locator('.grid-row').nth(0).locator('.grid-cell').nth(1).click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-testid="detail-tab-row"]').click();
+    await page.waitForTimeout(200);
+    ok('0.10.0 行检查器打开并显示字段', (await page.locator('[data-testid="row-inspector"]').count()) === 1 &&
+      (await page.locator('[data-testid^="row-inspector-field-"]').count()) > 0,
+      `${await page.locator('[data-testid^="row-inspector-field-"]').count()} 字段`);
+    await page.locator('[data-testid="row-inspector-filter"]').fill('id');
+    await page.waitForTimeout(150);
+    ok('0.10.0 行检查器可按列名过滤', (await page.locator('[data-testid^="row-inspector-field-"]').count()) >= 1);
+    await page.locator('[data-testid="row-inspector-filter"]').fill('');
+
+    await page.locator('.table-view-tabs button', { hasText: '结构' }).click();
+    await page.waitForSelector('[data-testid="structure-tab"]', { timeout: 5000 });
+    await page.waitForTimeout(500);
+    const structure = await page.locator('[data-testid="structure-tab"]').innerText();
+    ok('0.10.0 结构页显示字段/索引/外键分区', /字段（/.test(structure) && /索引/.test(structure) && /外键/.test(structure), structure.slice(0, 80));
+    await page.locator('.table-view-tabs button', { hasText: '数据' }).click();
+    await page.waitForTimeout(200);
+  }
+
   // 2.5 树右键菜单（Navicat 式，2026-09-26 二轮）：表节点与库节点各出各级操作
   {
     await tableNode.click({ button: 'right' });
@@ -660,10 +686,10 @@ try {
   }
 
   // 详情面板折叠
-  await page.locator('.detail-head button').first().click();
+  await page.locator('.detail-head button[title="折叠"]').click();
   await page.waitForTimeout(250);
   ok('详情面板可折叠', (await page.locator('.detail-panel.collapsed').count()) === 1);
-  await page.locator('.detail-head button').first().click();
+  await page.locator('.detail-head button[title="展开详情面板"]').click();
   await page.waitForTimeout(250);
   ok('详情面板可展开', (await page.locator('.detail-panel.collapsed').count()) === 0);
 
@@ -1278,8 +1304,10 @@ try {
     await page.waitForTimeout(300);
 
     // P1-2 深色模式三态：选深色 → data-theme=dark 且 body 背景真的变深
-    const themeSelect = page.locator('[data-testid="theme-select"]');
-    await themeSelect.selectOption('dark');
+    // 0.10.0 P2-11：外观下沉到偏好设置（⌘,）；工具栏不再有 theme-select
+    await page.keyboard.press('Meta+,');
+    await page.waitForSelector('[data-testid="prefs-panel"]', { timeout: 5000 });
+    await page.locator('[data-testid="prefs-theme-dark"]').click();
     await page.waitForTimeout(200);
     const themeAttr = await page.evaluate(() => document.documentElement.dataset.theme);
     const bodyBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -1288,10 +1316,12 @@ try {
       `${themeAttr} ${bodyBg}`);
     const persisted = await page.evaluate(() => localStorage.getItem('dbstudio.theme'));
     ok('P1-2 主题偏好已持久化', persisted === 'dark', String(persisted));
-    await themeSelect.selectOption('light');
+    await page.locator('[data-testid="prefs-theme-light"]').click();
     await page.waitForTimeout(200);
     const bodyBgLight = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     ok('P1-2 选浅色后背景变浅', /rgb\(255, 255, 255\)/.test(bodyBgLight), bodyBgLight);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(150);
 
     // P1-2 面板命令「切换主题」：三态循环 light → dark
     // ⚠️ 用「主题」而不是「切换」—— 后者同时命中「切换只读模式」，回车会执行错命令
@@ -1305,8 +1335,12 @@ try {
     await page.waitForTimeout(300);
     const themeAfterCmd = await page.evaluate(() => document.documentElement.dataset.theme);
     ok('面板执行「切换主题」后生效', themeAfterCmd === 'dark', String(themeAfterCmd));
-    await themeSelect.selectOption('system');
+    await page.keyboard.press('Meta+,');
+    await page.waitForSelector('[data-testid="prefs-panel"]', { timeout: 5000 });
+    await page.locator('[data-testid="prefs-theme-system"]').click();
     await page.waitForTimeout(200);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(150);
 
     // P1-3 @ 历史模式：面板可进历史模式（V6 起 demo 后端预置了 3 条历史 → 列表应真有内容）
     await page.keyboard.press('Meta+k');

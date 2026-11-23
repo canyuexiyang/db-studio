@@ -33,11 +33,15 @@ try {
   await page.screenshot({ path: join(OUT, '1-main-light.png') });
 
   // 2. 深色主题
-  await page.locator('[data-testid="theme-select"]').selectOption('dark');
+  await page.keyboard.press('Meta+,');
+  await page.waitForSelector('[data-testid="prefs-theme-dark"]', { timeout: 5000 });
+  await page.locator('[data-testid="prefs-theme-dark"]').click();
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(OUT, '2-main-dark.png') });
-  await page.locator('[data-testid="theme-select"]').selectOption('light');
+  await page.locator('[data-testid="prefs-theme-light"]').click();
   await page.waitForTimeout(300);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
 
   // 3. 新建连接弹窗
   await page.locator('[data-testid="btn-new-connection"]').click();

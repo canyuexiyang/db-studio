@@ -429,6 +429,8 @@ export interface TableInfoRequest {
   connId: string;
   database: string;
   table: string;
+  /** 0.10.0 P1-04：结构页按需带上索引；缺省不查，避免拖慢表首屏 */
+  includeIndexes?: boolean;
 }
 
 /**
@@ -436,6 +438,14 @@ export interface TableInfoRequest {
  * 🔴 rowsEstimate 是估算值（TABLE_ROWS），【绝不做全表 COUNT】——
  *    千万行表上一次精确 COUNT 就能把「最快查看器」变成「最卡查看器」。
  */
+export interface TableIndexDto {
+  name: string;
+  unique: boolean;
+  kind: 'primary' | 'unique' | 'index';
+  type: string | null;
+  columns: (string | null)[];
+}
+
 export interface TableInfoDto {
   engine: string | null;
   rowsEstimate: number | null;
@@ -446,6 +456,8 @@ export interface TableInfoDto {
   comment: string | null;
   createTime: string | null;
   autoIncrement: number | null;
+  /** 仅 includeIndexes=true 时返回 */
+  indexes?: TableIndexDto[];
 }
 
 // ---------- V9：外键导航与候选值 ----------
@@ -628,6 +640,13 @@ export interface ImportStartRequest {
   batchSize?: number;
   /** E5 失败行重跑：只导这些文件行号（0 基，不含表头）。缺省 = 全部行 */
   retryRows?: number[] | null;
+  /**
+   * 0.10.0 P0-03：空字段语义。缺省/true = NULL（0.7.x 行为）；
+   * false = 空串。数值/日期/布尔列的空串仍会被校验拒绝，避免 MySQL 静默转 0。
+   */
+  emptyAsNull?: boolean;
+  /** 按文件列下标的「解析为」；缺省 auto。工作进程与预览必须同一份数组。 */
+  parsers?: (('auto' | 'text' | 'number' | 'date' | 'boolean') | null)[] | null;
 }
 
 export interface ImportDoneDetail {
@@ -707,6 +726,8 @@ export interface ScriptDoneResult {
 
 /** 渲染侧通过 contextBridge 拿到的 API（preload 注入 window.dbStudio） */
 export interface DbStudioApi {
+  /** 0.10.0 P2-09：拖入文件的绝对路径；取不到返回 ''（File 由 preload 的 webUtils 解析） */
+  pathForFile(file: unknown): string;
   // ---- 连接 ----
   connList(): Promise<IpcResult<ConnListResult>>;
   connCreate(input: SaveConnectionRequest): Promise<IpcResult<ConnectionConfig>>;

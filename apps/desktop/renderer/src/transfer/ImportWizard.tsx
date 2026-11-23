@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Backend } from '../backend';
 import type { TableMeta, ColumnMeta } from '@dbstudio/core-schema-cache';
-import { guessMapping, issuesToCsv, validatePreview, type ImportRowIssue } from '@dbstudio/core-import';
+import { buildInsertBatches, guessMapping, issuesToCsv, validatePreview, type ImportParseAs, type ImportRowIssue } from '@dbstudio/core-import';
 import { IconAlert, IconCheck, IconExport, IconX } from '../ui/icons';
 import { useEscapeClose } from '../ui/useEscapeClose';
 
@@ -28,6 +28,8 @@ export interface ImportWizardProps {
   connId: string;
   database: string;
   table: TableMeta;
+  /** 0.10.0 P2-09：拖入文件时直接预选，跳过原生打开框 */
+  initialFilePath?: string | null;
   onClose: () => void;
   onToast: (msg: string) => void;
   /** 导入完成后刷新网格（重新拉表数据） */
@@ -50,7 +52,7 @@ interface ImportMsg {
 
 type ImportFileFormat = 'csv' | 'tsv' | 'xlsx' | 'json';
 
-export function ImportWizard({ backend, connId, database, table, onClose, onToast, onImported }: ImportWizardProps) {
+export function ImportWizard({ backend, connId, database, table, initialFilePath, onClose, onToast, onImported }: ImportWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [fileFormat, setFileFormat] = useState<ImportFileFormat>('csv');
@@ -72,6 +74,15 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
   /** E3：json 的键序（映射左列）。peek 的首行伪表头拆出来放这里，不占数据行 */
   const [jsonKeys, setJsonKeys] = useState<string[]>([]);
   const [mapping, setMapping] = useState<(string | null)[]>([]);
+  /**
+   * 0.10.0 P0-03：空字段语义与逐列解析。
+   * 🔴 这两个值必须同时传给 validatePreview 和 importStart —— 预览说「通过」
+   *    但 worker 按另一套语义写库，是比不校验更坏的假绿。
+   */
+  const [emptyAsNull, setEmptyAsNull] = useState(true);
+  const [parsers, setParsers] = useState<ImportParseAs[]>([]);
+  /** Step 3 的 Rows / SQL 预览切换 */
+  const [previewMode, setPreviewMode] = useState<'rows' | 'sql'>('rows');
   const [notes, setNotes] = useState<string[]>([]);
   const [phase, setPhase] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [progress, setProgress] = useState({ rowsDone: 0, rowsRead: 0, elapsedMs: 0 });
@@ -116,10 +127,9 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
   }, [backend, onImported]);
 
   // ---------- Step 1：选文件 ----------
-  const pickFile = useCallback(async () => {
+  /** 0.10.0 P2-09：把「选路径」与「读路径」拆开，拖入文件复用同一段解析 */
+  const loadPath = useCallback(async (path: string) => {
     try {
-      const path = await backend.importPickPath();
-      if (!path) return; // 用户取消
       const peek = await backend.importPeek(path, 50);
       // 运行时主进程可能返回 'json'（backend.ts 的渲染侧类型是既有窄化，这里拓宽）
       const fmt = peek.format as ImportFileFormat;
@@ -139,6 +149,7 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
         setHasHeader(false);
         const suggestion = guessMapping(keys, table.columns);
         setMapping(suggestion.mapping);
+        setParsers(keys.map(() => 'auto'));
         setNotes(suggestion.notes);
       } else {
         setJsonKeys([]);
@@ -147,6 +158,7 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
         const headers = peek.rows[0] ?? [];
         const suggestion = guessMapping(headers, table.columns);
         setMapping(suggestion.mapping);
+        setParsers(headers.map(() => 'auto'));
         setNotes(suggestion.notes);
         setHasHeader(true);
       }
@@ -156,6 +168,24 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
       onToast(`读取文件失败：${e instanceof Error ? e.message : String(e)}`);
     }
   }, [backend, table, onToast]);
+
+  const pickFile = useCallback(async () => {
+    try {
+      const path = await backend.importPickPath();
+      if (!path) return; // 用户取消
+      await loadPath(path);
+    } catch (e) {
+      onToast(`读取文件失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [backend, loadPath, onToast]);
+
+  /** 拖入文件：只在首次挂载/路径变化时自动读一次，不覆盖用户已选好的其他文件 */
+  const initialLoadedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialFilePath || initialLoadedRef.current === initialFilePath) return;
+    initialLoadedRef.current = initialFilePath;
+    void loadPath(initialFilePath);
+  }, [initialFilePath, loadPath]);
 
   // ---------- Step 2：列映射 ----------
   /**
@@ -200,6 +230,23 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
     return previewRows[0];
   }, [fileFormat, jsonKeys, previewRows, hasHeader]);
 
+  // 列数变化（换分隔符/编码后重解析）时补齐解析方式；已有选择不重置
+  useEffect(() => {
+    setParsers((prev) => {
+      if (prev.length === fileHeaders.length) return prev;
+      const next = fileHeaders.map((_, i) => prev[i] ?? 'auto');
+      return next;
+    });
+  }, [fileHeaders.length]);
+
+  const changeParsers = useCallback((fileIdx: number, value: ImportParseAs) => {
+    setParsers((prev) => {
+      const next = [...prev];
+      next[fileIdx] = value;
+      return next;
+    });
+  }, []);
+
   const changeMapping = useCallback((fileIdx: number, value: string | null) => {
     setMapping((prev) => {
       const next = [...prev];
@@ -226,8 +273,26 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
   const previewHeader = fileFormat === 'json' ? false : hasHeader;
   const previewIssues = useMemo(() => {
     if (previewRows.length === 0) return { issues: [] as PreviewIssue[] };
-    return validatePreview(previewRows, mapping, table.columns, previewHeader);
-  }, [previewRows, mapping, table, previewHeader]);
+    return validatePreview(previewRows, mapping, table.columns, previewHeader, { emptyAsNull, parsers });
+  }, [previewRows, mapping, table, previewHeader, emptyAsNull, parsers]);
+
+  /**
+   * SQL 预览：用与执行相同的 `buildInsertBatches`（同一份 normalization/校验），
+   * 只把参数渲染成字面量。大文件只预演前 20 行，并明说不是全部 ——
+   * 不在这里假装能一次展示 5 万条 INSERT。
+   */
+  const sqlPreview = useMemo(() => {
+    if (previewRows.length === 0) return '';
+    if (!mapping.some((m) => m !== null)) return '';
+    const plan = buildInsertBatches(database, table.name, previewRows.slice(0, 21), mapping, table.columns, {
+      hasHeader: previewHeader,
+      emptyAsNull,
+      parsers,
+      batchSize: 20,
+      withPreview: true,
+    });
+    return plan.statements.map((st) => st.previewSql).filter(Boolean).join('\n');
+  }, [previewRows, database, table, mapping, previewHeader, emptyAsNull, parsers]);
 
   const mappedCount = mapping.filter((m) => m !== null).length;
 
@@ -259,6 +324,9 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
             autoIncrement: c.autoIncrement,
           })),
           retryRows: retryRows && retryRows.length > 0 ? retryRows : null,
+          // 0.10.0 P0-03：与预览同源的空值语义/逐列解析
+          emptyAsNull,
+          parsers,
         });
         jobIdRef.current = r.jobId;
       } catch (e) {
@@ -266,7 +334,7 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
         setPhase('error');
       }
     },
-    [backend, connId, database, delimiter, encoding, fileFormat, filePath, hasHeader, mapping, table],
+    [backend, connId, database, delimiter, encoding, fileFormat, filePath, hasHeader, mapping, table, emptyAsNull, parsers],
   );
 
   const cancelImport = useCallback(async () => {
@@ -415,6 +483,7 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
                   <tr>
                     <th>{mappingLeftLabel}</th>
                     <th>导入到表列</th>
+                    <th>解析为</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -431,10 +500,36 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
                           ))}
                         </select>
                       </td>
+                      <td>
+                        <select
+                          value={parsers[i] ?? 'auto'}
+                          onChange={(e) => changeParsers(i, e.target.value as ImportParseAs)}
+                          title="只做无歧义归一化：数字去千分位、日期统一 - 分隔、布尔转 1/0"
+                          data-testid={`import-parse-${i}`}
+                        >
+                          <option value="auto">自动</option>
+                          <option value="text">文本</option>
+                          <option value="number">数字</option>
+                          <option value="date">日期</option>
+                          <option value="boolean">布尔</option>
+                        </select>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              <div className="import-empty-field" data-testid="import-empty-field">
+                <span>空字段表示</span>
+                <label>
+                  <input type="radio" checked={emptyAsNull} onChange={() => setEmptyAsNull(true)} name="empty-field" />
+                  NULL（默认）
+                </label>
+                <label>
+                  <input type="radio" checked={!emptyAsNull} onChange={() => setEmptyAsNull(false)} name="empty-field" />
+                  空字符串
+                </label>
+                <span className="import-note-inline">数值/日期/布尔列的空串仍会被拒绝，不会静默写成 0。</span>
+              </div>
               {notes.length > 0 ? (
                 <ul className="import-notes">
                   {notes.slice(0, 5).map((n, i) => (
@@ -448,14 +543,46 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
           {/* Step 3 */}
           {step === 3 ? (
             <div className="import-step3">
-              <p className="export-hint">
-                前 {Math.max(0, previewRows.length - (previewHeader ? 1 : 0))} 行预演校验：
-                {previewIssues.issues.length === 0 ? (
-                  <b className="ok">全部通过</b>
-                ) : (
-                  <b className="bad">{previewIssues.issues.length} 处问题（这些行不会导入）</b>
-                )}
-              </p>
+              <div className="import-preview-head">
+                <p className="export-hint">
+                  前 {Math.max(0, previewRows.length - (previewHeader ? 1 : 0))} 行预演校验：
+                  {previewIssues.issues.length === 0 ? (
+                    <b className="ok">全部通过</b>
+                  ) : (
+                    <b className="bad">{previewIssues.issues.length} 处问题（这些行不会导入）</b>
+                  )}
+                </p>
+                <div className="import-preview-tabs" role="tablist" aria-label="导入预览">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={previewMode === 'rows'}
+                    className={previewMode === 'rows' ? 'active' : undefined}
+                    onClick={() => setPreviewMode('rows')}
+                    data-testid="import-preview-rows"
+                  >
+                    数据行
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={previewMode === 'sql'}
+                    className={previewMode === 'sql' ? 'active' : undefined}
+                    onClick={() => setPreviewMode('sql')}
+                    data-testid="import-preview-sql"
+                  >
+                    SQL
+                  </button>
+                </div>
+              </div>
+              {previewMode === 'sql' ? (
+                <div className="import-sql-wrap" data-testid="import-sql-preview">
+                  <div className="import-sql-note">
+                    预览前 {Math.min(20, Math.max(0, previewRows.length - (previewHeader ? 1 : 0)))} 行；实际执行由 worker 按同一语义分批生成。
+                  </div>
+                  <pre className="import-sql">{sqlPreview || '（没有可预览的 SQL：列映射为空或全部行校验失败）'}</pre>
+                </div>
+              ) : (
               <div className="import-preview-grid" data-testid="import-preview">
                 <table>
                   <thead>
@@ -483,6 +610,7 @@ export function ImportWizard({ backend, connId, database, table, onClose, onToas
                   </tbody>
                 </table>
               </div>
+              )}
               {previewIssues.issues.length > 0 ? (
                 <ul className="import-notes">
                   {previewIssues.issues.slice(0, 5).map((x, i) => (

@@ -21,9 +21,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { TableMeta } from '@dbstudio/core-schema-cache';
+import type { TableInfoDto } from '../../../src/shared/ipc-channels.js';
+import { formatResultBytes } from '../workspace/resultMeta';
 import { tableFacts } from '@dbstudio/core-sql-editor/facts';
 import { pickBackend } from '../backend';
 import { IconCopy, IconFileCode } from '../ui/icons';
+import { RowInspector, type RowInspectorProps } from './RowInspector';
 
 export interface DetailPanelProps {
   table: TableMeta | null;
@@ -37,6 +40,27 @@ export interface DetailPanelProps {
   onToggle: () => void;
   /** 可选 toast（复制结果反馈）；宿主未接时静默降级 */
   onToast?: (message: string) => void;
+  /**
+   * 0.10.0 P0-01：当前行视图。
+   *
+   * null = 没有激活表/没有选中行；此时「行」页签禁用并说明原因，
+   * 不伪造一个空行面板。值仍由宿主传入的 source 现场读取（脏格优先），
+   * 本组件不持有行数据副本。
+   */
+  rowInspector?: RowInspectorProps | null;
+  /** 0.10.0 P2-10：schema 快照的本地加载时刻（用于显示缓存年龄） */
+  schemaLoadedAt?: number | null;
+}
+
+/** 相对时间：详情面板不引入日期库，够用即可 */
+function describeAge(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return '刚刚';
+  if (min < 60) return `${min} 分钟前`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
 }
 
 /**
@@ -48,8 +72,41 @@ export interface DetailPanelProps {
  */
 const DDL_DEBOUNCE_MS = 120;
 
-export function DetailPanel({ table, database, connId, collapsed, onToggle, onToast }: DetailPanelProps) {
+export function DetailPanel({ table, database, connId, collapsed, onToggle, onToast, rowInspector, schemaLoadedAt }: DetailPanelProps) {
   const facts = useMemo(() => (table ? tableFacts(table) : []), [table]);
+  const [view, setView] = useState<'table' | 'row'>('table');
+
+  // 当前行消失（切表/清空选择）时退回表信息，避免停在一个永远空的行页
+  useEffect(() => {
+    if (view === 'row' && !rowInspector) setView('table');
+  }, [view, rowInspector]);
+
+  // ---- 0.10.0 P2-10：表体积 / 创建时间（information_schema，估算口径）----
+  const [info, setInfo] = useState<TableInfoDto | null>(null);
+  useEffect(() => {
+    if (!table || !connId || !database) {
+      setInfo(null);
+      return;
+    }
+    let alive = true;
+    // 换表先把上一张表的体积清掉，避免请求返回前把 A 表大小标在 B 表上
+    setInfo(null);
+    const timer = setTimeout(() => {
+      void pickBackend()
+        .schemaGetTableInfo({ connId, database, table: table.name })
+        .then((r) => {
+          if (alive) setInfo(r);
+        })
+        .catch(() => {
+          // 体积读不到不影响详情：表格其余部分照常显示
+          if (alive) setInfo(null);
+        });
+    }, 160);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [connId, database, table?.name]);
 
   // ---- 表结构语句（SHOW CREATE TABLE）----
   const [ddl, setDdl] = useState<string | null>(null);
@@ -120,13 +177,39 @@ export function DetailPanel({ table, database, connId, collapsed, onToggle, onTo
     <aside className="detail-panel">
       <div className="detail-head">
         <span>详情</span>
+        <div className="detail-view-tabs" role="tablist" aria-label="详情视图">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'table'}
+            className={view === 'table' ? 'active' : undefined}
+            onClick={() => setView('table')}
+            data-testid="detail-tab-table"
+          >
+            表
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'row'}
+            className={view === 'row' ? 'active' : undefined}
+            onClick={() => rowInspector && setView('row')}
+            disabled={!rowInspector}
+            title={rowInspector ? '查看当前行全部字段' : '先在表标签里选中一行'}
+            data-testid="detail-tab-row"
+          >
+            行
+          </button>
+        </div>
         <span className="spacer" />
         <button onClick={onToggle} title="折叠">
           ›
         </button>
       </div>
 
-      {!table ? (
+      {view === 'row' && rowInspector ? (
+        <RowInspector {...rowInspector} />
+      ) : !table ? (
         <div className="detail-section">
           <h4>未选中表</h4>
           <div className="detail-empty">在左侧树中单击一张表即可查看它的信息、字段与建表语句</div>
@@ -149,6 +232,16 @@ export function DetailPanel({ table, database, connId, collapsed, onToggle, onTo
                   <dd>{f.value}</dd>
                 </div>
               ))}
+              <dt>数据大小</dt>
+              <dd>{info?.dataLength != null ? formatResultBytes(info.dataLength) : '—'}</dd>
+              <dt>索引大小</dt>
+              <dd>{info?.indexLength != null ? formatResultBytes(info.indexLength) : '—'}</dd>
+              <dt>创建时间</dt>
+              <dd>{info?.createTime ?? '—'}</dd>
+              <dt>schema 缓存</dt>
+              <dd title={schemaLoadedAt ? new Date(schemaLoadedAt).toLocaleString('zh-CN') : undefined}>
+                {schemaLoadedAt ? describeAge(Date.now() - schemaLoadedAt) : '—'}
+              </dd>
             </dl>
           </div>
 

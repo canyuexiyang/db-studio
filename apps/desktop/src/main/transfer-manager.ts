@@ -79,6 +79,9 @@ export interface ImportRequest {
   batchSize?: number;
   /** E5 失败行重跑：只导这些文件行号（0 基，不含表头）。缺省 = 全部行 */
   retryRows?: number[] | null;
+  /** 0.10.0 P0-03：空字段语义与逐列解析；缺省保持 0.7.x（空→NULL、auto） */
+  emptyAsNull?: boolean;
+  parsers?: (('auto' | 'text' | 'number' | 'date' | 'boolean') | null)[] | null;
 }
 
 interface TaskEntry {
@@ -294,6 +297,9 @@ export class TransferManager {
       tableName: req.table,
       // E5 失败行重跑：0 基数据行号，worker 侧 filterRetryRows 再规整一遍
       retryRows: req.retryRows ?? undefined,
+      // 0.10.0 P0-03：空字段语义 / 逐列解析必须一路带到 worker，否则预览与落库两套口径
+      emptyAsNull: req.emptyAsNull !== false,
+      parsers: req.parsers ?? undefined,
     });
 
     return { jobId };

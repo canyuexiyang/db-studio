@@ -459,6 +459,21 @@ describe('buildExplainTree', () => {
     expect(customers.detail.some((d) => d.includes('使用索引 PRIMARY'))).toBe(true);
   });
 
+  it('0.10.0：数值指标可用于估算计划条形（costValue/estimatedRows/filteredPct）', () => {
+    const [root] = tree();
+    expect(root.costValue).toBe(875.35);
+    const [orders, customers] = root.children;
+    expect(orders.costValue).toBe(280.2);
+    expect(orders.rowsExamined).toBe(1000);
+    expect(orders.rowsProduced).toBe(1000);
+    expect(orders.estimatedRows).toBe(1000);
+    expect(orders.filteredPct).toBe(100);
+    expect(customers.estimatedRows).toBe(100);
+    const tags = customers.children[0].children[0];
+    expect(tags.costValue).toBe(12.4);
+    expect(tags.estimatedRows).toBe(12);
+  });
+
   it('物化子查询挂在表节点下，select_id 换层', () => {
     const [, customers] = tree()[0].children;
     expect(customers.children).toHaveLength(1);

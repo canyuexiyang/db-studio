@@ -74,6 +74,13 @@ import {
 } from '@dbstudio/core-sql-editor/hints';
 import type { ColumnMeta, DatabaseMeta, TableMeta } from '@dbstudio/core-schema-cache';
 
+export interface CompletionForeignKey {
+  table: string;
+  column: string;
+  refTable: string;
+  refColumn: string;
+}
+
 export interface SqlEditorOptions {
   parent: HTMLElement;
   doc: string;
@@ -92,6 +99,11 @@ export interface SqlEditorOptions {
    * getter 而非快照：树里加收藏后，下一次补全就能看到。
    */
   get favorites(): readonly string[];
+  /**
+   * 0.10.0 P1-07：已加载的外键（来自 App 的 fkCache）。
+   * 只用于 JOIN 后建议 ON；没有数据时不猜列名（宁可不补，也不补错连接）。
+   */
+  get foreignKeys(): readonly CompletionForeignKey[];
   /**
    * 当前查询目标库（Navicat 式库下拉的值）。
    *
@@ -834,10 +846,78 @@ export function createSqlEditor(opts: SqlEditorOptions): SqlEditorHandle {
     }));
   };
 
+  /**
+   * 0.10.0 P1-07：光标是否刚落在 `JOIN <table> ` 之后。
+   * 只在尾随空白时成立 —— `JOIN acc|ounts` 是在改表名，不该弹 ON。
+   */
+  const joinTableAt = (doc: string, pos: number): string | null => {
+    if (pos <= 0 || !/\s$/.test(doc.slice(0, pos))) return null;
+    const toks = tokenizeSql(doc.slice(0, pos)).filter(isSig);
+    if (toks.length < 2) return null;
+    const identOf = (t: SqlToken | undefined): string | null =>
+      t && (t.kind === 'ident' || t.kind === 'quoted-ident') ? (t.value ?? t.raw).replace(/[`"\[\]]/g, '') : null;
+    const last = identOf(toks[toks.length - 1]);
+    if (!last) return null;
+    const prev = toks[toks.length - 2];
+    if (prev.kind === 'keyword' && (prev.upper === 'JOIN' || prev.upper === 'STRAIGHT_JOIN')) return last;
+    // JOIN accounts a（别名）—— 最后 token 是别名，前一个才是表名
+    const prevIdent = identOf(prev);
+    const beforePrev = toks[toks.length - 3];
+    if (prevIdent && beforePrev?.kind === 'keyword' && (beforePrev.upper === 'JOIN' || beforePrev.upper === 'STRAIGHT_JOIN')) {
+      return prevIdent;
+    }
+    return null;
+  };
+
+  /** 语句里某张表用的别名（没有则用表名）；用于生成可读的 ON */
+  const nameInStmt = (stmt: string, table: string): string => {
+    const aliases = aliasMap(stmt);
+    for (const [alias, target] of Object.entries(aliases)) {
+      if (target.toLowerCase() === table.toLowerCase()) return alias;
+    }
+    return table;
+  };
+
   const completionSource = (context: CompletionContext): CompletionResult | null => {
     const doc = context.state.doc.toString();
     const { from, word } = wordBefore(doc, context.pos);
     const dbName = opts.database;
+
+    // 0.10.0 P1-07：JOIN <table> + 尾随空格 → 按外键建议 ON。
+    // 必须在别名/列补全之前：此时 word 为空，后面的分支会把它当表位置。
+    if (word === '' && from === context.pos) {
+      const joined = joinTableAt(doc, context.pos);
+      if (joined !== null) {
+        const stmt = statementAt(doc, context.pos)?.text ?? doc;
+        const inStmt = statementTables(opts.databases, dbName, stmt).map((t) => t.table.name.toLowerCase());
+        const fks = opts.foreignKeys ?? [];
+        const options: Completion[] = [];
+        for (const fk of fks) {
+          let left: string;
+          let right: string;
+          let leftCol: string;
+          let rightCol: string;
+          if (fk.refTable.toLowerCase() === joined.toLowerCase() && inStmt.includes(fk.table.toLowerCase())) {
+            left = fk.table; leftCol = fk.column; right = fk.refTable; rightCol = fk.refColumn;
+          } else if (fk.table.toLowerCase() === joined.toLowerCase() && inStmt.includes(fk.refTable.toLowerCase())) {
+            left = fk.refTable; leftCol = fk.refColumn; right = fk.table; rightCol = fk.column;
+          } else {
+            continue;
+          }
+          const l = nameInStmt(stmt, left);
+          const r = nameInStmt(stmt, right);
+          const clause = `ON ${l}.${leftCol} = ${r}.${rightCol}`;
+          options.push({
+            label: clause,
+            type: 'keyword',
+            detail: `外键 ${left}.${leftCol} → ${right}.${rightCol}`,
+            apply: `${clause} `,
+          });
+          if (options.length >= 8) break;
+        }
+        if (options.length > 0) return { from, options, validFor: /^[A-Za-z0-9_$.]*$/ };
+      }
+    }
 
     // A. `别名.` / `表.` / `库.` —— 限定前缀优先，因为它最确定
     const q = qualifierAt(doc, context.pos);

@@ -12,7 +12,7 @@
  * 不做正则回溯 —— 命中即给分，不命中即跳过，没有"尝试多种模式"的分支。
  */
 
-export type PaletteMode = 'table' | 'command' | 'history';
+export type PaletteMode = 'table' | 'command' | 'history' | 'connection';
 
 export interface PaletteItem {
   id: string;
@@ -42,7 +42,7 @@ export interface ScoredItem {
 
 // ---------- 前缀判定 ----------
 
-export const PALETTE_PREFIXES = { command: ':', history: '@', table: '>' } as const;
+export const PALETTE_PREFIXES = { command: ':', history: '@', table: '>', connection: '#' } as const;
 
 export interface ParsedInput {
   mode: PaletteMode;
@@ -61,6 +61,7 @@ export function parsePaletteInput(raw: string): ParsedInput {
   if (s.startsWith(PALETTE_PREFIXES.command)) return { mode: 'command', query: s.slice(1) };
   if (s.startsWith(PALETTE_PREFIXES.history)) return { mode: 'history', query: s.slice(1) };
   if (s.startsWith(PALETTE_PREFIXES.table)) return { mode: 'table', query: s.slice(1) };
+  if (s.startsWith(PALETTE_PREFIXES.connection)) return { mode: 'connection', query: s.slice(1) };
   return { mode: 'table', query: s };
 }
 
@@ -284,6 +285,8 @@ export const BUILTIN_COMMANDS: CommandDef[] = [
 export interface PaletteQuery {
   items: PaletteItem[];
   commands?: CommandDef[];
+  /** 0.10.0 P1-05：连接 scope（#）。与表/命令分开传，避免三种实体混在一个数组里。 */
+  connections?: PaletteItem[];
 }
 
 /**
@@ -302,6 +305,9 @@ export function queryPalette(
   if (mode === 'command') {
     const cmds = data.commands ?? BUILTIN_COMMANDS;
     return { mode, results: rankItems(cmds, query, opts) };
+  }
+  if (mode === 'connection') {
+    return { mode, results: rankItems(data.connections ?? [], query, opts) };
   }
 
   const results = rankItems(data.items ?? [], query, opts);

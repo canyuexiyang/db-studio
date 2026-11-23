@@ -152,7 +152,11 @@ export interface DriverLike {
   /** 对象定义原文（C2）：SHOW CREATE，六类对象各自的 DDL 列名由驱动层适配 */
   showCreateObject(database: string, name: string, kind: ObjectKind): Promise<string>;
   /** 表信息（C9/A14）：information_schema.TABLES 单行；null = 表不存在 */
-  getTableInfo(database: string, table: string): Promise<TableInfo | null>;
+  getTableInfo(
+    database: string,
+    table: string,
+    opts?: { includeIndexes?: boolean },
+  ): Promise<TableInfo | null>;
   /** V9：外键列表（KEY_COLUMN_USAGE，复合外键按约束名分组、按 ORDINAL_POSITION 排序） */
   listForeignKeys(database: string, table: string): Promise<ForeignKeyMeta[]>;
   /** V9：外键候选值（服务端 LIMIT，驱动层钳制，绝不全表扫描） */
@@ -994,14 +998,19 @@ export class SessionRegistry {
    *    千万行表上一次精确 COUNT 就毁掉「最快查看器」的验收门槛）。
    * 表不存在 → NOT_FOUND。
    */
-  async getTableInfo(connId: string, req: { database: string; table: string }): Promise<TableInfo> {
+  async getTableInfo(
+    connId: string,
+    req: { database: string; table: string; includeIndexes?: boolean },
+  ): Promise<TableInfo> {
     const s = this.sessions.get(connId);
     if (!s || !s.driver) throw new SessionError('NOT_CONNECTED', '连接未建立');
     if (!this.beginQueryTracked(s)) {
       throw new SessionError('BUSY', `连接当前状态 ${s.runtime.state}，无法读取表信息`);
     }
     try {
-      const info = await s.driver.getTableInfo(req.database, req.table);
+      const info = await s.driver.getTableInfo(req.database, req.table, {
+        includeIndexes: req.includeIndexes === true,
+      });
       if (!info) {
         throw new SessionError('NOT_FOUND', `表 ${req.database}.${req.table} 不存在`);
       }

@@ -29,16 +29,18 @@ interface ImportRuntime {
     rows: string[][],
     mapping: (string | null)[],
     columns: ColumnMeta[],
-    opts: { hasHeader?: boolean; batchSize?: number; retryRows?: number[] },
+    opts: ImportNormalizeOptions & { hasHeader?: boolean; batchSize?: number; retryRows?: number[]; withPreview?: boolean },
   ): BatchPlan;
   validatePreview(
     rows: string[][],
     mapping: (string | null)[],
     columns: ColumnMeta[],
     hasHeader: boolean,
+    opts?: ImportNormalizeOptions,
   ): { issues: ImportRowIssue[] };
   issuesToCsv(issues: ImportRowIssue[]): string;
-  validateCellText(raw: string, col: ColumnMeta): string | null;
+  validateCellText(raw: string, col: ColumnMeta, opts?: { emptyAsString?: boolean }): string | null;
+  normalizeImportCell(raw: string, parseAs: ImportParseAs | null | undefined, emptyAsNull: boolean): string | null;
   normalizeJsonRows(parsed: unknown): JsonRowsResult;
   jsonCellText(v: unknown): string;
   filterRetryRows(totalRows: number, retryRows: unknown): number[];
@@ -64,6 +66,7 @@ export const buildInsertBatches: ImportRuntime['buildInsertBatches'] = runtime.b
 export const validatePreview: ImportRuntime['validatePreview'] = runtime.validatePreview;
 export const issuesToCsv: ImportRuntime['issuesToCsv'] = runtime.issuesToCsv;
 export const validateCellText: ImportRuntime['validateCellText'] = runtime.validateCellText;
+export const normalizeImportCell: ImportRuntime['normalizeImportCell'] = runtime.normalizeImportCell;
 export const normalizeJsonRows: ImportRuntime['normalizeJsonRows'] = runtime.normalizeJsonRows;
 export const jsonCellText: ImportRuntime['jsonCellText'] = runtime.jsonCellText;
 export const filterRetryRows: ImportRuntime['filterRetryRows'] = runtime.filterRetryRows;
@@ -89,6 +92,19 @@ export interface MappingSuggestion {
   notes: string[];
 }
 
+/**
+ * 0.10.0 P0-03：导入单元格的「解析为」。
+ * auto 保持 0.7.x 行为；其余只做无歧义归一化，不猜 DD/MM 与 MM/DD。
+ */
+export type ImportParseAs = 'auto' | 'text' | 'number' | 'date' | 'boolean';
+
+export interface ImportNormalizeOptions {
+  /** false = 空字段写空串；缺省/true = 写 NULL（0.7.x 行为） */
+  emptyAsNull?: boolean;
+  /** 按文件列下标给解析方式；缺省 auto */
+  parsers?: (ImportParseAs | null)[];
+}
+
 export interface ImportRowIssue {
   /** 文件中的行号（1-based，含表头行） */
   fileRow: number;
@@ -99,7 +115,7 @@ export interface ImportRowIssue {
 
 export interface BatchPlan {
   /** 批量 INSERT 语句（多值 VALUES，每批 ≤ batchSize 行） */
-  statements: { sql: string; params: unknown[]; rowCount: number }[];
+  statements: { sql: string; params: unknown[]; rowCount: number; previewSql?: string }[];
   /** 校验失败的行（这些行不进 INSERT） */
   invalidRows: ImportRowIssue[];
   /** 文件总数据行数（重跑模式下仍是全量文件行数，便于进度对照） */

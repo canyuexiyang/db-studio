@@ -9,8 +9,8 @@ MySQL 优先、单机自用、macOS 原生观感 —— 对标 Navicat Premium�
 
 Electron 44 · React 19 · TypeScript strict · CodeMirror 6 · 列式 IPC · 虚拟滚动
 
-[![version](https://img.shields.io/badge/version-0.9.0-blue)](docs/RELEASES.md)
-[![tests](https://img.shields.io/badge/tests-2537_passed-brightgreen)](#验证)
+[![version](https://img.shields.io/badge/version-0.10.0-blue)](docs/RELEASES.md)
+[![tests](https://img.shields.io/badge/tests-2550_passed-brightgreen)](#验证)
 [![platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue)](#系统与环境限制)
 [![arch](https://img.shields.io/badge/arch-Apple%20Silicon%20%C2%B7%20Intel-orange)](#适配芯片)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
@@ -92,6 +92,7 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 - **表视图记忆**：每张表记住排序与筛选，重开即恢复（只记「怎么看」，不记数据）
 - 外键值导航与下拉、鼠标拖选矩形选区、⌥↑ 递进选区、⌘F 结果集内查找、F12 列快速定位（带不带 ⌘ 都收；焦点在输入框时不抢键）
 - 复制 6 格式（TSV/CSV/JSON/Markdown/INSERT/UPDATE 带真实值）；**默认只复制值、不带列名表头**（需要列名走复制菜单的「含列名」，Markdown 永远带表头）
+- **行检查器（0.10.0）**：右侧详情面板「行」页签按当前行纵读全部字段，支持按列名/值过滤、NULL/空串/二进制区分、JSON 美化、字段复制；编辑只标脏，仍走保存预演
 - 选中区聚合统计；单元格完整值弹窗（JSON 高亮 / BLOB 预览与存盘）
 
 </details>
@@ -100,7 +101,9 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 <summary><b>SQL 编辑器（CodeMirror 6）</b></summary>
 
 - **首屏 0 字节**：编辑器作为 lazy chunk 加载，不拖慢启动
-- 多语句多结果 Tab、执行全部/选中、KILL QUERY 真取消、EXPLAIN 树/表格双视图
+- 多语句多结果 Tab、执行全部/选中、KILL QUERY 真取消
+- **执行计划 2.0（0.10.0）**：树形节点 + 相对成本条 + 估行/过滤比 + `ALL` 全表扫与排序/临时表告警；仍只发 `EXPLAIN FORMAT=JSON`，不执行查询
+- **外键感知 JOIN ON（0.10.0）**：已加载外键参与 `JOIN <table> ` 后的 ON 建议；无外键数据不按列名猜连接
 - 实时错误检测下划线（纯前端静态推断，不打库）、内联显示每条语句耗时
 - 基于 schema 缓存的补全（表名/库名/字段属性）、SQL 专属双主题高亮、自研轻量格式化
 - 草稿自动保存恢复、片段收藏、查询历史（星标/删单条/按连接过滤）
@@ -131,14 +134,19 @@ Spike 阶段用 **1000 万行 fixture**（MySQL 8.0，Docker）在 M5 Pro / 120H
 - **5 类对象新建模板**（视图 / 存储过程 / 函数 / 触发器 / 事件；建表走可视化设计器，不在此列）+ 视图「改定义」；模板一律单条语句、DDL 执行后自动刷新树
 - **表级三件套**：重命名（F2，⇧F2 进设计器）、复制表（仅结构 / 结构+数据）、维护（优化 / 分析 / 检查表，服务端回执）
 - **分组管理**：新建/重命名/删除空分组，空分组也可见（不会「建完就消失」）
-- 详情面板三区块：表信息 / 字段（**注释常驻显示**）/ 建表语句 DDL；单元格完整值在弹窗里看
+- 详情面板：**表 / 行**双页签；表页含表信息、数据/索引大小、schema 缓存年龄、字段（注释常驻）与建表语句 DDL；行页即行检查器
+- **只读结构页（0.10.0）**：数据/结构切换，概览/字段/索引/外键；索引按需加载，编辑仍走设计器
 - 可视化表设计器（字段/索引/外键三 Tab + 差异 ALTER + DDL 预览）
-- 导入 4 格式（csv/tsv/xlsx/json）向导；导出 5 格式（xlsx/csv/json/sql/markdown）+ 整库备份（逐表重查，仅支持 SQL / Markdown 两种格式）
+- 导入 4 格式（csv/tsv/xlsx/json）向导；**0.10.0** 增加 Rows/SQL 双预览、空字段 NULL/空串语义、逐列「解析为」（自动/文本/数字/日期/布尔），预览与 worker 执行同源
+- 导出 5 格式（xlsx/csv/json/sql/markdown）+ 整库备份（逐表重查，仅支持 SQL / Markdown 两种格式）
 - **导出四范围**（选区 / 已加载 / 全部匹配 / 整库），每项标注是「快照」还是「重查」
 - 全部导入导出跑在 **utilityProcess**（可 kill = 真取消，崩溃不拖垮主进程）
 - **工具栏身份条**：连接 / 环境 / 库 / 对象四段常显，缺数据时如实写「未命名连接」而非拿 connId 顶替；按**可用宽度**在 full/compact 间切换（导出/导入/设计/粘贴收进「更多」菜单，保存与筛选永不折叠）
 - **更新检查四态**：`unconfigured` / `failed` / `update` / `latest` —— 没配发布通道不会谎报「已是最新」
+- **欢迎页 URL 粘贴（0.10.0）**：`mysql://` / `mariadb://` 解析后预填新建连接；**拖拽文件**：`.sql` 打开查询（不执行），`.csv/.tsv/.xlsx/.json` 进当前表导入向导
 - macOS 原生菜单栏、原生交通灯、Liquid Glass 玻璃窗、三栏可拖拽布局、多标签、多窗口、会话恢复、三态主题、⌘K 命令面板
+- **命令面板连接 scope（0.10.0）**：输入 `#` 按分组切连接；已连接定位到树，未连接走既有握手
+- **状态栏结果透明度（0.10.0）**：行数 / 是否截断 / 列式字节 / 本次耗时集中显示；工具栏主题与行高下沉到偏好设置（⌘,）
 - **标签右键 8 项**（关闭 / 固定标签 / 关闭其他 / **关闭左侧** / 关闭右侧 / **关闭全部** / 在树中定位 / 复制完整对象身份）、中间清单右键与 ↑↓ 巡行（单击选中、双击或 Enter 打开）
 
 </details>
@@ -379,13 +387,13 @@ npm run verify:installed # 已安装 .app 的真机验收（22 项，含版本�
 npm run verify:traffic-lights # 原生交通灯像素级门禁（6 项，渲染层之外验证）
 ```
 
-**当前基线（v0.9.0 · GitHub Release + 本机安装）**：
+**当前基线（v0.10.0 · 已打包并本机安装；未跑 verify:installed）**：
 
 | 门禁 | 结果 |
 |---|---|
-| 单元测试 | **2537 passed / 99 文件** |
-| `check:bundle` | 9/9 体积断言通过（首屏 598.5 KB / 预算 1465 KB；编辑器 lazy 140.4 KB / 150 KB gzip；功能弹窗合计 60.4 KB / 64 KB gzip） |
-| e2e:ui（真浏览器 UI 回归） | 480 |
+| 单元测试 | **2550 passed / 101 文件** |
+| `check:bundle` | 9/9 体积断言通过（首屏 618.5 KB / 预算 1465 KB；编辑器 lazy 140.8 KB / 150 KB gzip；功能弹窗合计 63.1 KB / 64 KB gzip） |
+| e2e:ui（真浏览器 UI 回归） | 484 |
 | e2e:app（Electron 真机） | 72 |
 | e2e:keys（五焦点键盘矩阵） | 47 |
 | e2e:idle / e2e:idle:ui（空闲断开自动重连） | 16 / 4 |
